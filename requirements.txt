@@ -6,3 +6,4 @@ tqdm
 ipywidgets
 orjson
 multiprocess
+intspan
