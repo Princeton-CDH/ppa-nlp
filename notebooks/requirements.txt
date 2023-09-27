@@ -1,0 +1,8 @@
+jupyterlab
+pandas
+sqlitedict
+bs4
+tqdm
+ipywidgets
+orjson
+multiprocess
