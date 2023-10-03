@@ -22,8 +22,15 @@ def get_ecco_metadata(fns = PATHS_METADATA):
     return df.set_index('source_id')
 
 @cache
-def get_ecco_excerpts():
-    return pd.read_csv(PATH_ECCO_EXCERPTS).set_index('source_id')
+def get_ppa_metadata():
+    return pd.read_csv(PATH_PPA_METADATA).set_index('source_id').fillna('')
+
+@cache
+def get_ppa_metadata_d():
+    return {source_id:dict(row) for source_id,row in get_ppa_metadata().iterrows()}
+
+
+
 
 @cache
 def get_ecco_pages():
@@ -50,7 +57,7 @@ def get_ecco_pages():
                 d['source_id']=row.source_id
 
             return opages
-        df_excerpts = get_ecco_excerpts()
+        df_excerpts = get_ppa_metadata()
         df_meta = get_ecco_metadata()
         df_merged = df_excerpts.merge(df_meta, on='source_id').reset_index()
         all_pages = [page for i,row in tqdm(df_merged.iterrows(), total=len(df_merged)) for page in get_pages_row(row)]
@@ -59,7 +66,31 @@ def get_ecco_pages():
     
 @cache
 def get_all_ecco_data_for_excerpts():
-    df_excerpts = get_ecco_excerpts()
+    df_excerpts = get_ppa_metadata()
     df_meta = get_ecco_metadata()
     df_pages = get_ecco_pages()
     return df_pages.merge(df_excerpts, on='source_id').merge(df_meta, on='source_id')
+
+def iter_pages_ecco():
+    pages_df=get_all_ecco_data_for_excerpts()
+    for i,row in pages_df.iterrows():
+        recd=dict(row)
+        recd['source_id']=recd['productlink'].split('GALE%7C')[-1]
+        yield recd
+
+def iter_pages_hathi():
+    with jsonlines.open(PATH_HATHI_PAGE_JSONL) as reader:
+        for rec in reader:
+            recd=dict(rec)
+            recd['pageid']=recd.pop('page_id')
+            recd['text']=recd.pop('content')
+            yield {**recd, **get_ppa_metadata_d().get(recd['source_id'], {})}
+
+def iterate_over_all_ppa_pages():
+    yield from iter_pages_ecco()
+    yield from iter_pages_hathi()
+
+
+
+def get_ppa_page_cache(fn=PATH_PPA_PAGES_CACHE):
+    return SqliteDict(fn, autocommit=True, encode=encode_cache, decode=decode_cache)
