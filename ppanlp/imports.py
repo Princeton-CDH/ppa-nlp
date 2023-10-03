@@ -18,7 +18,8 @@ PATH_ECCO_RAW_DATA = os.path.join(PATH_ECCO_DATA, 'raw')
 PATH_CORPUS_RAW_ECCO1=os.path.join(PATH_ECCO_RAW_DATA, 'ECCO1')
 PATH_CORPUS_RAW_ECCO2=os.path.join(PATH_ECCO_RAW_DATA, 'ECCO2')
 PATH_ECCO_PAGES_CACHE = os.path.join(PATH_ECCO_DATA,'ecco_pages.sqlitedict')
-PATH_ECCO_EXCERPTS = os.path.join(PATH_REPO_DATA,'ECCO Excerpts-DigitizedWork-2023-09-20.csv')
+# PATH_ECCO_EXCERPTS = os.path.join(PATH_REPO_DATA,'ECCO Excerpts-DigitizedWork-2023-09-20.csv')
+PATH_ECCO_EXCERPTS = os.path.join(PATH_REPO_DATA,'ALL-DigitizedWork-2023-09-14.csv')
 PATHS_METADATA = [
     os.path.join(PATH_REPO_DATA, 'data.all_xml_metadata.ECCO1.csv'), 
     os.path.join(PATH_REPO_DATA, 'data.all_xml_metadata.ECCO2.csv')

@@ -7,3 +7,8 @@ ipywidgets
 orjson
 multiprocess
 intspan
+openpyxl
+django
+django-cas-ng
+pucas
+jsonlines

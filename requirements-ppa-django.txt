@@ -1,0 +1,31 @@
+django>=4.0,<4.1
+django-cas-ng
+pucas>=0.8
+parasolr>=0.9
+pairtree
+py-flags
+# pymarc 5+ has incompatible changes
+pymarc<5.0
+cached_property
+django-apptemplates
+progressbar2
+django-semanticui-forms
+lxml
+eulxml
+wagtail>=2.15,<3   # wagtail 3 changes api of wagtail.core
+bleach
+django-fullurl
+django-csp
+# see https://github.com/Princeton-CDH/ppa-django/issues/366
+django-webpack-loader<1
+requests_oauthlib
+wand
+intspan
+# specify bs4 version to avoid wagtail version conflict
+beautifulsoup4<=4.11
+# only needed for the 'generate_corpus' manage command
+gensim
+django-adminlogentries
+django-import-export
+psycopg2-binary
+multiprocess
