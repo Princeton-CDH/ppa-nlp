@@ -12,3 +12,5 @@ django
 django-cas-ng
 pucas
 jsonlines
+wordfreq
+nltk

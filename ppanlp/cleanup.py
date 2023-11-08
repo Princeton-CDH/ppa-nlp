@@ -1,0 +1,577 @@
+from .imports import *
+def tokenize_agnostic(txt):
+    return re.findall(r"[\w']+|[.,!?; -—–'\n]", txt)
+
+def untokenize_agnostic(l):
+    return ''.join(l)
+
+def remove_trailing_punctuation(word):
+    # remove trailing punctuation and spaces
+    # don't remove the dash '-', as this might interfere with the function to repair broken words!
+    # Question: should we also remove punct at the beginning of the token...? Not doing that now.
+    return re.sub(r'[\.,\?!"\')(:;`]+\s*$', '', word)
+
+# # small test
+# word = "...example.,...! "
+# clean_word = remove_trailing_punctuation(word)
+# print(clean_word)
+
+
+
+
+
+
+# process a list of word pairs, where each pair consists of an 'incorrect' word with a historic long 's' (ſ) and its 'correct' modern equivalent
+# the script then replaces the historic long 's' (ſ) words with 'f', generates new word pairs
+# ONLY if the newly generated f-word does NOT exist in the English language, we retain the word!! For this, we use language stats provided by wordfreq
+# the resulting pairs are then written to the outfile, while pairs that exists -- with high frequency in English -- are written to a separate disregard_file
+# i think this is clever, so i named the function accordingly :-)
+
+def generate_clever_f_s_hack(source_file, output_file, disregard_file, skip_words=None, frequency_threshold=1e-6):
+    if skip_words is None:
+        skip_words = {'ſlip'}  # add specific words to skip here -- dunno if this is still useful, the file will capture most of these words
+
+    unique_pairs = set()  # set to keep track of unique (incorrect f-word, correct s-word) pairs
+
+    with open(source_file, 'r') as infile, open(output_file, 'w') as outfile, open(disregard_file, 'w') as disregard:
+        # skip the title line of the infile
+        next(infile)
+
+        for line in infile:
+            parts = line.strip().split('\t')
+            if len(parts) < 3:
+                continue
+
+            incorrect, correct = parts[:2]
+            # e.g.:
+            # incorrect correct
+            # moſt 	    most
+            # muſt 	    must
+            # ſo 	      so
+            # ſome 	    some
+            # ſee       see   etc.
+
+            # strip leading/trailing spaces
+            incorrect = incorrect.strip()
+            correct = correct.strip()
+
+            # remove trailing punctuation
+            incorrect = remove_trailing_punctuation(incorrect)
+            correct = remove_trailing_punctuation(correct)
+
+            # replace 'ſ' with 'f' in the incorrect word
+            f_incorrect = incorrect.replace('ſ', 'f')
+            # e.g.:
+            # incorrect correct
+            # moft 	    most
+            # muft 	    must
+            # fo 	      so
+            # fome 	    some
+            # fee       see   etc.
+
+            # skip if the incorrect word is in skip_words or already in pairs
+            if f_incorrect in skip_words or (f_incorrect, correct) in unique_pairs:
+                continue
+
+            # check the frequency of the word
+            word_frequency = wordfreq.word_frequency(f_incorrect.lower(), 'en')
+
+            # skip if the word exists and its frequency is above the threshold
+            if word_frequency > frequency_threshold:
+                disregard.write(f"{f_incorrect}\t{correct}\n")
+                #print(f'Word that exist with the f-spelling and we don\'t want to include: {f_incorrect}')
+                # e.g.
+                # Words that exist with the f-spelling and we don't want to include: fame
+                # Words that exist with the f-spelling and we don't want to include: found    etc.
+                continue
+
+            # check if the generated word exists in English
+            if word_frequency <= frequency_threshold:
+                outfile.write(f"{f_incorrect}\t{correct}\n")
+                unique_pairs.add((f_incorrect, correct))
+                # e.g.
+                # moft 	    most
+                # muft 	    must
+                # fo 	      so
+                # fome 	    some    etc.
+
+# apply
+# generate_clever_f_s_hack(
+#     source_file=os.path.join(PATH_OCR_RULESETS, "all_long_s_corrections_log.txt"),
+#     output_file=os.path.join(PATH_OCR_RULESETS, "clever_f_ſ_hack.txt"),
+#     disregard_file=os.path.join(PATH_OCR_RULESETS, "disregard_fſs_replacements.txt")
+# )
+
+
+
+
+
+@cache
+def load_correction_rules(file_path = os.path.join(PATH_OCR_RULESETS, 'CorrectionRules.txt')):
+    correction_rules = {}
+    with open(file_path, 'r') as file:
+        for line in file:
+            parts = line.strip().split('\t')
+            if len(parts) >= 2:
+                incorrect, correct = parts[:2]
+                correction_rules[incorrect] = correct
+    return correction_rules
+
+
+def correct_ocr_errors(text, correction_rules):
+    corrections = 0
+    for incorrect, correct in correction_rules.items():
+        if incorrect in text:
+            text = text.replace(incorrect, correct)
+            corrections += 1
+    return text, corrections
+
+def rejoin_linebreaks(text, specific_linebreak_corrections):
+    """
+    function to addresses the issue of words that are split between two lines due to a line break, typically indicated by a hyphen
+    the function rejoins such words
+    """
+    corrections = 0
+    parts = text.split('-\n')
+    corrected_text = parts[0]
+    for part in parts[1:]:
+        corrected_text_words = corrected_text.split()
+        part_words = part.split()
+
+        if corrected_text_words and part_words:  # check if both lists are not empty
+            last_word_before_break = corrected_text_words[-1]
+            first_word_after_break = part_words[0]
+
+            # form the broken word and the corrected word
+            broken_word = last_word_before_break + '-\n' + first_word_after_break
+            corrected_word = last_word_before_break + first_word_after_break
+
+            # log the correction (gets later written to the txt file)
+            # specific_linebreak_corrections[broken_word + " \t " + corrected_word] += 1
+            specific_linebreak_corrections.append((broken_word,corrected_word))
+
+            corrected_text += part
+            corrections += 1
+        else:
+            # if either part is empty or doesn't contain words, simply append a hyphen
+            corrected_text += '-' + part
+
+    return corrected_text, corrections
+
+def replace_historic_long_s(text, long_s_corrections):
+    """
+    function to replaces the historic long 's' (ſ) with the regular 's'
+
+    :text: text to be processed
+    :long_s_corrections: dictionary to log specific corrections and their counts
+    :return: tuple of processed text with long 's' replaced, and the number of corrections made
+    """
+    corrected_text = text.replace('ſ', 's')
+    corrections = 0
+    if corrected_text != text:
+        words_with_long_s = set(text.split()) - set(corrected_text.split())
+        for word in words_with_long_s:
+            corrected_word = word.replace('ſ', 's')
+            long_s_corrections.append((word,corrected_word))
+            corrections += 1
+    return corrected_text, corrections
+
+@cache
+def load_f_s_hack_corrections(file_path = os.path.join(PATH_OCR_RULESETS, "clever_f_ſ_hack.txt")):
+    """
+    little helper script to load the f-->s words (from generate_clever_f_s_hack) into a dict, for convenient lookup
+    """
+    correction_rules = {}
+    with open(file_path, 'r') as file:
+        for line in file:
+            parts = line.strip().split()
+            if len(parts) >= 2:
+                incorrect, correct = parts[:2]
+                correction_rules[incorrect] = correct
+    return correction_rules
+
+def process_headers(pages, remove_headers=True, similarity_threshold=80):
+    """
+    function to identifies and optionally removes running headers
+    inspired by Ted Underwood's GREAT headerfinder script: https://github.com/tedunderwood/DataMunging/blob/master/runningheaders/HeaderFinder.py
+    some changes made:
+      - flexibility to remove headers or just identify them (just by setting the boolean value)
+      - we don't explicitly handle roman numerals, the line comparison logic (combining str.isalpha and a threshold for fuzzy matching) should take care of it
+
+    :pages: list of dicts, each representing a page with 'page_text'
+    :remove_headers: bool, if set to True --> removes identified headers, otherwise just identifies them and wirtes them to the log
+    :similarity_threshold: int, threshold for fuzzy matching to consider lines as similar (default 80 seems to work well)
+    :return: list of pages with headers
+    """
+    identified_headers = []
+    headers_set = set()
+
+    def get_substantial_lines(page_text):
+        """
+        helper function: if the processed line contains less than 5 characters, or if the line consists solely of digits
+        it is considered insubstantial and is skipped
+        """
+        lines = page_text.split('\n')
+        substantial_lines = []
+        for line in lines:
+            if len(line.strip()) < 5 or line.strip().isdigit():
+                continue
+            substantial_lines.append(line)
+            if len(substantial_lines) == 2:
+                break
+        return substantial_lines
+
+    for i in range(len(pages)):
+        page = pages[i]
+        if not 'corrections' in page: page['corrections']={}
+        if not 'headers' in page['corrections']: page['corrections']['headers']=[]
+        correction_added=False
+        current_page_text = pages[i]['page_text']
+        current_substantial_lines = get_substantial_lines(current_page_text)
+
+        header_found = False
+
+        # determine the range of pages to compare with
+        start_index = max(0, i - 2)
+        end_index = min(len(pages), i + 3)
+        if i == len(pages) - 1:  # Special handling for the last page
+            start_index = max(0, i - 2)  # Compare with pages before
+
+        for j in range(start_index, end_index):
+            if i == j:
+                continue
+
+            comparison_page_text = pages[j]['page_text']
+            comparison_substantial_lines = get_substantial_lines(comparison_page_text)
+
+            for current_line in current_substantial_lines:
+                for comparison_line in comparison_substantial_lines:
+                    # line comparison logic, considering possible page numbers
+                    cleaned_current_line = ''.join(filter(str.isalpha, current_line))
+                    cleaned_comparison_line = ''.join(filter(str.isalpha, comparison_line))
+
+                    s = SequenceMatcher(None, cleaned_current_line, cleaned_comparison_line)
+                    similarity = s.ratio() * 100
+
+                    if similarity > similarity_threshold:
+                        header_key = (i, current_line)
+                        if header_key not in headers_set:
+                            identified_headers.append(header_key)
+                            headers_set.add(header_key)
+                        if remove_headers:
+                            header_found = True
+                        break
+
+                if header_found:
+                    
+                    if not correction_added:
+                        correction_added=True
+                        page['corrections']['headers'].append((current_line,''))
+                    lines_of_page = current_page_text.split('\n')
+                    for idx, line in enumerate(lines_of_page):
+                        if line.strip() == current_line.strip():
+                            page['page_text_clean'] = '\n'.join(lines_of_page[idx+1:])
+                            
+                            break
+                    break
+
+    return pages
+
+
+
+
+### THE ACTUAL CLEANING ###
+
+# def tokenize_text_per_page(filename, use_nltk_tokenizer=False, output_folder='/content/drive/Shareddrives/PPA/2023 Full-Text Data Work/2023 Full-Text Corpus/corpus_json_tokenized'):
+#     """
+#     this is the main course!
+#     """
+#     with open(filename, 'r') as f:
+#         pages = json.load(f)
+
+#     total_token_count = 0
+
+#     # dicts to store specific corrections and their counts
+#     specific_ocr_corrections = defaultdict(int)
+#     specific_linebreak_corrections = defaultdict(int)
+#     specific_long_s_corrections = defaultdict(int)
+
+#     correction_rules_path = "/content/drive/Shareddrives/PPA/2023 Full-Text Data Work/2023 Full-Text Corpus/notebooks/ocr_cleanup_rulesets/CorrectionRules.txt"
+#     correction_rules = load_correction_rules(correction_rules_path)
+
+#     clever_f_s_hack_path = "/content/drive/Shareddrives/PPA/2023 Full-Text Data Work/2023 Full-Text Corpus/notebooks/ocr_cleanup_rulesets/clever_f_ſ_hack.txt"
+#     clever_f_s_hack_rules = load_f_s_hack_corrections(clever_f_s_hack_path)
+
+#     # add a dictionary for specific f ſ hack corrections
+#     specific_f_s_hack_corrections = defaultdict(int)
+
+#     # handle the headers
+#     pages, identified_headers = process_headers(pages, remove_headers=True) # ideally, we want to set this later when calling the function
+
+#     for page in pages:
+#         page_text = page['page_text']
+
+#         # counters for corrections
+#         linebreak_corrections = 0
+#         ocr_corrections = 0
+#         long_s_corrections = 0
+#         f_s_word_replacements = 0
+
+#         # rejoin line breaks before tokenization and log corrections
+#         page_text, corrections = rejoin_linebreaks(page_text, specific_linebreak_corrections)
+#         linebreak_corrections += corrections
+
+#         # apply correction for long 's'
+#         corrected_text, corrections = replace_historic_long_s(page_text, specific_long_s_corrections)
+#         long_s_corrections += corrections
+#         page_text = corrected_text
+
+#         # tokenization
+#         tokens = word_tokenize(page_text) if use_nltk_tokenizer else page_text.split()
+
+#         # apply OCR corrections on tokens and log corrections
+#         corrected_tokens = []
+#         for token in tokens:
+#             if token in correction_rules:
+#                 corrected_token = correction_rules[token]
+#                 ocr_corrections += 1
+#                 specific_ocr_corrections[f"{token} \t {corrected_token}"] += 1
+#             else:
+#                 corrected_token = token
+#             corrected_tokens.append(corrected_token)
+
+#         # apply f-ſ-s hack corrections on tokens and log corrections
+#         for i, token in enumerate(corrected_tokens):
+#             if token in clever_f_s_hack_rules:
+#                 corrected_token = clever_f_s_hack_rules[token]
+#                 f_s_word_replacements += 1
+#                 specific_f_s_hack_corrections[f"{token} \t {corrected_token}"] += 1
+#                 corrected_tokens[i] = corrected_token
+
+#         token_count = len(corrected_tokens)
+#         total_token_count += token_count
+
+#         # convert corrected tokens back to text for further processing
+#         corrected_text = ' '.join(corrected_tokens)
+
+#         # store the final corrected and tokenized text
+#         page['tokenized_text'] = corrected_tokens
+
+#         # store correction counts in the page dictionary
+#         page['corrections'] = {
+#             'ocr_corrections': ocr_corrections,
+#             'linebreak_corrections': linebreak_corrections,
+#             'long_s_corrections': long_s_corrections,
+#             'f_s_word_replacements': f_s_word_replacements,
+#             'specific_ocr_corrections':specific_ocr_corrections,
+#             'specific_linebreak_corrections':specific_linebreak_corrections,
+#             'specific_long_s_corrections':specific_long_s_corrections,
+#             'identified_headers':identified_headers,
+#             'specific_f_s_hack_corrections':specific_f_s_hack_corrections,
+#         }
+
+#     # new_filename = os.path.join(output_folder, os.path.basename(filename).replace('.json', '_tokenized.json'))
+#     # os.makedirs(output_folder, exist_ok=True)
+#     # with open(new_filename, 'w') as f:
+#     #     json.dump(pages, f)
+
+#     # # writing specific corrections to a txt file (same name as jsson file)
+#     # log_filename = os.path.join(output_folder, os.path.basename(filename).replace('.json', '_corrections_log.txt'))
+#     # with open(log_filename, 'w') as log_file:
+#     #     log_file.write(f"File: {filename}\n")
+
+#     #     # corrections made by Ted's correction rules file
+#     #     log_file.write("Corrections made by Ted Underwood's rules\n")
+#     #     for correction, count in specific_ocr_corrections.items():
+#     #         log_file.write(f"{correction} \t {count}\n")
+
+#     #     # rejoined broken words
+#     #     log_file.write("Linebreak corrections\n")
+#     #     for correction, count in specific_linebreak_corrections.items():
+#     #         log_file.write(f"{correction} \t {count}\n")
+
+#     #     # long s replacements
+#     #     log_file.write("Long 's' corrections\n")
+#     #     for correction, count in specific_long_s_corrections.items():
+#     #         log_file.write(f"{correction} \t {count}\n")
+
+#     #     # identified/removed headers
+#     #     log_file.write("Identified and removed headers\n")
+#     #     for page_number, header in identified_headers:
+#     #       log_file.write(f"Page {page_number}: {header}\n")
+
+#     #     # clever f-ſ-s hack corrections
+#     #     log_file.write("Clever f ſ hack corrections\n")
+#     #     for correction, count in specific_f_s_hack_corrections.items():
+#     #         log_file.write(f"{correction} \t {count}\n")
+
+
+#     # return {
+#     #     'filename': filename,
+#     #     'token_count': total_token_count,
+#     #     'new_filename': new_filename,
+#     #     'corrections_log_filename': log_filename,
+#     #     'long_s_corrections': dict(specific_long_s_corrections),
+#     #     'f_s_hack_corrections': dict(specific_f_s_hack_corrections)
+#     # }
+#     return pages
+
+def cleanup_str(txt, use_nltk_tokenizer=False, **page_attrs):
+    page_text = txt
+    # dicts to store specific corrections and their counts
+    specific_ocr_corrections = []
+    specific_linebreak_corrections = []
+    specific_long_s_corrections = []
+    correction_rules = load_correction_rules()
+    clever_f_s_hack_rules = load_f_s_hack_corrections()
+
+    # add a dictionary for specific f ſ hack corrections
+    specific_f_s_hack_corrections = []
+
+    # counters for corrections
+    linebreak_corrections = 0
+    ocr_corrections = 0
+    long_s_corrections = 0
+    f_s_word_replacements = 0
+
+    # rejoin line breaks before tokenization and log corrections
+    page_text, corrections = rejoin_linebreaks(page_text, specific_linebreak_corrections)
+    linebreak_corrections += corrections
+
+    # apply correction for long 's'
+    corrected_text, corrections = replace_historic_long_s(page_text, specific_long_s_corrections)
+    long_s_corrections += corrections
+    page_text = corrected_text
+
+    # tokenization
+    tokens = word_tokenize(page_text) if use_nltk_tokenizer else tokenize_agnostic(page_text)
+
+    # apply OCR corrections on tokens and log corrections
+    corrected_tokens = []
+    for token in tokens:
+        if token in correction_rules:
+            corrected_token = correction_rules[token]
+            ocr_corrections += 1
+            specific_ocr_corrections.append((token,corrected_token))
+        else:
+            corrected_token = token
+        corrected_tokens.append(corrected_token)
+
+    # apply f-ſ-s hack corrections on tokens and log corrections
+    for i, token in enumerate(corrected_tokens):
+        if token in clever_f_s_hack_rules:
+            corrected_token = clever_f_s_hack_rules[token]
+            f_s_word_replacements += 1
+            specific_f_s_hack_corrections.append((token,corrected_token))
+            corrected_tokens[i] = corrected_token
+
+    token_count = len(corrected_tokens)
+
+    # convert corrected tokens back to text for further processing
+    corrected_text = untokenize(corrected_tokens) if use_nltk_tokenizer else untokenize_agnostic(corrected_tokens)
+
+    corrected_tokens_real = [x for x in corrected_tokens if any(y.isalpha() for y in x)]
+
+    # create output dictionary
+    def as_counts(l):
+        return l
+        # return dict(Counter(l))
+
+    return {
+        'page_text':page_text, 
+        **page_attrs, 
+        'page_text_clean':corrected_text, 
+        # 'page_num_tokens':token_count,
+        'page_tokens':corrected_tokens_real,
+        'corrections': {
+            'headers':as_counts(page_attrs.get('corrections',{}).get('headers',[])),
+            'ocr':as_counts(specific_ocr_corrections),
+            'linebreaks':as_counts(specific_linebreak_corrections),
+            'long_s':as_counts(specific_long_s_corrections),
+            'f_s':as_counts(specific_f_s_hack_corrections),
+        }
+    }
+
+
+
+def cleanup_page(page_d):
+    txt=page_d.get('page_text_clean', page_d.get('page_text',''))
+    odx=cleanup_str(txt, **page_d)
+    return odx
+
+def cleanup_pages(pages_ld):
+    if type(pages_ld) == pd.DataFrame: pages_ld=pages_ld.to_dict('records')
+    pages_ld = process_headers(pages_ld, remove_headers=True) # ideally, we want to set this later when calling the function
+    pages_ld = [cleanup_page(page_d) for page_d in pages_ld]
+    return pages_ld
+
+
+
+
+# def process_files(df, number_of_files=None, use_nltk_tokenizer=True):
+#     """
+#     processes a number of files or all files from the df with the json-pathnames
+
+#     :df: df containing file metadata and filenames
+#     :number_of_files: Number of files to process. If None, processes all files
+#     :use_nltk_tokenizer: bool value, if True uses NLTK's tokenizer, otherwise uses simple split on whitespace
+#     :returns df with tokenization results
+#     """
+#     results = []
+#     if number_of_files is None:
+#         number_of_files = df.shape[0]
+
+#     # init a dictionary to collect all long 's' corrections across files
+#     all_long_s_corrections = defaultdict(int)
+
+#     for index, row in tqdm(df.iterrows(), total=number_of_files):
+#         if index >= number_of_files:
+#             break
+#         tokenization_result = tokenize_text_per_page(row['filename'], use_nltk_tokenizer)
+#         results.append(tokenization_result)
+
+#         # aggregate long 's' corrections across all pages and files
+#         for correction, count in tokenization_result['long_s_corrections'].items():
+#             all_long_s_corrections[correction] += count
+
+#     # sorting the all_long_s_corrections dict by count in descending order
+#     sorted_long_s_corrections = sorted(all_long_s_corrections.items(), key=lambda item: item[1], reverse=True)
+
+#     results_df = pd.DataFrame(results)
+
+#     # writing all long 's' corrections to a txt file
+#     all_long_s_corrections_filename = "/content/drive/Shareddrives/PPA/2023 Full-Text Data Work/2023 Full-Text Corpus/notebooks/ocr_cleanup_rulesets/all_long_s_corrections_log.txt"
+#     with open(all_long_s_corrections_filename, 'w') as all_long_s_file:
+#         all_long_s_file.write("All long 's' corrections (sorted by count)\n")
+#         for correction, count in sorted_long_s_corrections:
+#             all_long_s_file.write(f"{correction} \t {count}\n")
+
+#     return results_df
+
+# # # process only first 100 files
+# # df_tokenized = process_files(df_metadata_with_existing_files, number_of_files=100, use_nltk_tokenizer=True)
+
+# # df_tokenized.iloc[1].new_filename
+
+
+
+
+
+
+# def untokenize(words):
+#     """
+#     Untokenizing a text undoes the tokenizing operation, restoring
+#     punctuation and spaces to the places that people expect them to be.
+#     Ideally, `untokenize(tokenize(text))` should be identical to `text`,
+#     except for line breaks.
+#     """
+#     import re
+#     text = ' '.join(words)
+#     step1 = text.replace("`` ", '"').replace(" ''", '"').replace('. . .', '...')
+#     step2 = step1.replace(" ( ", " (").replace(" ) ", ") ")
+#     step3 = re.sub(r' ([.,:;?!%]+)([ \'"`])', r"\1\2", step2)
+#     step4 = re.sub(r' ([.,:;?!%]+)$', r"\1", step3)
+#     step5 = step4.replace(" '", "'").replace(" n't", "n't").replace(
+#         "can not", "cannot")
+#     step6 = step5.replace(" ` ", " '")
+#     return step6.strip()
