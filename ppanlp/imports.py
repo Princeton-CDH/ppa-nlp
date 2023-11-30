@@ -53,7 +53,7 @@ PATH_TEXT_CORPUS_TEXTS = os.path.join(PATH_TEXT_CORPUS_ROOT, 'texts')
 PATH_TEXT_CORPUS_METADATA = os.path.join(PATH_TEXT_CORPUS_ROOT, 'metadata.csv')
 PATH_OCR_RULESETS = os.path.join(PATH_REPO_DATA, 'ocr_cleanup_rulesets')
 
-PATH_JSON_CORPUS_ROOT = os.path.join(PATH_HOME_DATA,'corpus_json')
+PATH_JSON_CORPUS_ROOT = os.path.join(PATH_HOME_DATA,'corpus_json1')
 PATH_JSON_CORPUS_TEXTS = os.path.join(PATH_JSON_CORPUS_ROOT, 'texts')
 PATH_JSON_CORPUS_METADATA = os.path.join(PATH_JSON_CORPUS_ROOT, 'metadata.csv')
 PATH_TEXT_CORPUS_MINI = os.path.join(PATH_TEXT_CORPUS_ROOT, 'PPA_pages.jsonl')

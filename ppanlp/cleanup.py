@@ -225,7 +225,6 @@ def process_headers(pages, remove_headers=True, similarity_threshold=80):
         page = pages[i]
         if not 'corrections' in page: page['corrections']={}
         if not 'headers' in page['corrections']: page['corrections']['headers']=[]
-        correction_added=False
         current_page_text = pages[i]['page_text']
         current_substantial_lines = get_substantial_lines(current_page_text)
 
@@ -263,10 +262,9 @@ def process_headers(pages, remove_headers=True, similarity_threshold=80):
                         break
 
                 if header_found:
-                    
-                    if not correction_added:
-                        correction_added=True
-                        page['corrections']['headers'].append((current_line,''))
+                    correx=(current_line,'')
+                    if correx not in set(page['corrections']['headers']):
+                        page['corrections']['headers'].append(correx)
                     lines_of_page = current_page_text.split('\n')
                     for idx, line in enumerate(lines_of_page):
                         if line.strip() == current_line.strip():

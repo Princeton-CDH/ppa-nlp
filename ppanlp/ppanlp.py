@@ -376,6 +376,5 @@ class PPAText:
     @cached_property
     def pages(self):
         if not self.filename_exists: return []
-        df=pd.read_json(self.filename,dtype=str)
-        df['page_i']=df.page_id.apply(int)
-        return df
+        with open(self.filename) as f:
+            return orjson.loads(f.read())
