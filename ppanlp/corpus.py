@@ -4,21 +4,22 @@ from .cleanup import cleanup_pages
 PPA_OBJ=None
 PATH_CORPUS=PATH_PPA_CORPUS
 
-def set_corpus_path(path=None):
+def set_corpus_path(path=None,**kwargs):
     global PPA_OBJ,PATH_CORPUS
     PATH_CORPUS=os.path.abspath(os.path.expanduser(path)) if path else PATH_PPA_CORPUS
-    PPA_OBJ = PPACorpus(PATH_CORPUS)
+    PPA_OBJ = PPACorpus(PATH_CORPUS,**kwargs)
 
-def PPA(path=None):
-    if PPA_OBJ == None or path!=None: set_corpus_path(path)
+def PPA(path=None, **kwargs):
+    if PPA_OBJ == None or path or kwargs: set_corpus_path(path, **kwargs)
     return PPA_OBJ
 
 
 class PPACorpus:
     WORK_ID_FIELD = 'id'
 
-    def __init__(self, path:str, texts_dir='texts', metadata_fn='metadata.json', texts_preproc_dir='texts_preproc'):
+    def __init__(self, path:str, clean=False, texts_dir='texts', metadata_fn='metadata.json', texts_preproc_dir='texts_preproc'):
         self.path = os.path.abspath(os.path.expanduser(path))
+        self.clean=clean
         self.path_texts = os.path.join(self.path,texts_dir) if not os.path.isabs(texts_dir) else texts_dir
         self.path_texts_preproc = os.path.join(self.path,texts_preproc_dir) if not os.path.isabs(texts_preproc_dir) else texts_preproc_dir
         self.path_metadata = os.path.join(self.path,metadata_fn) if not os.path.isabs(metadata_fn) else metadata_fn
@@ -62,10 +63,9 @@ class PPACorpus:
 class PPAText:
     FILE_ID_KEY='work_id'
 
-    def __init__(self, id, clean=True, corpus=None):
+    def __init__(self, id, corpus=None):
         self.id=id
         self.corpus=corpus if corpus is not None else PPA()
-        self.clean=clean
 
     def __iter__(self): yield from self.iter_pages()
 
@@ -113,6 +113,11 @@ class PPAText:
                 yield from json.load(f)
 
     def iter_pages(self, clean=None):
-        clean = self.clean if clean==None else clean
+        clean = self.corpus.clean if clean==None else clean
         yield from self.iter_pages_preproc() if clean else self.iter_pages_orig()
         
+
+
+def cleanup_mp(work_id):
+    t = PPA().get_text(work_id)
+    return t.clean_pages()
