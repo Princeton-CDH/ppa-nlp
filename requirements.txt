@@ -1,11 +1,8 @@
-jupyterlab
 pandas
 sqlitedict
 bs4
 tqdm
-ipywidgets
 orjson
-multiprocess
 intspan
 openpyxl
 django
