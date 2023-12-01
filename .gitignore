@@ -160,7 +160,11 @@ cython_debug/
 #.idea/
 
 
-data
+data/*
 .DS_Store
 data.*
 file_system_backend
+
+
+!data/ocr_cleanup_rulesets/
+!data/ocr_cleanup_rulesets/*
