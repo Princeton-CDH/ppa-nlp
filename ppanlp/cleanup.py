@@ -337,11 +337,11 @@ def cleanup_str(txt, use_nltk_tokenizer=False, remove_headers:list=None, **page_
         'page_text':corrected_text, 
         'page_text_orig':page_text, 
         'page_tokens':corrected_tokens_l,
-        'page_corrections_headers':specific_header_corrections,
-        'page_corrections_linebreaks':specific_linebreak_corrections,
-        'page_corrections_long_s':specific_long_s_corrections,
-        'page_corrections_ocr':specific_ocr_corrections,
-        'page_corrections_f_s':specific_f_s_hack_corrections,
+        'page_corrections_headers':list(set(specific_header_corrections)),
+        'page_corrections_linebreaks':list(set(specific_linebreak_corrections)),
+        'page_corrections_long_s':list(set(specific_long_s_corrections)),
+        'page_corrections_ocr':list(set(specific_ocr_corrections)),
+        'page_corrections_f_s':list(set(specific_f_s_hack_corrections)),
     }
 
 
