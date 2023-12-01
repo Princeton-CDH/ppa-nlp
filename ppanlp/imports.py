@@ -8,6 +8,7 @@ import orjson,zlib
 import pandas as pd
 from intspan import intspan
 import jsonlines
+import json
 
 ## ocr correction imports
 import re
@@ -24,7 +25,7 @@ from difflib import SequenceMatcher
 from functools import cached_property
 from collections import Counter
 import gzip
-nltk.download('punkt')
+# nltk.download('punkt')
 
 ## settings
 pd.options.display.max_columns=None
@@ -57,6 +58,11 @@ PATH_JSON_CORPUS_ROOT = os.path.join(PATH_HOME_DATA,'corpus_json1')
 PATH_JSON_CORPUS_TEXTS = os.path.join(PATH_JSON_CORPUS_ROOT, 'texts')
 PATH_JSON_CORPUS_METADATA = os.path.join(PATH_JSON_CORPUS_ROOT, 'metadata.csv')
 PATH_TEXT_CORPUS_MINI = os.path.join(PATH_TEXT_CORPUS_ROOT, 'PPA_pages.jsonl')
+PATH_PPA_CORPUS = os.path.join(PATH_HOME_DATA,'corpus')
+
 ## ensure dirs
 for pathstr in [PATH_HOME_DATA, PATH_ECCO_DATA, PATH_ECCO_RAW_DATA]:
     os.makedirs(pathstr, exist_ok=True)
+
+
+from .utils import *

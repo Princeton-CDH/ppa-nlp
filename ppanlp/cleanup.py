@@ -190,7 +190,7 @@ def load_f_s_hack_corrections(file_path = os.path.join(PATH_OCR_RULESETS, "cleve
                 correction_rules[incorrect] = correct
     return correction_rules
 
-def process_headers(pages, remove_headers=True, similarity_threshold=80):
+def identify_headers(pages, remove_headers=True, similarity_threshold=80):
     """
     function to identifies and optionally removes running headers
     inspired by Ted Underwood's GREAT headerfinder script: https://github.com/tedunderwood/DataMunging/blob/master/runningheaders/HeaderFinder.py
@@ -221,14 +221,11 @@ def process_headers(pages, remove_headers=True, similarity_threshold=80):
                 break
         return substantial_lines
 
-    for i in range(len(pages)):
-        page = pages[i]
-        if not 'corrections' in page: page['corrections']={}
-        if not 'headers' in page['corrections']: page['corrections']['headers']=[]
-        current_page_text = pages[i]['page_text']
+    for i,page in enumerate(pages):
+        # if not 'page_corrections' in page: page['page_corrections']={}
+        # if not 'headers' in page['page_corrections']: page['page_corrections']['headers']=[]
+        current_page_text = page['page_text']
         current_substantial_lines = get_substantial_lines(current_page_text)
-
-        header_found = False
 
         # determine the range of pages to compare with
         start_index = max(0, i - 2)
@@ -257,31 +254,20 @@ def process_headers(pages, remove_headers=True, similarity_threshold=80):
                         if header_key not in headers_set:
                             identified_headers.append(header_key)
                             headers_set.add(header_key)
-                        if remove_headers:
-                            header_found = True
                         break
-
-                if header_found:
-                    correx=(current_line,'')
-                    if correx not in set(page['corrections']['headers']):
-                        page['corrections']['headers'].append(correx)
-                    lines_of_page = current_page_text.split('\n')
-                    for idx, line in enumerate(lines_of_page):
-                        if line.strip() == current_line.strip():
-                            page['page_text_clean'] = '\n'.join(lines_of_page[idx+1:])
-                            
-                            break
-                    break
-
-    return pages
+    return {hdr for lnnum,hdr in headers_set}
 
 
 
-def cleanup_str(txt, use_nltk_tokenizer=False, **page_attrs):
+def cleanup_str(txt, use_nltk_tokenizer=False, remove_headers:list=None, **page_attrs):
     """
     Most of the cleanup occurs here. Can be called with a string or a string with page attributes
     """
+    orig_txt = txt
     page_text = txt
+
+
+
     # dicts to store specific corrections and their counts
     specific_ocr_corrections = []
     specific_linebreak_corrections = []
@@ -292,11 +278,24 @@ def cleanup_str(txt, use_nltk_tokenizer=False, **page_attrs):
     # add a dictionary for specific f ſ hack corrections
     specific_f_s_hack_corrections = []
 
+    specific_header_corrections = []
+        
+
     # counters for corrections
     linebreak_corrections = 0
     ocr_corrections = 0
     long_s_corrections = 0
     f_s_word_replacements = 0
+
+    # remove headers?
+    if remove_headers:
+        hdrs=set(remove_headers)
+        lines = page_text.split('\n')
+        new_lines = [ln for ln in lines if ln.strip() not in hdrs]
+        hdr_lines = {ln for ln in lines if ln.strip() in hdrs}
+        specific_header_corrections.extend([(hdr,'') for hdr in hdr_lines])
+        page_text = '\n'.join(new_lines)
+    
 
     # rejoin line breaks before tokenization and log corrections
     page_text, corrections = rejoin_linebreaks(page_text, specific_linebreak_corrections)
@@ -308,7 +307,7 @@ def cleanup_str(txt, use_nltk_tokenizer=False, **page_attrs):
     page_text = corrected_text
 
     # tokenization
-    tokens = word_tokenize(page_text) if use_nltk_tokenizer else tokenize_agnostic(page_text)
+    tokens = tokenize_agnostic(page_text)
 
     # apply OCR corrections on tokens and log corrections
     corrected_tokens = []
@@ -329,48 +328,36 @@ def cleanup_str(txt, use_nltk_tokenizer=False, **page_attrs):
             specific_f_s_hack_corrections.append((token,corrected_token))
             corrected_tokens[i] = corrected_token
 
-    token_count = len(corrected_tokens)
-
     # convert corrected tokens back to text for further processing
-    corrected_text = untokenize(corrected_tokens) if use_nltk_tokenizer else untokenize_agnostic(corrected_tokens)
-
-    corrected_tokens_real = [x for x in corrected_tokens if any(y.isalpha() for y in x)]
-
-    # create output dictionary
-    def as_counts(l):
-        return l
-        # return dict(Counter(l))
+    corrected_text = untokenize_agnostic(corrected_tokens)
+    corrected_tokens_l = [x.strip().lower() for x in corrected_tokens if x.strip() and x.strip()[0].isalpha()]
 
     return {
-        'page_text':page_text, 
-        **page_attrs, 
-        'page_text_clean':corrected_text, 
-        # 'page_num_tokens':token_count,
-        'page_tokens':corrected_tokens_real,
-        'corrections': {
-            'headers':as_counts(page_attrs.get('corrections',{}).get('headers',[])),
-            'ocr':as_counts(specific_ocr_corrections),
-            'linebreaks':as_counts(specific_linebreak_corrections),
-            'long_s':as_counts(specific_long_s_corrections),
-            'f_s':as_counts(specific_f_s_hack_corrections),
-        }
+        **{k:v for k,v in page_attrs.items() if k!='page_text'}, 
+        'page_text':corrected_text, 
+        'page_text_orig':page_text, 
+        'page_tokens':corrected_tokens_l,
+        'page_corrections_headers':specific_header_corrections,
+        'page_corrections_linebreaks':specific_linebreak_corrections,
+        'page_corrections_long_s':specific_long_s_corrections,
+        'page_corrections_ocr':specific_ocr_corrections,
+        'page_corrections_f_s':specific_f_s_hack_corrections,
     }
 
 
 
-def cleanup_page(page_d):
+def cleanup_page(page_d, remove_headers=None):
     """
     Cleanup a page dictionary
     """
-    txt=page_d.get('page_text_clean', page_d.get('page_text',''))
-    odx=cleanup_str(txt, **page_d)
+    txt=page_d.get('page_text')
+    odx=cleanup_str(txt, remove_headers=remove_headers, **page_d)
     return odx
 
-def cleanup_pages(pages_ld):
+def cleanup_pages(pages_ld,remove_headers=True):
     """
-    Cleanup a list or dataframe of pages
+    Cleanup a list of pages
     """
-    if type(pages_ld) == pd.DataFrame: pages_ld=pages_ld.to_dict('records')
-    pages_ld = process_headers(pages_ld, remove_headers=True) # ideally, we want to set this later when calling the function
-    pages_ld = [cleanup_page(page_d) for page_d in pages_ld]
+    headers = identify_headers(pages_ld, remove_headers=remove_headers)
+    pages_ld = [cleanup_page(page_d,remove_headers=headers) for page_d in pages_ld]
     return pages_ld
