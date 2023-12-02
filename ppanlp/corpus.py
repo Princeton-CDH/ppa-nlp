@@ -24,6 +24,7 @@ class PPACorpus:
         self.path_texts_preproc = os.path.join(self.path,texts_preproc_dir) if not os.path.isabs(texts_preproc_dir) else texts_preproc_dir
         self.path_metadata = os.path.join(self.path,metadata_fn) if not os.path.isabs(metadata_fn) else metadata_fn
         self.path_data = os.path.join(self.path, 'data')
+        self.path_nlp_db = os.path.join(self.path_data, 'nlp.db')
         self._topicmodel = None
 
     def __iter__(self): yield from self.iter_texts()
@@ -39,6 +40,10 @@ class PPACorpus:
     @cached_property
     def texts(self):
         return list(self.iter_texts())
+    @property
+    def text(self):
+        return random.choice(self.texts)
+    
 
 
     def iter_texts(self, work_ids=None):
@@ -50,19 +55,22 @@ class PPACorpus:
             yield self.get_text(work_id)
             pbar.update()
 
-    def iter_pages(self, work_ids=None, clean=None, lim=None, min_doc_len=None, frac=1, frac_text=1):
+    def iter_pages(self, work_ids=None, clean=None, lim=None, min_doc_len=None, frac=1, frac_text=1, max_per_cluster=None):
         if not frac or frac>1 or frac<=0: frac=1
         if not frac_text or frac_text>1 or frac_text<=0: frac_text=1
 
         i=0
+        clustd=Counter()
         for text in self.iter_texts(work_ids=work_ids):
             if frac_text==1 or random.random()<=frac_text:
                 for page in text.iter_pages(clean=clean):
                     if not min_doc_len or page.num_content_words>=min_doc_len:
                         if frac==1 or random.random()<=frac:
-                            yield page
-                            i+=1
-                            if lim and i>=lim: break
+                            if not max_per_cluster or clustd[page.text.cluster]<max_per_cluster:
+                                yield page
+                                clustd[page.text.cluster]+=1
+                                i+=1
+                                if lim and i>=lim: break
             if lim and i>=lim: break
 
     def clean_texts(self, work_ids=None, num_proc=None):
@@ -84,11 +92,11 @@ class PPACorpus:
             stopwords = set(stops.words('english'))
         except Exception:
             import nltk
-            nltk.download('stopwords')
+            nltk.download('stopwords')  
             stopwords = set(stops.words('english'))
         return stopwords
     
-    def topic_model(self, output_dir=None, ntopic=50, force=False, niter=100, clean=None, lim=None, min_doc_len=25, frac=1, frac_text=1):
+    def topic_model(self, output_dir=None, ntopic=50, force=False, niter=100, clean=None, lim=None, min_doc_len=25, frac=1, frac_text=1, max_per_cluster=None):
         from .topicmodel import PPATopicModel
 
         if not force and self._topicmodel!=None:
@@ -102,10 +110,18 @@ class PPACorpus:
             clean=clean,
             min_doc_len=min_doc_len,
             frac=frac,
-            frac_text=frac_text
+            frac_text=frac_text,
+            max_per_cluster=None
         )
         return self._topicmodel
     
+    @cached_property
+    def nlp(self):
+        import stanza
+        nlp = stanza.Pipeline(lang='en', processors='tokenize,ner')
+        return nlp
+    
+        
 
 
 class PPAText:
@@ -150,6 +166,9 @@ class PPAText:
     @cached_property
     def pages_orig(self): 
         return list(self.iter_pages_orig())
+    @property
+    def page(self):
+        return random.choice(self.pages)
 
     def clean(self,remove_headers=True,force=False):
         self.do_clean=True
@@ -183,8 +202,6 @@ class PPAText:
     @cached_property
     def txt(self, sep='\n\n\n\n'):
         return sep.join(page.txt for page in self.pages)
-    @cached_property
-    def stopwords(self): return self.corpus.stopwords
 
 def cleanup_mp(work_id):
     t = PPA().get_text(work_id)
@@ -195,6 +212,7 @@ def cleanup_mp(work_id):
 class PPAPage:
     def __init__(self, text, **page_d):
         self.text = text
+        self.corpus = text.corpus
         self.d = page_d
 
     @cached_property
@@ -221,7 +239,20 @@ class PPAPage:
     @cached_property
     def num_content_words(self): return len(self.content_words)
     @cached_property
-    def stopwords(self): return self.text.stopwords
+    def stopwords(self): return self.corpus.stopwords
 
     def get_content_words(self, min_tok_len=4):
         return [tok for tok in self.tokens if len(tok)>=min_tok_len and tok not in self.stopwords]
+    
+
+    @cached_property
+    def ents(self):
+        with SqliteDict(self.corpus.path_nlp_db, tablename='ents', autocommit=True) as db:
+            if self.id in db: 
+                return db[self.id]
+
+            doc = self.corpus.nlp(self.txt)
+            res = [(ent.text, ent.type) for ent in doc.ents]
+            db[self.id] = res
+            return res
+    

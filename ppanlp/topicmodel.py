@@ -1,10 +1,12 @@
 from .imports import *
 from .corpus import PPA
+import tomotopy as tp
 
 class PPATopicModel:
     def __init__(
             self, 
             output_dir=None,
+            path_docs=None,
             corpus=None,
             ntopic=50, 
             niter=100, 
@@ -12,6 +14,7 @@ class PPATopicModel:
             min_doc_len=25,
             frac=1,
             frac_text=1,
+            max_per_cluster=None,
             ):
 
         self.corpus=corpus if corpus!=None else PPA()
@@ -21,33 +24,38 @@ class PPATopicModel:
         self.min_doc_len = min_doc_len
         self.frac=frac
         self.frac_text=frac_text
+        self.max_per_cluster=max_per_cluster
         self._mdl = None
         self.id2index = {}
         self.index2id = {}
 
         self.path_topicmodel = os.path.join(self.corpus.path_data,'topicmodels') 
-        self.path = os.path.join(
+        self.path = output_dir if output_dir and os.path.isabs(output_dir) else os.path.join(
             self.path_topicmodel,
             'models',
             (
                 output_dir if output_dir else (
-                    f'data.tomotopy.model.ntopic_{self.ntopic}.niter_{self.niter}.clean_{self.clean}.min_doc_len_{self.min_doc_len}.frac_text_{self.frac_text}.frac_{self.frac}'
+                    f'data.tomotopy.model.ntopic_{self.ntopic}.niter_{self.niter}.clean_{self.clean}.min_doc_len_{self.min_doc_len}.frac_text_{self.frac_text}.frac_{self.frac}.max_per_cluster_{self.max_per_cluster}'
                 )
             )
         )
-        self.path_corpus = os.path.join(
+        self.path_corpus = path_docs if path_docs else os.path.join(
             self.path_topicmodel, 
             'corpora', 
-            f'data.minicorpus.clean_{self.clean}.min_doc_len_{self.min_doc_len}.frac_text_{self.frac_text}.frac_{self.frac}.jsonl.gz'
+            f'data.minicorpus.clean_{self.clean}.min_doc_len_{self.min_doc_len}.frac_text_{self.frac_text}.frac_{self.frac}.max_per_cluster_{self.max_per_cluster}.jsonl.gz'
         )
+
         self.path_model = os.path.join(self.path, 'model.bin')
         self.path_index = os.path.join(self.path, 'index.json')
         self.path_params = os.path.join(self.path, 'params.json')
         self.path_ldavis = os.path.join(self.path, 'ldavis')
 
-    def prepare_corpus(self, force=False, lim=None):
+    def prepare_docs(self, force=False, lim=None):
+        if not force and os.path.exists(self.path_corpus):
+            return
+        
         def iterr():
-            for page in self.corpus.iter_pages(clean=self.clean,lim=lim,min_doc_len=self.min_doc_len,frac=self.frac,frac_text=self.frac_text):
+            for page in self.corpus.iter_pages(clean=self.clean,lim=lim,min_doc_len=self.min_doc_len,frac=self.frac,frac_text=self.frac_text,max_per_cluster=self.max_per_cluster):
                 yield dict(
                     work_id=page.text.id,
                     page_id=page.id,
@@ -58,10 +66,18 @@ class PPATopicModel:
             iterr(),
             self.path_corpus
         )
+        
     
+    def iter_docs(self, lim=None, progress=True):
+        if not os.path.exists(self.path_corpus): self.prepare_docs(lim=lim)
+        iterr=iter_jsonl(self.path_corpus)
+        if progress:
+            total=get_num_lines_json(self.path_corpus)
+            iterr=tqdm(iterr, total=total, desc='Iterating documents', position=0)
+        yield from iterr
+
 
     def model(self, output_dir=None,force=False, lim=None):
-        import tomotopy as tp
         
         # get filename
         fdir=self.path
@@ -72,22 +88,20 @@ class PPATopicModel:
 
         # save?
         if force or not os.path.exists(fn) or not os.path.exists(fnindex):
-            mdl = self.mdl = tp.LDAModel(k=50)
+            mdl = self.mdl = tp.LDAModel(k=self.ntopic)
             docd=self.id2index={}
-            for page in self.corpus.iter_pages(clean=self.clean,lim=lim):
-                tokens = page.content_words
-                if not self.min_doc_len or len(tokens)>=self.min_doc_len:
-                    if self.frac==1 or random.random()<=self.frac:
-                        docd[page.id] = mdl.add_doc(tokens)
+            for page in self.iter_docs(lim=lim):
+                tokens = page['page_words']
+                docd[page['page_id']] = mdl.add_doc(tokens)
 
             def getdesc():
                 return f'Training model (ndocs={len(docd)}, log-likelihood = {mdl.ll_per_word:.4})'
             
-            pbar=tqdm(list(range(0, self.niter, 10)),desc=getdesc(),position=0)
+            pbar=tqdm(list(range(0, self.niter, 1)),desc=getdesc(),position=0)
             
             for i in pbar:
                 pbar.set_description(getdesc())
-                mdl.train(10)
+                mdl.train(1)
             mdl.save(fn)
             print('Saved:',fn)
             with open(fnindex,'wb') as of:
@@ -107,10 +121,10 @@ class PPATopicModel:
                 of.write(orjson.dumps(params,option=orjson.OPT_INDENT_2))
 
         else:
+            print('Loading:',fn)
             self.mdl = tp.LDAModel.load(fn)
             with open(fnindex,'rb') as f:
                 self.id2index=orjson.loads(f.read())
-            print('Loaded:',fn)
         self.index2id={v:k for k,v in self.id2index.items()}
     
     
@@ -157,3 +171,23 @@ class PPATopicModel:
         print('Saving:',fn)
         pyLDAvis.save_html(prepared_data, fn)
         return fn
+    
+
+    @cached_property
+    def doc_topic_dists_df(self):
+        page_ids,values = zip(*[(self.index2id[i],x) for i,x in enumerate(self.doc_topic_dists) if i in self.index2id])
+        dftopicdist = pd.DataFrame(values)
+        dftopicdist['page_id'] = page_ids
+        dftopicdist['work_id']=[i.split('_')[0] for i in page_ids]
+        dftopicdist['cluster']=[self.id2cluster.get(work_id,work_id) for work_id in dftopicdist.work_id]
+        return dftopicdist.set_index(['cluster','work_id','page_id'])
+    
+    @cached_property
+    def id2cluster(self):
+        return dict(zip(self.corpus.meta.index, self.corpus.meta[CLUSTER_KEY]))
+
+    @cached_property
+    def meta(self):
+        df = self.doc_topic_dists_df        
+        df_avgs=df.groupby('work_id').mean(numeric_only=True)
+        return self.corpus.meta.merge(df_avgs, on='work_id').set_index('work_id')

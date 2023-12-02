@@ -52,3 +52,7 @@ def ensure_dir(fn):
     dirname=os.path.dirname(fn)
     if dirname: os.makedirs(dirname, exist_ok=True)
     
+def get_num_lines_json(fn, progress=True):
+    if not os.path.exists(fn): return
+    nl=sum(1 for _ in tqdm(iter_json(fn), desc=f'Counting lines in {fn[fn.index(".json"):] if ".json" in fn else fn}',disable=not progress,position=0))
+    return nl

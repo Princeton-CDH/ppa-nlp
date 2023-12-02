@@ -63,6 +63,12 @@ PATH_JSON_CORPUS_METADATA = os.path.join(PATH_JSON_CORPUS_ROOT, 'metadata.csv')
 PATH_TEXT_CORPUS_MINI = os.path.join(PATH_TEXT_CORPUS_ROOT, 'PPA_pages.jsonl')
 PATH_PPA_CORPUS = os.path.join(PATH_HOME_DATA,'corpus')
 
+GROUP_KEY='group_id_s'
+CLUSTER_KEY='cluster_id_s'
+SOURCE_KEY='source_id'
+WORK_KEY='work_id'
+PAGE_KEY='page_id'
+
 ## ensure dirs
 for pathstr in [PATH_HOME_DATA, PATH_ECCO_DATA, PATH_ECCO_RAW_DATA]:
     os.makedirs(pathstr, exist_ok=True)
