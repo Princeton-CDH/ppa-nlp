@@ -24,7 +24,7 @@ class PPACorpus:
         self.path_texts_preproc = os.path.join(self.path,texts_preproc_dir) if not os.path.isabs(texts_preproc_dir) else texts_preproc_dir
         self.path_metadata = os.path.join(self.path,metadata_fn) if not os.path.isabs(metadata_fn) else metadata_fn
         self.path_data = os.path.join(self.path, 'data')
-        self.path_nlp_db = os.path.join(self.path_data, 'nlp.db')
+        self.path_nlp_db = os.path.join(self.path_data, 'nlp.sqlitedict')
         self._topicmodel = None
 
     def __iter__(self): yield from self.iter_texts()
