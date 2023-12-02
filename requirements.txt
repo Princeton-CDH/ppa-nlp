@@ -3,6 +3,7 @@ sqlitedict
 bs4
 tqdm
 orjson
+orjsonl
 intspan
 openpyxl
 django
@@ -11,3 +12,5 @@ pucas
 jsonlines
 wordfreq
 nltk
+tomotopy
+pyLDAvis

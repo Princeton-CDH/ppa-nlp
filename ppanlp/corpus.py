@@ -23,6 +23,8 @@ class PPACorpus:
         self.path_texts = os.path.join(self.path,texts_dir) if not os.path.isabs(texts_dir) else texts_dir
         self.path_texts_preproc = os.path.join(self.path,texts_preproc_dir) if not os.path.isabs(texts_preproc_dir) else texts_preproc_dir
         self.path_metadata = os.path.join(self.path,metadata_fn) if not os.path.isabs(metadata_fn) else metadata_fn
+        self.path_data = os.path.join(self.path, 'data')
+        self._topicmodel = None
 
     def __iter__(self): yield from self.iter_texts()
 
@@ -48,6 +50,21 @@ class PPACorpus:
             yield self.get_text(work_id)
             pbar.update()
 
+    def iter_pages(self, work_ids=None, clean=None, lim=None, min_doc_len=None, frac=1, frac_text=1):
+        if not frac or frac>1 or frac<=0: frac=1
+        if not frac_text or frac_text>1 or frac_text<=0: frac_text=1
+
+        i=0
+        for text in self.iter_texts(work_ids=work_ids):
+            if frac_text==1 or random.random()<=frac_text:
+                for page in text.iter_pages(clean=clean):
+                    if not min_doc_len or page.num_content_words>=min_doc_len:
+                        if frac==1 or random.random()<=frac:
+                            yield page
+                            i+=1
+                            if lim and i>=lim: break
+            if lim and i>=lim: break
+
     def clean_texts(self, work_ids=None, num_proc=None):
         work_ids = list(self.meta.index) if work_ids == None else work_ids
         num_proc=(mp.cpu_count()//2)-1 if not num_proc else num_proc
@@ -58,6 +75,37 @@ class PPACorpus:
         objs = work_ids
         res = list(tqdm(pool.imap_unordered(cleanup_mp,objs), total=len(objs), position=0, desc=f'Cleaning PPA pages (script from Wouter Haverals) [{num_proc}x]'))
         return res
+    
+
+    @cached_property
+    def stopwords(self):
+        from nltk.corpus import stopwords as stops
+        try:
+            stopwords = set(stops.words('english'))
+        except Exception:
+            import nltk
+            nltk.download('stopwords')
+            stopwords = set(stops.words('english'))
+        return stopwords
+    
+    def topic_model(self, output_dir=None, ntopic=50, force=False, niter=100, clean=None, lim=None, min_doc_len=25, frac=1, frac_text=1):
+        from .topicmodel import PPATopicModel
+
+        if not force and self._topicmodel!=None:
+            return self._topicmodel
+        
+        self._topicmodel = PPATopicModel(
+            output_dir=output_dir,
+            corpus=self,
+            ntopic=ntopic,
+            niter=niter,
+            clean=clean,
+            min_doc_len=min_doc_len,
+            frac=frac,
+            frac_text=frac_text
+        )
+        return self._topicmodel
+    
 
 
 class PPAText:
@@ -72,6 +120,13 @@ class PPAText:
 
     @cached_property
     def id(self): return self.meta.get('work_id')
+
+    @cached_property
+    def cluster(self): return self.meta.get('cluster_id_s',self.id)
+    @cached_property
+    def source(self): return self.meta.get('source_id',self.id)
+    @cached_property
+    def is_excerpt(self): return self.id != self.source
 
     @cached_property
     def meta(self):
@@ -112,16 +167,14 @@ class PPAText:
     
     def iter_pages_orig(self, as_dict=False):
         if os.path.exists(self.path):
-            with open(self.path,'r') as f: 
-                for d in json.load(f):
-                    yield PPAPage(self, **d) if not as_dict else d
+            for d in iter_json(self.path):
+                yield PPAPage(self, **d) if not as_dict else d
     
     def iter_pages_preproc(self, as_dict=False):
         self.clean()
         if os.path.exists(self.path_preproc):
-            with open(self.path_preproc,'r') as f: 
-                for d in json.load(f):
-                    yield PPAPage(self, **d) if not as_dict else d
+            for d in iter_json(self.path):
+                yield PPAPage(self, **d) if not as_dict else d
 
     def iter_pages(self, clean=None):
         clean = self.do_clean if clean==None else clean
@@ -130,8 +183,8 @@ class PPAText:
     @cached_property
     def txt(self, sep='\n\n\n\n'):
         return sep.join(page.txt for page in self.pages)
-        
-
+    @cached_property
+    def stopwords(self): return self.corpus.stopwords
 
 def cleanup_mp(work_id):
     t = PPA().get_text(work_id)
@@ -147,7 +200,28 @@ class PPAPage:
     @cached_property
     def meta(self):
         return {'work_id':self.text.id, **self.d}
+    
+    @cached_property
+    def id(self):
+        return self.meta.get('page_id')
 
     @cached_property
     def txt(self):
         return self.meta.get('page_text')
+    
+    @cached_property
+    def tokens(self):
+        tokens=self.meta.get('page_tokens')
+        if not tokens: tokens=tokenize_agnostic(self.txt)
+        tokens = [x.strip().lower() for x in tokens if x.strip() and x.strip()[0].isalpha()]
+        return tokens
+
+    @cached_property
+    def content_words(self): return self.get_content_words()
+    @cached_property
+    def num_content_words(self): return len(self.content_words)
+    @cached_property
+    def stopwords(self): return self.text.stopwords
+
+    def get_content_words(self, min_tok_len=4):
+        return [tok for tok in self.tokens if len(tok)>=min_tok_len and tok not in self.stopwords]

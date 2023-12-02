@@ -1,9 +1,4 @@
 from .imports import *
-def tokenize_agnostic(txt):
-    return re.findall(r"[\w']+|[.,!?; -—–'\n]", txt)
-
-def untokenize_agnostic(l):
-    return ''.join(l)
 
 def remove_trailing_punctuation(word):
     # remove trailing punctuation and spaces

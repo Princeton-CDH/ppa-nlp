@@ -4,11 +4,13 @@ warnings.filterwarnings('ignore')
 from functools import cache
 from tqdm import tqdm
 from sqlitedict import SqliteDict
-import orjson,zlib
+import orjson
+import zlib
 import pandas as pd
 from intspan import intspan
 import jsonlines
 import json
+import orjsonl
 
 ## ocr correction imports
 import re
@@ -25,6 +27,7 @@ from difflib import SequenceMatcher
 from functools import cached_property
 from collections import Counter
 import gzip
+import numpy as np
 # nltk.download('punkt')
 
 ## settings
