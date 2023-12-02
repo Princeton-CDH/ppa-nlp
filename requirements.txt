@@ -15,3 +15,5 @@ nltk
 tomotopy
 pyLDAvis
 stanza
+numpy<1.26,>=1.20
+pandas==1.5.3

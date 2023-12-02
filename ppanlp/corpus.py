@@ -247,6 +247,7 @@ class PPAPage:
 
     @cached_property
     def ents(self):
+        ensure_dir(self.corpus.path_nlp_db)
         with SqliteDict(self.corpus.path_nlp_db, tablename='ents', autocommit=True) as db:
             if self.id in db: 
                 return db[self.id]
