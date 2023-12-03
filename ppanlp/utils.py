@@ -56,3 +56,32 @@ def get_num_lines_json(fn, progress=True):
     if not os.path.exists(fn): return
     nl=sum(1 for _ in tqdm(iter_json(fn), desc=f'Counting lines in {fn[fn.index(".json"):] if ".json" in fn else fn}',disable=not progress,position=0))
     return nl
+
+
+
+
+# Helper Progress Iterator
+# Needs: python -m pip install enlighten
+# https://stackoverflow.com/a/63796670
+def piter(it, *pargs, **nargs):
+    import enlighten
+    global __pit_man__
+    try:
+        __pit_man__
+    except NameError:
+        __pit_man__ = enlighten.get_manager()
+    man = __pit_man__
+    try:
+        it_len = len(it)
+    except:
+        it_len = None
+    try:
+        ctr = None
+        for i, e in enumerate(it):
+            if i == 0:
+                ctr = man.counter(*pargs, **{**dict(leave = False, total = it_len), **nargs})
+            yield e
+            ctr.update()
+    finally:
+        if ctr is not None:
+            ctr.close()

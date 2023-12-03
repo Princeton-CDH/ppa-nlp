@@ -44,7 +44,10 @@ class PPACorpus:
     def text(self):
         return random.choice(self.texts)
     
-
+    @property
+    def ents_db(self):
+        return SqliteDict(self.path_nlp_db, tablename='ents', autocommit=True)
+    
 
     def iter_texts(self, work_ids=None):
         if work_ids is None: work_ids=self.meta.index
@@ -248,7 +251,7 @@ class PPAPage:
     @cached_property
     def ents(self):
         ensure_dir(self.corpus.path_nlp_db)
-        with SqliteDict(self.corpus.path_nlp_db, tablename='ents', autocommit=True) as db:
+        with self.corpus.ents_db as db:
             if self.id in db: 
                 return db[self.id]
 
