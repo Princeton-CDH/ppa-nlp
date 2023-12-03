@@ -17,7 +17,7 @@ def PPA(path=None, **kwargs):
 class PPACorpus:
     WORK_ID_FIELD = 'id'
 
-    def __init__(self, path:str, clean=False, texts_dir='texts', metadata_fn='metadata.json', texts_preproc_dir='texts_preproc'):
+    def __init__(self, path:str, clean=True, texts_dir='texts', metadata_fn='metadata.json', texts_preproc_dir='texts_preproc'):
         path=path.strip()
         self.path = os.path.abspath(os.path.expanduser(path))
         self.do_clean=clean
@@ -106,11 +106,19 @@ class PPACorpus:
             write_json(wdb, self.path_work_ids)
 
     def clean(self, num_proc=1, force=False):
-        with self.page_db() as db:
-            objs = [(t.id,t.path) for t in self.iter_texts(desc='Gathering texts needing cleaning') if force or not t.is_cleaned]
-            iterr = pmap_iter(cleanup_pages_mp,objs,num_proc=num_proc,shuffle=True,desc='Cleaning up texts and storing in pagedb')
-            for work_id,new_pages in iterr:
-                db[work_id]=new_pages
+        objs=[
+            (t.path,t.path_preproc) 
+            for t in self.iter_texts(desc='Gathering texts needing cleaning') 
+            if force or not t.is_cleaned
+        ]
+        if objs:
+            pmap_run(
+                cleanup_pages_mp,
+                objs,
+                num_proc=num_proc,
+                shuffle=True,
+                desc='Cleaning up texts and storing in texts_preproc'
+            )
 
     
 
@@ -204,17 +212,19 @@ class PPAText:
     @cached_property
     def path_preproc(self):
         return os.path.join(self.corpus.path_texts_preproc, self.meta[self.FILE_ID_KEY]+'.json.gz')
-    
-
-    
 
     @cached_property
-    def pages(self): 
-        with self.corpus.page_db(flag='r') as db: res=db.get(self.id)
-        if res is None: 
-            self.clean()
-            with self.corpus.page_db(flag='r') as db: res=db.get(self.id)
-        return [PPAPage(d['page_id'], self, **d) for d in res]
+    def pages_clean(self):
+        self.clean(force=False)
+        return [PPAPage(d['page_id'], self, **d) for d in iter_json(self.path_preproc)]
+    
+    @cached_property
+    def pages_orig(self): 
+        return [PPAPage(d['page_id'], self, **d) for d in iter_json(self.path)]
+    
+    @cached_property
+    def pages(self):
+        return self.pages_clean if self.do_clean else self.pages
     
     @cached_property
     def pages_d(self):
@@ -228,15 +238,13 @@ class PPAText:
         return random.choice(self.pages)
     @property
     def is_cleaned(self):
-        with self.corpus.page_db(flag='r') as db:
-            return self.id in db
+        return os.path.exists(self.path_preproc)
 
     def clean(self,remove_headers=True,force=False):
         if force or not self.is_cleaned:
-            pages_ld = list(self.iter_page_json())
+            pages_ld = read_json(self.path)
             pages_ld = cleanup_pages(pages_ld, remove_headers=remove_headers)
-            with self.corpus.page_db() as db:
-                db[self.id]=pages_ld
+            write_json(pages_ld, self.path_preproc)
     
     def iter_page_json(self):
         if os.path.exists(self.path):
@@ -303,7 +311,7 @@ class PPAPage:
 
 
 def cleanup_pages_mp(obj):
-    id,fn=obj
-    pages_ld=read_json(fn)
-    o=cleanup_pages(pages_ld)
-    return (id,o)
+    ifn,ofn=obj
+    pages_ld=read_json(ifn)
+    out=cleanup_pages(pages_ld)
+    write_json(out, ofn)

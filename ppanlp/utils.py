@@ -21,16 +21,20 @@ def read_jsonl(fn):
 
 def read_json(fn):
     if os.path.exists(fn):
-        if 'jsonl' in fn:
-            return read_jsonl(fn)
-        if fn.endswith('.gz'):
-            try:
-                with gzip.open(fn, 'r') as zipfile:
-                    return orjson.loads(zipfile.read())
-            except gzip.BadGzipFile:
-                pass
-        with open(fn, 'rb') as f:
-            return orjson.loads(f.read())
+        try:
+            if 'jsonl' in fn:
+                return read_jsonl(fn)
+            if fn.endswith('.gz'):
+                try:
+                    with gzip.open(fn, 'r') as zipfile:
+                        return orjson.loads(zipfile.read())
+                except gzip.BadGzipFile:
+                    pass
+            with open(fn, 'rb') as f:
+                return orjson.loads(f.read())
+        except Exception as e:
+            # print('!!',fn,e)
+            pass    
     return []
 
 def write_json(obj, fn):    
