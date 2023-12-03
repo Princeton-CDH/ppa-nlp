@@ -6,6 +6,7 @@ from tqdm import tqdm
 from sqlitedict import SqliteDict
 import orjson
 import zlib
+import time
 import pandas as pd
 from intspan import intspan
 import jsonlines

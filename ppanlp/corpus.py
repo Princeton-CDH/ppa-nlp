@@ -6,7 +6,7 @@ PATH_CORPUS=PATH_PPA_CORPUS
 
 def set_corpus_path(path=None,**kwargs):
     global PPA_OBJ,PATH_CORPUS
-    PATH_CORPUS=os.path.abspath(os.path.expanduser(path)) if path else PATH_PPA_CORPUS
+    PATH_CORPUS=os.path.abspath(os.path.expanduser(path.strip())) if path else PATH_PPA_CORPUS
     PPA_OBJ = PPACorpus(PATH_CORPUS,**kwargs)
 
 def PPA(path=None, **kwargs):
@@ -18,13 +18,17 @@ class PPACorpus:
     WORK_ID_FIELD = 'id'
 
     def __init__(self, path:str, clean=False, texts_dir='texts', metadata_fn='metadata.json', texts_preproc_dir='texts_preproc'):
+        path=path.strip()
         self.path = os.path.abspath(os.path.expanduser(path))
         self.do_clean=clean
         self.path_texts = os.path.join(self.path,texts_dir) if not os.path.isabs(texts_dir) else texts_dir
         self.path_texts_preproc = os.path.join(self.path,texts_preproc_dir) if not os.path.isabs(texts_preproc_dir) else texts_preproc_dir
         self.path_metadata = os.path.join(self.path,metadata_fn) if not os.path.isabs(metadata_fn) else metadata_fn
         self.path_data = os.path.join(self.path, 'data')
-        self.path_nlp_db = os.path.join(self.path_data, 'nlp.sqlitedict')
+        self.path_nlp_db = os.path.join(self.path_data, 'pages_nlp.sqlitedict')
+        # self.path_page_db = os.path.join(self.path_data, 'pages.sqlitedict')
+        self.path_page_db = os.path.join(self.path_data, 'work_pages.sqlitedict')
+        self.path_work_ids = os.path.join(self.path_data, 'work_page_ids.json')
         self._topicmodel = None
 
     def __iter__(self): yield from self.iter_texts()
@@ -40,19 +44,36 @@ class PPACorpus:
     @cached_property
     def texts(self):
         return list(self.iter_texts())
+    @cached_property
+    def text_ids(self):
+        return list(self.meta.index)
+    @cached_property
+    def textd(self): return {t.id:t for t in self.iter_texts()}
     @property
     def text(self):
         return random.choice(self.texts)
     
-    @property
-    def ents_db(self):
-        return SqliteDict(self.path_nlp_db, tablename='ents', autocommit=True)
+    @cached_property
+    def num_texts(self):
+        return len(self.meta)
+    
+    def ents_db(self, flag='c', autocommit=True):
+        return SqliteDict(self.path_nlp_db, flag=flag, tablename='ents', autocommit=autocommit)
+    
+    @cache
+    def page_db(self, flag='c', autocommit=True):
+        return CompressedSqliteDict(self.path_page_db, flag=flag, autocommit=autocommit)
+    
+    @cached_property
+    def page_ids(self):
+        self.index(force=False)
+        return read_json(self.path_work_ids)
     
 
-    def iter_texts(self, work_ids=None):
+    def iter_texts(self, work_ids=None,progress=True,desc=None):
         if work_ids is None: work_ids=self.meta.index
-        pdesc='Iteration over texts in PPA'
-        pbar = tqdm(total=len(work_ids), position=0, desc=pdesc)
+        pdesc='Iteration over texts in PPA' if not desc else desc
+        pbar = tqdm(total=len(work_ids), position=0, desc=pdesc,disable=not progress)
         for work_id in work_ids:
             # pbar.set_description(f'{pdesc}: {work_id}')
             yield self.get_text(work_id)
@@ -66,7 +87,7 @@ class PPACorpus:
         clustd=Counter()
         for text in self.iter_texts(work_ids=work_ids):
             if frac_text==1 or random.random()<=frac_text:
-                for page in text.iter_pages(clean=clean):
+                for page in text:
                     if not min_doc_len or page.num_content_words>=min_doc_len:
                         if frac==1 or random.random()<=frac:
                             if not max_per_cluster or clustd[page.text.cluster]<max_per_cluster:
@@ -76,16 +97,21 @@ class PPACorpus:
                                 if lim and i>=lim: break
             if lim and i>=lim: break
 
-    def clean_texts(self, work_ids=None, num_proc=None):
-        work_ids = list(self.meta.index) if work_ids == None else work_ids
-        num_proc=(mp.cpu_count()//2)-1 if not num_proc else num_proc
-        num_proc=num_proc if num_proc>0 else 1
-        pool = mp.Pool(num_proc)
+    def index(self, force=False):
+        if force or not os.path.exists(self.path_work_ids):
+            wdb = {}
+            for text in self.iter_texts(desc='Indexing page ids by work'):
+                ids=[page['page_id'] for page in text.iter_page_json()]
+                wdb[text.id] = ids
+            write_json(wdb, self.path_work_ids)
 
-        random.shuffle(work_ids)
-        objs = work_ids
-        res = list(tqdm(pool.imap_unordered(cleanup_mp,objs), total=len(objs), position=0, desc=f'Cleaning PPA pages (script from Wouter Haverals) [{num_proc}x]'))
-        return res
+    def clean(self, num_proc=1, force=False):
+        with self.page_db() as db:
+            objs = [(t.id,t.path) for t in self.iter_texts(desc='Gathering texts needing cleaning') if force or not t.is_cleaned]
+            iterr = pmap_iter(cleanup_pages_mp,objs,num_proc=num_proc,shuffle=True,desc='Cleaning up texts and storing in pagedb')
+            for work_id,new_pages in iterr:
+                db[work_id]=new_pages
+
     
 
     @cached_property
@@ -127,6 +153,15 @@ class PPACorpus:
         
 
 
+
+
+
+
+
+
+
+
+
 class PPAText:
     FILE_ID_KEY='work_id'
 
@@ -135,10 +170,11 @@ class PPAText:
         self.corpus=corpus if corpus is not None else PPA()
         self.do_clean=self.corpus.do_clean if clean==None else clean
 
-    def __iter__(self): yield from self.iter_pages()
-
-    @cached_property
-    def id(self): return self.meta.get('work_id')
+    def __iter__(self): yield from self.pages
+    def __repr__(self):
+        return f'''PPAText({self.id})'''
+    def _repr_html_(self):
+        return f'<b>PPAText({self.id})</b> [{self.author+", " if self.author else ""}<i>{self.title}</i> ({str(self.year)[:4]})]'
 
     @cached_property
     def cluster(self): return self.meta.get('cluster_id_s',self.id)
@@ -148,8 +184,18 @@ class PPAText:
     def is_excerpt(self): return self.id != self.source
 
     @cached_property
+    def page_ids(self):
+        return self.corpus.page_ids.get(self.id,[])
+
+    @cached_property
     def meta(self):
         return dict(self.corpus.meta.loc[self.id])
+    @cached_property
+    def title(self): return self.meta.get('title')
+    @cached_property
+    def author(self): return self.meta.get('author')
+    @cached_property
+    def year(self): return self.meta.get('pub_date')
 
     @cached_property
     def path(self):
@@ -158,81 +204,75 @@ class PPAText:
     @cached_property
     def path_preproc(self):
         return os.path.join(self.corpus.path_texts_preproc, self.meta[self.FILE_ID_KEY]+'.json.gz')
+    
 
-    @cached_property
-    def pages_df(self):
-        return pd.DataFrame([p.meta for p in self.iter_pages()]).set_index('page_id')
+    
 
     @cached_property
     def pages(self): 
-        return list(self.iter_pages())
+        with self.corpus.page_db(flag='r') as db: res=db.get(self.id)
+        if res is None: 
+            self.clean()
+            with self.corpus.page_db(flag='r') as db: res=db.get(self.id)
+        return [PPAPage(d['page_id'], self, **d) for d in res]
+    
     @cached_property
-    def pages_orig(self): 
-        return list(self.iter_pages_orig())
+    def pages_d(self):
+        return {page.id:page for page in self.pages}
+
+    @cached_property
+    def pages_df(self):
+        return pd.DataFrame([p.meta for p in self.pages]).set_index('page_id')
     @property
     def page(self):
         return random.choice(self.pages)
+    @property
+    def is_cleaned(self):
+        with self.corpus.page_db(flag='r') as db:
+            return self.id in db
 
     def clean(self,remove_headers=True,force=False):
-        self.do_clean=True
-        for k in ['pages','pages_df','txt']:
-            if k in self.__dict__: del self.__dict__[k]
-
-        if force or not os.path.exists(self.path_preproc):
-            pages_ld = list(self.iter_pages_orig(as_dict=True))
-            new_pages = cleanup_pages(pages_ld, remove_headers=remove_headers)
-
-            os.makedirs(os.path.dirname(self.path_preproc),exist_ok=True)
-            with open(self.path_preproc,'w') as of:
-                json.dump(new_pages, of, indent=2)
-        return self
+        if force or not self.is_cleaned:
+            pages_ld = list(self.iter_page_json())
+            pages_ld = cleanup_pages(pages_ld, remove_headers=remove_headers)
+            with self.corpus.page_db() as db:
+                db[self.id]=pages_ld
     
-    def iter_pages_orig(self, as_dict=False):
+    def iter_page_json(self):
         if os.path.exists(self.path):
-            for d in iter_json(self.path):
-                yield PPAPage(self, **d) if not as_dict else d
-    
-    def iter_pages_preproc(self, as_dict=False):
-        self.clean()
-        if os.path.exists(self.path_preproc):
-            for d in iter_json(self.path):
-                yield PPAPage(self, **d) if not as_dict else d
-
-    def iter_pages(self, clean=None):
-        clean = self.do_clean if clean==None else clean
-        yield from self.iter_pages_preproc() if clean else self.iter_pages_orig()
+            yield from iter_json(self.path)
 
     @cached_property
     def txt(self, sep='\n\n\n\n'):
         return sep.join(page.txt for page in self.pages)
 
-def cleanup_mp(work_id):
-    t = PPA().get_text(work_id)
-    t.clean()
-    return t.path_preproc
 
 
 class PPAPage:
-    def __init__(self, text, **page_d):
-        self.text = text
+    def __init__(self, id, text=None,**_meta):
+        self.id = id
+        self.text = text if text is not None else PPA().textd[id.split('_')[0]]
         self.corpus = text.corpus
-        self.d = page_d
+        self._meta = _meta
 
-    @cached_property
-    def meta(self):
-        return {'work_id':self.text.id, **self.d}
+    
     
     @cached_property
-    def id(self):
-        return self.meta.get('page_id')
-
+    def meta(self):
+        return {
+            'work_id':self.text.id, 
+            **self._meta,
+            'page_num_tokens':len(self.tokens),
+            'page_num_content_words':len(self.content_words)
+        }
+    
     @cached_property
     def txt(self):
-        return self.meta.get('page_text')
+        return self._meta.get('page_text')
     
     @cached_property
     def tokens(self):
-        tokens=self.meta.get('page_tokens')
+        tokens=self._meta.get('page_tokens')
         if not tokens: tokens=tokenize_agnostic(self.txt)
         tokens = [x.strip().lower() for x in tokens if x.strip() and x.strip()[0].isalpha()]
         return tokens
@@ -260,3 +300,10 @@ class PPAPage:
             db[self.id] = res
             return res
     
+
+
+def cleanup_pages_mp(obj):
+    id,fn=obj
+    pages_ld=read_json(fn)
+    o=cleanup_pages(pages_ld)
+    return (id,o)

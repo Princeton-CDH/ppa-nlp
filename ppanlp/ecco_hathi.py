@@ -2,8 +2,6 @@ from .imports import *
 from .cleanup import cleanup_pages
 
 
-def encode_cache(x): return zlib.compress(orjson.dumps(x))
-def decode_cache(x): return orjson.loads(zlib.decompress(x))
 def get_page_cache(fn=PATH_ECCO_PAGES_CACHE):
     return SqliteDict(fn, autocommit=True, encode=encode_cache, decode=decode_cache)
 
