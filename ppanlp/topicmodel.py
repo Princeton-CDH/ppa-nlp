@@ -35,46 +35,54 @@ class PPATopicModel:
             'models',
             (
                 output_dir if output_dir else (
-                    f'data.tomotopy.model.ntopic_{self.ntopic}.niter_{self.niter}.clean_{self.clean}.min_doc_len_{self.min_doc_len}.frac_text_{self.frac_text}.frac_{self.frac}.max_per_cluster_{self.max_per_cluster}'
+                    f'data.tomotopy.model.ntopic_{self.ntopic}.niter_{self.niter}.min_doc_len_{self.min_doc_len}.frac_{self.frac}.max_per_cluster_{self.max_per_cluster}'
                 )
             )
         )
-        self.path_corpus = path_docs if path_docs else os.path.join(
-            self.path_topicmodel, 
-            'corpora', 
-            f'data.minicorpus.clean_{self.clean}.min_doc_len_{self.min_doc_len}.frac_text_{self.frac_text}.frac_{self.frac}.max_per_cluster_{self.max_per_cluster}.jsonl.gz'
-        )
+        # self.path_corpus = path_docs if path_docs else os.path.join(
+        #     self.path_topicmodel, 
+        #     'corpora', 
+        #     f'data.minicorpus.min_doc_len_{self.min_doc_len}.frac_text_{self.frac_text}.frac_{self.frac}.max_per_cluster_{self.max_per_cluster}.jsonl.gz'
+        # )
 
         self.path_model = os.path.join(self.path, 'model.bin')
         self.path_index = os.path.join(self.path, 'index.json')
         self.path_params = os.path.join(self.path, 'params.json')
         self.path_ldavis = os.path.join(self.path, 'ldavis')
 
-    def prepare_docs(self, force=False, lim=None):
-        if not force and os.path.exists(self.path_corpus):
-            return
+    # def prepare_docs(self, force=False, lim=None):
+    #     if not force and os.path.exists(self.path_corpus):
+    #         return
         
-        def iterr():
-            for page in self.corpus.iter_pages(clean=self.clean,lim=lim,min_doc_len=self.min_doc_len,frac=self.frac,frac_text=self.frac_text,max_per_cluster=self.max_per_cluster):
-                yield dict(
-                    work_id=page.text.id,
-                    page_id=page.id,
-                    page_words=page.content_words
-                )
+    #     def iterr():
+    #         for page in self.corpus.iter_pages(lim=lim,min_doc_len=self.min_doc_len,frac=self.frac,max_per_cluster=self.max_per_cluster):
+    #             yield dict(
+    #                 work_id=page.text.id,
+    #                 page_id=page.id,
+    #                 page_words=page.content_words
+    #             )
         
-        write_jsonl(
-            iterr(),
-            self.path_corpus
-        )
+    #     write_jsonl(
+    #         iterr(),
+    #         self.path_corpus
+    #     )
         
     
-    def iter_docs(self, lim=None, progress=True):
-        if not os.path.exists(self.path_corpus): self.prepare_docs(lim=lim)
-        iterr=iter_jsonl(self.path_corpus)
-        if progress:
-            total=get_num_lines_json(self.path_corpus)
-            iterr=tqdm(iterr, total=total, desc='Iterating documents', position=0)
-        yield from iterr
+    # def iter_docs(self, lim=None, progress=True):
+    #     if not os.path.exists(self.path_corpus): self.prepare_docs(lim=lim)
+    #     iterr=iter_jsonl(self.path_corpus)
+    #     if progress:
+    #         total=get_num_lines_json(self.path_corpus)
+    #         iterr=tqdm(iterr, total=total, desc='Iterating documents', position=0)
+    #     yield from iterr
+    def iter_docs(self, lim=None):
+        yield from self.corpus.iter_pages(
+            lim=lim,
+            min_doc_len=self.min_doc_len,
+            frac=self.frac,
+            max_per_cluster=self.max_per_cluster
+        )
+
 
 
     def model(self, output_dir=None,force=False, lim=None):
@@ -91,7 +99,7 @@ class PPATopicModel:
             mdl = self.mdl = tp.LDAModel(k=self.ntopic)
             docd=self.id2index={}
             for page in self.iter_docs(lim=lim):
-                tokens = page['page_words']
+                tokens = page['page_content_words']
                 docd[page['page_id']] = mdl.add_doc(tokens)
 
             def getdesc():

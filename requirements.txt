@@ -6,9 +6,6 @@ orjson
 orjsonl
 intspan
 openpyxl
-django
-django-cas-ng
-pucas
 jsonlines
 wordfreq
 nltk
