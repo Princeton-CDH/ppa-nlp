@@ -222,7 +222,10 @@ class PPACorpus:
     @cached_property
     def nlp(self):
         import stanza
-        nlp = stanza.Pipeline(lang='en', processors='tokenize,ner')
+        try:
+            nlp = stanza.Pipeline(lang='en', processors='tokenize,ner')
+        except Exception:
+            nlp = stanza.Pipeline(lang='en', processors='tokenize,ner',download_method=None)
         return nlp
     
         
