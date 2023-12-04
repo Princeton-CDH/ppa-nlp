@@ -1,6 +1,5 @@
 from .imports import *
 from .cleanup import cleanup_pages
-from tinydb import TinyDB, Query
 
 PPA_OBJ=None
 PATH_CORPUS=PATH_PPA_CORPUS
