@@ -28,7 +28,7 @@ class PPACorpus:
         self.path_data = os.path.join(self.path, 'data')
         self.path_nlp_db = os.path.join(self.path_data, 'pages_nlp.sqlitedict')
         # self.path_page_db = os.path.join(self.path_data, 'pages.sqlitedict')
-        self.path_page_db = os.path.join(self.path_data, 'work_pages.tinydb.json')
+        self.path_page_db = os.path.join(self.path_data, 'work_pages.db')
         self.path_work_ids = os.path.join(self.path_data, 'work_page_ids.json')
         self._topicmodel = None
 
@@ -62,12 +62,36 @@ class PPACorpus:
     def num_texts(self):
         return len(self.meta)
     
+    @cache
     def ents_db(self, flag='c', autocommit=True):
         return SqliteDict(self.path_nlp_db, flag=flag, tablename='ents', autocommit=autocommit)
     
     @cached_property
     def page_db(self):
-        return TinyDB(self.path_page_db)
+        from peewee import SqliteDatabase, Model, CharField, TextField, IntegerField, FloatField
+
+        db = SqliteDatabase(self.path_page_db)
+
+        class BaseModel(Model):
+            class Meta:
+                database = db
+
+        class Page(BaseModel):
+            page_id = CharField()
+            page_text = TextField()
+            page_num_content_words = IntegerField()
+            work_id = CharField()
+            cluster = CharField()
+            source = CharField()
+            year = IntegerField()
+            author = CharField()
+            title = CharField()
+            _random = FloatField()
+
+        db.connect()
+
+        if not db.table_exists(Page): db.create_tables([Page])
+        return Page
     
     @cached_property
     def page_ids(self):
@@ -85,38 +109,30 @@ class PPACorpus:
             pbar.update()
 
     
-    # def iter_pages(self, work_ids=None, clean=None, lim=None, min_doc_len=None, frac=None, max_per_cluster=None, as_dict=True):
-    #     if not frac or frac>1 or frac<=0: frac=1
-    #     i=0
-    #     clustd=Counter()
-    #     q={}
-    #     if frac and frac>0 and frac<1: q['_random']={'$lte':frac}
-    #     if work_ids: q['work_id']={'$in':list(work_ids)}
-    #     if min_doc_len: q['page_num_content_words']={'$gte':min_doc_len}
-    #     for d in tqdm(self.page_db.find(q),desc='Iterating over page search results'):
-    #         del d['_id']
-    #         if not max_per_cluster or clustd[d['cluster']]<max_per_cluster:
-    #             yield PPAPage(d['page_id'], t, **d) if not as_dict else d
-    #             if max_per_cluster: clustd[d['cluster']]+=1
-    #             i+=1
-    #             if lim and i>=lim: break
-    #         if lim and i>=lim: break
-
     def iter_pages(self, work_ids=None, clean=None, lim=None, min_doc_len=None, frac=None, max_per_cluster=None, as_dict=True):
-        if not frac or frac>1 or frac<=0: frac=1
+        Page=self.page_db
+        if not frac or frac>1 or frac<=0: frac=None
         i=0
         clustd=Counter()
         work_ids=set(work_ids) if work_ids else None
         
-        def test(d):
-            if frac and d['_random']>frac: return False
-            if work_ids and d['work_id'] not in work_ids: return False
-            if min_doc_len and d['page_num_content_words']<min_doc_len: return False
-            return True
+        q=None
+        if frac and min_doc_len:
+            q = (Page._random<=frac) & (Page.page_num_content_words>=min_doc_len)
+        elif frac:
+            q = (Page._random<=frac)
+        elif min_doc_len:
+            q = (Page.page_num_content_words>=min_doc_len)
         
-        for d in tqdm(self.page_db.search(lambda obj: test(obj)),desc='Iterating over page search results'):
+        total = Page.select().where(q).count() if q is not None else Page.select().count()
+        res = Page.select().where(q) if q is not None else Page.select()
+        
+        for page_rec in tqdm(res,total=total,desc='Iterating over page search results'):
+            d=page_rec.__data__        
+            if 'id' in d: del d['id']
+            if work_ids and d['work_id'] not in work_ids: continue
             if not max_per_cluster or clustd[d['cluster']]<max_per_cluster:
-                yield PPAPage(d['page_id'], self.textd[d['work_id']]) if not as_dict else d
+                yield PPAPage(d['page_id'], self.textd[d['work_id']], **d) if not as_dict else d
                 if max_per_cluster: clustd[d['cluster']]+=1
                 i+=1
                 if lim and i>=lim: break
@@ -124,7 +140,7 @@ class PPACorpus:
 
     @cache
     def pages_df(self, **kwargs): 
-        return pd.DataFrame(page.meta for page in self.iter_pages(as_dict=False,**kwargs))
+        return pd.DataFrame(page for page in self.iter_pages(as_dict=True,**kwargs))
     
 
     def index(self, force=False):
@@ -151,9 +167,8 @@ class PPACorpus:
             )
 
     def gen(self,force=False, num_proc=1):
-        # done_ids = set(self.page_db.search().distinct('work_id')) if not force else None
-        num_proc=1
-        done_ids = {}
+        num_proc=1  # doesn't work with mp
+        done_ids = {rec.work_id for rec in self.page_db.select(self.page_db.work_id).distinct()} if not force else None
         objs = [(id,force) for id in self.text_ids if force or id not in done_ids]
 
         pmap_run(
@@ -163,6 +178,16 @@ class PPACorpus:
             desc='Saving cleaned pages into page db',
             shuffle=True
         )
+
+    def ner_parse(self, force=False, **kwargs):
+        self.nlp
+        with self.ents_db() as db:
+            for page in self.iter_pages(**kwargs):
+                id=page['page_id']
+                if force or id not in db:
+                    doc = self.nlp(page['page_text'])
+                    res = [(ent.text, ent.type) for ent in doc.ents]
+                    db[id] = res
 
     
 
@@ -177,24 +202,18 @@ class PPACorpus:
             stopwords = set(stops.words('english'))
         return stopwords
     
-    def topic_model(self, output_dir=None, ntopic=50, force=False, niter=100, clean=None, lim=None, min_doc_len=25, frac=1, frac_text=1, max_per_cluster=None):
+    @cache
+    def topic_model(self, output_dir=None, ntopic=50, niter=100, min_doc_len=25, frac=1, max_per_cluster=None):
         from .topicmodel import PPATopicModel
-
-        if not force and self._topicmodel!=None:
-            return self._topicmodel
-        
-        self._topicmodel = PPATopicModel(
+        return PPATopicModel(
             output_dir=output_dir,
             corpus=self,
             ntopic=ntopic,
             niter=niter,
-            clean=clean,
             min_doc_len=min_doc_len,
             frac=frac,
-            frac_text=frac_text,
-            max_per_cluster=None
+            max_per_cluster=max_per_cluster,
         )
-        return self._topicmodel
     
     @cached_property
     def nlp(self):
@@ -318,17 +337,27 @@ class PPAText:
         return sep.join(page.txt for page in self.pages)
     
     def gen(self, force=False):
-        db=self.corpus.page_db
-        if force or (count:=db.count(Query().work_id==self.id)) != self.num_pages:
-            if force or count: db.remove(Query().work_id==self.id)
-            inp=[
-                {
-                    **{k:v for k,v in page.meta.items() if k not in {'page_text','page_text_orig','page_tokens','page_content_words'} and not k.startswith('page_correction')}, 
-                    '_random':random.random()
-                } 
+        Page=self.corpus.page_db
+        if force or (count:=Page.select().where(Page.work_id==self.id).count()) != self.num_pages:
+            if force or count: 
+                Page.delete().where(Page.work_id==self.id).execute()
+
+            inp = [
+                dict(
+                    page_id=page.id,
+                    page_text=page.txt,
+                    page_num_content_words=page.num_content_words,
+                    work_id=page.text.id,
+                    cluster = page.text.cluster,
+                    source = page.text.cluster,
+                    year = page.text.cluster,
+                    author = page.text.author,
+                    title = page.text.title[:255],
+                    _random = random.random()
+                )
                 for page in self.pages_json_preproc
             ]
-            if inp: db.insert_multiple(inp)
+            if inp: Page.insert(inp).execute()
 
 
 
@@ -381,10 +410,8 @@ class PPAPage:
     @cached_property
     def ents(self):
         ensure_dir(self.corpus.path_nlp_db)
-        with self.corpus.ents_db as db:
-            if self.id in db: 
-                return db[self.id]
-
+        with self.corpus.ents_db() as db:
+            if self.id in db: return db[self.id]
             doc = self.corpus.nlp(self.txt)
             res = [(ent.text, ent.type) for ent in doc.ents]
             db[self.id] = res
