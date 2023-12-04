@@ -372,7 +372,7 @@ class PPAText:
             todo = undone if not lim else undone[:lim-len(done)]
             for page in piter(todo, desc='Iterating pages',color='blue'):
                 page.ents
-                del page.__ents__
+                if 'ents' in page.__dict__: del page.__dict__['ents']
 
 
 
@@ -413,7 +413,6 @@ class PPAPage:
 
     @cached_property
     def content_words(self): 
-        print('content_words')
         return self.get_content_words()
     @cached_property
     def num_content_words(self): 
