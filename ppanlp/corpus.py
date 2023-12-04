@@ -114,7 +114,7 @@ class PPACorpus:
         with SqliteDict(self.path_page_db_counts, autocommit=True) as db:
             key=f'frac_{frac}.{min_doc_len}={min_doc_len}.work_ids_{work_ids}'
             if not key in db:
-                count = self.page_db.select().where(q).count() if q is not None else self.page_db.select().count()
+                count = self.page_db.select().where(q).count()# if q is not None else self.page_db.select().count()
                 db[key]=count
             return db[key]
     
