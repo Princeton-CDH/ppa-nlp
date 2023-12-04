@@ -109,9 +109,9 @@ class PPACorpus:
             pbar.update()
 
 
-    def page_db_count(self, q=None, frac=None, min_doc_len=None):
+    def page_db_count(self, q=None, frac=None, min_doc_len=None,work_ids=None):
         with SqliteDict(self.path_page_db_counts, autocommit=True) as db:
-            key=f'frac_{frac}.{min_doc_len}={min_doc_len}'
+            key=f'frac_{frac}.{min_doc_len}={min_doc_len}.work_ids_{work_ids}'
             if not key in db:
                 count = self.page_db.select().where(q).count() if q is not None else self.page_db.select().count()
                 db[key]=count
@@ -187,11 +187,19 @@ class PPACorpus:
             shuffle=True
         )
 
-    def ner_parse(self, lim=25, min_doc_len=25, **kwargs):
+    def ner_parse_texts(self, lim=25, min_doc_len=25, **kwargs):
         texts=[t for t in self.texts]
         random.shuffle(texts)
         for text in piter(texts,desc='Iterating texts',color='cyan'):
             text.ner_parse(lim=lim, min_doc_len=min_doc_len, **kwargs)
+    
+    def ner_parse(self, lim=None, min_doc_len=None,max_per_cluster=None,**kwargs):
+        with self.ents_db(flag='r') as db: done=set(db.keys())
+        numdone=Counter(id.split('_')[0] for id in done)
+        for page in self.iter_pages(as_dict=False,min_doc_len=min_doc_len,max_per_cluster=max_per_cluster):
+            if page.id in done: continue
+            if not lim or numdone[page.text.id]<lim:
+                page.ner_parse()
 
     
 
@@ -303,15 +311,29 @@ class PPAText:
         # if we don't need to clean just return orig json
         if not self.do_clean: return self.pages_json
 
-        # # if we already have preproc file just load that
-        # if os.path.exists(self.path_preproc): return self.pages_json_preproc
+        # if we already have preproc file just load that
+        if os.path.exists(self.path_preproc): return self.pages_json_preproc
         
-        # # if we only have the db on file use that
-        # if self.pages_db: return self.pages_db
+        # if we only have the db on file use that
+        if self.pages_db: return self.pages_db
 
         # otherwise clean the text and load the result
         return self.pages_json_preproc
     
+    
+    def iter_pages_db(self, as_dict=True):
+        q=(self.corpus.page_db.work_id==self.id)
+        # total = self.corpus.page_db_count(q,work_ids=self.id)
+        res = self.corpus.page_db.select().where(q)
+        for page_rec in tqdm(res,desc='Iterating over page search results'):
+            d=page_rec.__data__        
+            if 'id' in d: del d['id']
+            yield d if as_dict else PPAPage(d['page_id'], self, **d)
+    
+    @cached_property
+    def pages_db(self):
+        return list(self.iter_pages_db(as_dict=False))
+            
     
     @cached_property
     def pages_d(self):
@@ -431,6 +453,9 @@ class PPAPage:
 
     @cached_property
     def ents(self):
+        return self.ner_parse()
+    
+    def ner_parse(self):
         ensure_dir(self.corpus.path_nlp_db)
         with self.corpus.ents_db() as db:
             if self.id in db: return db[self.id]
