@@ -187,11 +187,11 @@ class PPACorpus:
             shuffle=True
         )
 
-    def ner_parse(self, lim_text=25, min_doc_len=25, **kwargs):
+    def ner_parse(self, lim=25, min_doc_len=25, **kwargs):
         texts=[t for t in self.texts]
         random.shuffle(texts)
         for text in piter(texts,desc='Iterating texts',color='cyan'):
-            text.ner_parse(lim_text=lim_text, min_doc_len=min_doc_len, **kwargs)
+            text.ner_parse(lim=lim, min_doc_len=min_doc_len, **kwargs)
 
     
 
