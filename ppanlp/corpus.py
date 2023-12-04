@@ -28,6 +28,7 @@ class PPACorpus:
         self.path_nlp_db = os.path.join(self.path_data, 'pages_nlp.sqlitedict')
         # self.path_page_db = os.path.join(self.path_data, 'pages.sqlitedict')
         self.path_page_db = os.path.join(self.path_data, 'work_pages.db')
+        self.path_page_db_counts = os.path.join(self.path_data, 'work_pages.db.counts')
         self.path_work_ids = os.path.join(self.path_data, 'work_page_ids.json')
         self._topicmodel = None
 
@@ -107,6 +108,14 @@ class PPACorpus:
             yield self.get_text(work_id)
             pbar.update()
 
+
+    def page_db_count(self, q=None, frac=None, min_doc_len=None):
+        with SqliteDict(self.path_page_db_counts, autocommit=True) as db:
+            key=f'frac_{frac}.{min_doc_len}={min_doc_len}'
+            if not key in db:
+                count = self.page_db.select().where(q).count() if q is not None else self.page_db.select().count()
+                db[key]=count
+            return db[key]
     
     def iter_pages(self, work_ids=None, clean=None, lim=None, min_doc_len=None, frac=None, max_per_cluster=None, as_dict=True):
         Page=self.page_db
@@ -123,7 +132,7 @@ class PPACorpus:
         elif min_doc_len:
             q = (Page.page_num_content_words>=min_doc_len)
         
-        total = Page.select().where(q).count() if q is not None else Page.select().count()
+        total = self.page_db_count(q=q,frac=frac,min_doc_len=min_doc_len)
         res = Page.select().where(q) if q is not None else Page.select()
         
         for page_rec in tqdm(res,total=total,desc='Iterating over page search results'):
@@ -178,15 +187,11 @@ class PPACorpus:
             shuffle=True
         )
 
-    def ner_parse(self, force=False, **kwargs):
-        self.nlp
-        with self.ents_db() as db:
-            for page in self.iter_pages(**kwargs):
-                id=page['page_id']
-                if force or id not in db:
-                    doc = self.nlp(page['page_text'])
-                    res = [(ent.text, ent.type) for ent in doc.ents]
-                    db[id] = res
+    def ner_parse(self, lim_text=25, min_doc_len=25, **kwargs):
+        texts=[t for t in self.texts]
+        random.shuffle(texts)
+        for text in piter(texts,desc='Iterating texts',color='cyan'):
+            text.ner_parse(lim_text=lim_text, min_doc_len=min_doc_len, **kwargs)
 
     
 
@@ -358,6 +363,17 @@ class PPAText:
             ]
             if inp: Page.insert(inp).execute()
 
+    def ner_parse(self, lim=None, min_doc_len=None, **kwargs):
+        pages = [page for page in self.pages if not min_doc_len or page.num_content_words>=min_doc_len]
+        random.shuffle(pages)
+        with self.corpus.ents_db(flag='r') as db: done = {p.id for p in pages if p.id in db}
+        undone = [p for p in pages if p.id not in done]
+        if not lim or len(done)<lim:
+            todo = undone if not lim else undone[:lim-len(done)]
+            for page in piter(todo, desc='Iterating pages',color='blue'):
+                page.ents
+                del page.__ents__
+
 
 
 class PPAPage:
@@ -396,9 +412,14 @@ class PPAPage:
         return tokens
 
     @cached_property
-    def content_words(self): return self.get_content_words()
+    def content_words(self): 
+        print('content_words')
+        return self.get_content_words()
     @cached_property
-    def num_content_words(self): return len(self.content_words)
+    def num_content_words(self): 
+        res=self._meta.get('page_num_content_words')
+        if res is None: res=len(self.content_words)
+        return res
     @cached_property
     def stopwords(self): return self.corpus.stopwords
 
