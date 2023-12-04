@@ -112,9 +112,9 @@ class PPACorpus:
 
     def page_db_count(self, q=None, frac=None, min_doc_len=None,work_ids=None):
         with SqliteDict(self.path_page_db_counts, autocommit=True) as db:
-            key=f'frac_{frac}.{min_doc_len}={min_doc_len}.work_ids_{work_ids}'
+            key=f'frac_{frac}.min_doc_len={min_doc_len}.work_ids_{work_ids}'
             if not key in db:
-                count = self.page_db.select().where(q).count()# if q is not None else self.page_db.select().count()
+                count = self.page_db.select().where(q).count() if q is not None else self.page_db.select().count()
                 db[key]=count
             return db[key]
     
@@ -194,10 +194,10 @@ class PPACorpus:
         for text in piter(texts,desc='Iterating texts',color='cyan'):
             text.ner_parse(lim=lim, min_doc_len=min_doc_len, **kwargs)
     
-    def ner_parse(self, lim=None, min_doc_len=None,max_per_cluster=None,**kwargs):
+    def ner_parse(self, lim=None, **kwargs):
         with self.ents_db(flag='r') as db: done=set(db.keys())
         numdone=Counter(id.split('_')[0] for id in done)
-        for page in self.iter_pages(as_dict=False,min_doc_len=min_doc_len,max_per_cluster=max_per_cluster):
+        for page in self.iter_pages(as_dict=False,**kwargs):
             if page.id in done: continue
             if not lim or numdone[page.text.id]<lim:
                 page.ner_parse()
