@@ -1,5 +1,6 @@
 from .imports import *
 from .cleanup import cleanup_pages
+from tinydb import TinyDB, Query
 
 PPA_OBJ=None
 PATH_CORPUS=PATH_PPA_CORPUS
@@ -27,7 +28,7 @@ class PPACorpus:
         self.path_data = os.path.join(self.path, 'data')
         self.path_nlp_db = os.path.join(self.path_data, 'pages_nlp.sqlitedict')
         # self.path_page_db = os.path.join(self.path_data, 'pages.sqlitedict')
-        self.path_page_db = os.path.join(self.path_data, 'work_pages.sqlitedict')
+        self.path_page_db = os.path.join(self.path_data, 'work_pages.tinydb.json')
         self.path_work_ids = os.path.join(self.path_data, 'work_page_ids.json')
         self._topicmodel = None
 
@@ -66,18 +67,7 @@ class PPACorpus:
     
     @cached_property
     def page_db(self):
-        # from pymongo import MongoClient
-        from pymongolite import MongoClient
-        client = MongoClient()
-        db=client['ppanlp']
-        table='pages'
-        tbl=db[table]
-        tbl.create_index('work_id')
-        tbl.create_index('page_id')
-        tbl.create_index('page_num_content_words')
-        tbl.create_index('_random')
-        return tbl
-        # return CompressedSqliteDict(self.path_page_db, flag=flag, autocommit=autocommit)
+        return TinyDB(self.path_page_db)
     
     @cached_property
     def page_ids(self):
@@ -95,24 +85,46 @@ class PPACorpus:
             pbar.update()
 
     
+    # def iter_pages(self, work_ids=None, clean=None, lim=None, min_doc_len=None, frac=None, max_per_cluster=None, as_dict=True):
+    #     if not frac or frac>1 or frac<=0: frac=1
+    #     i=0
+    #     clustd=Counter()
+    #     q={}
+    #     if frac and frac>0 and frac<1: q['_random']={'$lte':frac}
+    #     if work_ids: q['work_id']={'$in':list(work_ids)}
+    #     if min_doc_len: q['page_num_content_words']={'$gte':min_doc_len}
+    #     for d in tqdm(self.page_db.find(q),desc='Iterating over page search results'):
+    #         del d['_id']
+    #         if not max_per_cluster or clustd[d['cluster']]<max_per_cluster:
+    #             yield PPAPage(d['page_id'], t, **d) if not as_dict else d
+    #             if max_per_cluster: clustd[d['cluster']]+=1
+    #             i+=1
+    #             if lim and i>=lim: break
+    #         if lim and i>=lim: break
+
     def iter_pages(self, work_ids=None, clean=None, lim=None, min_doc_len=None, frac=None, max_per_cluster=None, as_dict=True):
         if not frac or frac>1 or frac<=0: frac=1
         i=0
         clustd=Counter()
-        q={}
-        if frac and frac>0 and frac<1: q['_random']={'$lte':frac}
-        if work_ids: q['work_id']={'$in':list(work_ids)}
-        if min_doc_len: q['page_num_content_words']={'$gte':min_doc_len}
-        for d in tqdm(self.page_db.find(q),desc='Iterating over page search results'):
-            del d['_id']
+        work_ids=set(work_ids) if work_ids else None
+        
+        def test(d):
+            if frac and d['_random']>frac: return False
+            if work_ids and d['work_id'] not in work_ids: return False
+            if min_doc_len and d['page_num_content_words']<min_doc_len: return False
+            return True
+        
+        for d in tqdm(self.page_db.search(lambda obj: test(obj)),desc='Iterating over page search results'):
             if not max_per_cluster or clustd[d['cluster']]<max_per_cluster:
-                yield PPAPage(d['page_id'], t, **d) if not as_dict else d
+                yield PPAPage(d['page_id'], self.textd[d['work_id']]) if not as_dict else d
                 if max_per_cluster: clustd[d['cluster']]+=1
                 i+=1
                 if lim and i>=lim: break
             if lim and i>=lim: break
 
-    def pages_df(self, **kwargs): return pd.DataFrame(self.iter_pages(**kwargs))
+    @cache
+    def pages_df(self, **kwargs): 
+        return pd.DataFrame(page.meta for page in self.iter_pages(as_dict=False,**kwargs))
     
 
     def index(self, force=False):
@@ -139,14 +151,17 @@ class PPACorpus:
             )
 
     def gen(self,force=False, num_proc=1):
-        done_ids = set(self.page_db.find().distinct('work_id')) if not force else None
+        # done_ids = set(self.page_db.search().distinct('work_id')) if not force else None
+        num_proc=1
+        done_ids = {}
         objs = [(id,force) for id in self.text_ids if force or id not in done_ids]
 
         pmap_run(
             gen_text_pages_mp,
             objs,
             num_proc=num_proc,
-            desc='Saving cleaned pages into page db'
+            desc='Saving cleaned pages into page db',
+            shuffle=True
         )
 
     
@@ -262,19 +277,16 @@ class PPAText:
         # if we don't need to clean just return orig json
         if not self.do_clean: return self.pages_json
 
-        # if we already have preproc file just load that
-        if os.path.exists(self.path_preproc): return self.pages_json_preproc
+        # # if we already have preproc file just load that
+        # if os.path.exists(self.path_preproc): return self.pages_json_preproc
         
-        # if we only have the db on file use that
-        if self.pages_db: return self.pages_db
+        # # if we only have the db on file use that
+        # if self.pages_db: return self.pages_db
 
         # otherwise clean the text and load the result
         return self.pages_json_preproc
     
-    @cached_property
-    def pages_db(self):
-        return [PPAPage(d['page_id'],self,**d) for d in self.corpus.page_db.find({'work_id':self.id})]    
-
+    
     @cached_property
     def pages_d(self):
         return {page.id:page for page in self.pages}
@@ -306,10 +318,17 @@ class PPAText:
         return sep.join(page.txt for page in self.pages)
     
     def gen(self, force=False):
-        if force or self.corpus.page_db.count_documents({'work_id':self.id}) != self.num_pages:
-            self.corpus.page_db.delete_many({'work_id':self.id})
-            inp=[{**page.meta, '_random':random.random()} for page in self.pages_json_preproc]
-            if inp: self.corpus.page_db.insert_many(inp)
+        db=self.corpus.page_db
+        if force or (count:=db.count(Query().work_id==self.id)) != self.num_pages:
+            if force or count: db.remove(Query().work_id==self.id)
+            inp=[
+                {
+                    **{k:v for k,v in page.meta.items() if k not in {'page_text','page_text_orig','page_tokens','page_content_words'} and not k.startswith('page_correction')}, 
+                    '_random':random.random()
+                } 
+                for page in self.pages_json_preproc
+            ]
+            if inp: db.insert_multiple(inp)
 
 
 
@@ -318,7 +337,7 @@ class PPAPage:
         self.id = id
         self.text = text if text is not None else PPA().textd[id.split('_')[0]]
         self.corpus = text.corpus
-        self._meta = _meta
+        self._meta = _meta if _meta else text.pages_d.get(self.id)._meta
 
     
     

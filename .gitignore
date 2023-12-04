@@ -168,3 +168,4 @@ file_system_backend
 
 !data/ocr_cleanup_rulesets/
 !data/ocr_cleanup_rulesets/*
+*.db
