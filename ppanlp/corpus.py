@@ -64,6 +64,7 @@ class PPACorpus:
     
     @cache
     def ents_db(self, flag='c', autocommit=True):
+        print('ents_db...')
         return SqliteDict(self.path_nlp_db, flag=flag, tablename='ents', autocommit=autocommit)
     
     @cached_property
@@ -455,15 +456,14 @@ class PPAPage:
     def ents(self):
         return self.ner_parse()
     
-    def ner_parse(self):
-        ensure_dir(self.corpus.path_nlp_db)
-        with self.corpus.ents_db() as db:
-            if self.id in db: return db[self.id]
-            doc = self.corpus.nlp(self.txt)
-            res = [(ent.text, ent.type) for ent in doc.ents]
-            db[self.id] = res
-            return res
-    
+    def ner_parse(self, db=None):
+        if db is None: db = self.corpus.ents_db()
+        if self.id in db: return db[self.id]
+        doc = self.corpus.nlp(self.txt)
+        res = [(ent.text, ent.type) for ent in doc.ents]
+        db[self.id] = res
+        return res
+
 
 
 def cleanup_pages_mp(obj):
