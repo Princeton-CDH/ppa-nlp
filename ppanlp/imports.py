@@ -13,7 +13,8 @@ import jsonlines
 import json
 import orjsonl
 import time
-import multiprocess as mp
+import click
+import multiprocessing as mp
 
 
 ## ocr correction imports
@@ -98,3 +99,4 @@ from .utils import *
 from .cleanup import *
 from .corpus import *
 from .topicmodel import *
+from .cli import *
