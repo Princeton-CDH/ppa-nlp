@@ -41,7 +41,7 @@ class PPACorpus:
             self.path_page_db = os.path.join(self.path_data, 'work_pages.db')
             self.path_page_db_counts = os.path.join(self.path_data, 'work_pages.db.counts')
             self.path_work_ids = os.path.join(self.path_data, 'work_page_ids.json')
-            self._topicmodel = None
+            self._topicmodels = {}
 
             # init
             self.textd
@@ -286,19 +286,26 @@ class PPACorpus:
             stopwords = set(stops.words('english'))
         return stopwords
     
-    @cache
-    def topic_model(self, output_dir=None, model_type=None,ntopic=50, niter=100, min_doc_len=25, frac=1, max_per_cluster=None):
+    def topic_model(self, output_dir=None, model_type=None,ntopic=50, niter=100, min_doc_len=25, frac=1, max_per_cluster=None,force=False):
         from .topicmodel import PPATopicModel
-        return PPATopicModel(
-            output_dir=output_dir,
-            corpus=self,
-            ntopic=ntopic,
-            niter=niter,
-            min_doc_len=min_doc_len,
-            frac=frac,
-            max_per_cluster=max_per_cluster,
-            model_type=model_type
-        )
+
+        key=(output_dir,model_type,n_topic,niter,min_doc_len,frac,max_per_cluster)
+        if force or not key in self._topicmodels:
+            mdl = PPATopicModel(
+                output_dir=output_dir,
+                corpus=self,
+                ntopic=ntopic,
+                niter=niter,
+                min_doc_len=min_doc_len,
+                frac=frac,
+                max_per_cluster=max_per_cluster,
+                model_type=model_type
+            )
+            self._topicmodels[key] = mdl
+        else:
+            mdl = self._topicmodels[key]
+        
+        return mdl
     
     @cached_property
     def nlp(self):
