@@ -105,7 +105,7 @@ def CompressedSqliteDict(fn, *args, flag='c', **kwargs):
     kwargs['decode']=decode_cache
     if not os.path.exists(fn) and flag=='r':
         ensure_dir(fn)
-        with CompressedSqliteDict(fn, flag='c') as db: pass
+        with CompressedSqliteDict(fn, *args, flag='c', **kwargs) as db: pass
         
     return SqliteDict(fn, *args, flag=flag, **kwargs)
 
