@@ -17,11 +17,19 @@ def PPA(path=None, **kwargs):
 class PPACorpus:
     WORK_ID_FIELD = 'id'
 
-    def __init__(self, path:str, clean=True, texts_dir='texts', metadata_fn='metadata.json', texts_preproc_dir='texts_preproc'):
+    PAGE_RENAME_FIELDNAMES = dict(
+        page_num='order',
+        page_num_orig='label',
+        page_text='content',
+        page_tags='tags'
+    )
+
+    def __init__(self, path:str, clean=True, texts_dir='texts', metadata_fn='metadata.jsonl', pages_fn='pages.jsonl',texts_preproc_dir='texts_preproc'):
         path=path.strip()
         with logwatch(f'booting PPACorpus at {path}'):
-            self.path = os.path.abspath(os.path.expanduser(path))
             self.do_clean=clean
+            self.path = os.path.abspath(os.path.expanduser(path))
+            self.path_pages_jsonl = os.path.join(self.path,pages_fn) if not os.path.isabs(pages_fn) else pages_fn
             self.path_texts = os.path.join(self.path,texts_dir) if not os.path.isabs(texts_dir) else texts_dir
             self.path_texts_preproc = os.path.join(self.path,texts_preproc_dir) if not os.path.isabs(texts_preproc_dir) else texts_preproc_dir
             self.path_metadata = os.path.join(self.path,metadata_fn) if not os.path.isabs(metadata_fn) else metadata_fn
@@ -42,7 +50,7 @@ class PPACorpus:
     @cached_property
     def meta(self):
         with logwatch('reading metadata'):
-            return pd.read_json(self.path_metadata).fillna('').set_index(self.WORK_ID_FIELD)
+            return pd.DataFrame(read_json(self.path_metadata)).fillna('').set_index(self.WORK_ID_FIELD)
     
     @cache
     def get_text(self, work_id):
@@ -72,6 +80,7 @@ class PPACorpus:
     def page_db(self):
         from peewee import SqliteDatabase, Model, CharField, TextField, IntegerField, FloatField
 
+        ensure_dir(self.path_page_db)
         db = SqliteDatabase(self.path_page_db)
 
         class BaseModel(Model):
@@ -155,14 +164,35 @@ class PPACorpus:
     def pages_df(self, **kwargs): 
         return pd.DataFrame(page for page in self.iter_pages(as_dict=True,**kwargs))
     
+    def iter_pages_jsonl(self): 
+        fn=self.path_pages_jsonl
+        nl=get_num_lines(fn)
+        iterr=iter_json(fn)
+        iterr=tqdm(iterr,total=nl,desc=f'Iterating over {os.path.basename(fn)}')
+        for d in iterr:
+            work_id=d['group_id_s']
+            page_orig=d['label']
+            page_id=f'{work_id}_{page_orig}'
+            yield {
+                'work_id':work_id,
+                'page_id':page_id,
+                **{
+                    k1:d.get(k2,'' if k1!='page_num' else -1) 
+                    for k1,k2 in self.PAGE_RENAME_FIELDNAMES.items()
+                }
+            }
+
 
     def index(self, force=False):
         if force or not os.path.exists(self.path_work_ids):
-            wdb = {}
-            for text in self.iter_texts(desc='Indexing page ids by work'):
-                ids=[page['page_id'] for page in text.iter_page_json()]
-                wdb[text.id] = ids
+            wdb = defaultdict(set)
+            workids=set()
+            for d in self.iter_pages_jsonl():
+                workids.add(d['work_id'])
+                wdb[d['work_id']].add(d['page_id'])
+            wdb={k:sorted(list(v)) for k,v in wdb.items()}
             write_json(wdb, self.path_work_ids)
+            return workids
 
     def clean(self, num_proc=1, force=False):
         objs=[

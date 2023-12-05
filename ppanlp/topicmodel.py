@@ -199,7 +199,8 @@ class BertTopicModel(BaseTopicModel):
 
         with logwatch('loading documents into memory') as lw:
             # docs = [" ".join(page.content_words) for page in self.iter_docs(lim=lim)]
-            docs = [page.txt for page in self.iter_docs(lim=lim)]
+            docids = [(page.id,page.txt) for page in self.iter_docs(lim=lim)]
+            self._ids,self._docs = ids,docs = zip(*docids)
             lw.log(f'loaded {len(docs):,} documents into memory')
         
         with logwatch('fitting model'):

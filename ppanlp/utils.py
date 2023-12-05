@@ -64,8 +64,12 @@ def get_num_lines_json(fn, progress=True):
     nl=sum(1 for _ in tqdm(iter_json(fn), desc=f'Counting lines in {fn[fn.index(".json"):] if ".json" in fn else fn}',disable=not progress,position=0))
     return nl
 
-
-
+def get_num_lines(fn):
+    if os.path.exists(fn):
+        with logwatch(f'counting lines in {os.path.basename(fn)}'):
+            with open(fn) as f:
+                return sum(1 for _ in f)
+    return 0
 
 # Helper Progress Iterator
 # Needs: python -m pip install enlighten
