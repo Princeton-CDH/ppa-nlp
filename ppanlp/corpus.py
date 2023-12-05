@@ -181,23 +181,19 @@ class PPACorpus:
 
     def index(self, force=False):
         if force or not os.path.exists(self.path_work_ids):
-            wdb = defaultdict(set)
-            workids=set()
-            for d in self.iter_pages_jsonl():
-                workids.add(d['work_id'])
-                wdb[d['work_id']].add(d['page_id'])
-            wdb={k:sorted(list(v)) for k,v in wdb.items()}
-            write_json(wdb, self.path_work_ids)
-
+            self.install()
+        
     def install(self, num_proc=1, force=False):
         last_work_id=None
         last_pages=[]
         resl=[]
         work_ids_done=set()
+        wdb=defaultdict(set)
         with mp.get_context(CONTEXT).Pool(num_proc) as pool:
             with logwatch(f'saving jsonl files to {self.path_texts_preproc} [{num_proc}x]'):
                 for d in self.iter_pages_jsonl():
                     work_id=d.get('work_id')
+                    wdb[work_id].add(d['page_id'])
                     if last_pages and work_id!=last_work_id:
                         # assert work_id not in work_ids_done
                         if last_work_id in work_ids_done:
@@ -223,31 +219,28 @@ class PPACorpus:
                 
                 for res in tqdm(resl,desc=f'Waiting for rest of processes to complete [{num_proc}x]'): 
                     res.get()
+        
+        # finally, save index
+        wdb={k:sorted(list(v)) for k,v in wdb.items()}
+        write_json(wdb, self.path_work_ids)
+
 
     def preproc(self, num_proc=1, force=False, shuffle=True, lim=None):
-        objs = [(t.path, t.path_preproc,force) for t in self.texts if os.path.exists(t.path)]
-        pmap_run(
-            preproc_json,
-            objs,
-            num_proc=num_proc,
-            shuffle=shuffle,
-            lim=lim
-        )
+        with logwatch(f'preprocessing jsonl files'):
+            objs = [(t.path, t.path_preproc,force) for t in self.texts if os.path.exists(t.path)]
+            pmap_run(
+                preproc_json,
+                objs,
+                num_proc=num_proc,
+                shuffle=shuffle,
+                lim=lim
+            )
 
-    # def gen_pagedb(self,force=False, num_proc=1):
-    #     done_ids = {rec.work_id for rec in self.page_db.select(self.page_db.work_id).distinct()} if not force else None
-    #     texts = [(id,force) for id in self.text_ids if force or id not in done_ids]
-
-    #     t = PPA().textd[work_id]
-    # t.gen_pagedb(force=force)
-
-    #     pmap_run(
-    #         gen_text_pages_mp,
-    #         objs,
-    #         num_proc=num_proc,
-    #         desc='Saving cleaned pages into page db',
-    #         shuffle=True
-    #     )
+    def gendb(self,force=False):
+        with logwatch(f'generating page database at {self.path_page_db}'):
+            for t in self.iter_texts(desc='Saving texts to database'):
+                if t.is_cleaned:
+                    t.gen_pagedb(force=force)
 
     def ner_parse_texts(self, lim=25, min_doc_len=25, **kwargs):
         texts=[t for t in self.texts]
@@ -443,7 +436,7 @@ class PPAText:
     def txt(self, sep='\n\n\n\n'):
         return sep.join(page.txt for page in self.pages)
     
-    def gen_pagedb(self, force=False):
+    def gendb(self, force=False):
         Page=self.corpus.page_db
         if force or (count:=Page.select().where(Page.work_id==self.id).count()) != self.num_pages:
             if force or count: 
@@ -462,9 +455,11 @@ class PPAText:
                     title = page.text.title[:255],
                     _random = random.random()
                 )
-                for page in self.pages_json_preproc
+                for page in self.pages_preproc
             ]
-            if inp: Page.insert(inp).execute()
+            if inp: 
+                with logwatch('inserting into db', level='TRACE'):
+                    Page.insert(inp).execute()
 
     def ner_parse(self, lim=None, min_doc_len=None, **kwargs):
         pages = [page for page in self.pages if not min_doc_len or page.num_content_words>=min_doc_len]
