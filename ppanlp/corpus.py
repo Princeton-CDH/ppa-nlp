@@ -238,9 +238,10 @@ class PPACorpus:
 
     def gendb(self,force=False):
         with logwatch(f'generating page database at {self.path_page_db}'):
-            for t in self.iter_texts(desc='Saving texts to database'):
+            for i,t in enumerate(self.iter_texts(desc='Saving texts to database')):
+                if i<600: continue
                 if t.is_cleaned:
-                    t.gen_pagedb(force=force)
+                    t.gendb(force=force)
 
     def ner_parse_texts(self, lim=25, min_doc_len=25, **kwargs):
         texts=[t for t in self.texts]
@@ -369,11 +370,18 @@ class PPAText:
     def pages_orig(self): 
         return list(self.iter_pages_orig())
     
-    def iter_pages_preproc(self):
-        self.clean(force=False)
-        for d in iter_json(self.path_preproc):
-            yield PPAPage(d['page_id'], self, **d)
-    
+    def iter_pages_preproc(self, force_clean=False):
+        self.clean(force=force_clean)
+        try:
+            for d in iter_json(self.path_preproc):
+                yield PPAPage(d['page_id'], self, **d)
+        except Exception as e:
+            if not force_clean:
+                # could be that cleaned file was saved improperly
+                yield from self.iter_pages_preproc(force_clean=True)
+            else:
+                raise e
+
     
     def iter_pages_orig(self): 
         for d in self.corpus.iter_pages_jsonl():
@@ -449,8 +457,8 @@ class PPAText:
                     page_num_content_words=page.num_content_words,
                     work_id=page.text.id,
                     cluster = page.text.cluster,
-                    source = page.text.cluster,
-                    year = page.text.cluster,
+                    source = page.text.source,
+                    year = page.text.year,
                     author = page.text.author,
                     title = page.text.title[:255],
                     _random = random.random()
