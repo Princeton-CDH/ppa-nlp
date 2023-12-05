@@ -77,7 +77,8 @@ for pathstr in [PATH_HOME_DATA, PATH_ECCO_DATA, PATH_ECCO_RAW_DATA]:
     os.makedirs(pathstr, exist_ok=True)
 
 # setup logs
-LOG_FORMAT = '<green>{time:YYYY-MM-DD HH:mm:ss,SSS}</green> - <cyan>{function}</cyan> - <level>{message}</level> | <cyan>{file}</cyan>:<cyan>{line}</cyan>'
+# LOG_FORMAT = '<green>{time:YYYY-MM-DD HH:mm:ss,SSS}</green> - <cyan>{function}</cyan> - <level>{message}</level> - <cyan>{file}</cyan>:<cyan>{line}</cyan>'
+LOG_FORMAT = '<green>{time:YYYY-MM-DD HH:mm:ss,SSS}</green> <level>{message}</level>'
 
 # 5 to include traces; 
 # 10 for debug; 20 info, 25 success; 

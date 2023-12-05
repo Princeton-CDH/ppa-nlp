@@ -19,28 +19,30 @@ class PPACorpus:
 
     def __init__(self, path:str, clean=True, texts_dir='texts', metadata_fn='metadata.json', texts_preproc_dir='texts_preproc'):
         path=path.strip()
-        self.path = os.path.abspath(os.path.expanduser(path))
-        self.do_clean=clean
-        self.path_texts = os.path.join(self.path,texts_dir) if not os.path.isabs(texts_dir) else texts_dir
-        self.path_texts_preproc = os.path.join(self.path,texts_preproc_dir) if not os.path.isabs(texts_preproc_dir) else texts_preproc_dir
-        self.path_metadata = os.path.join(self.path,metadata_fn) if not os.path.isabs(metadata_fn) else metadata_fn
-        self.path_data = os.path.join(self.path, 'data')
-        self.path_nlp_db = os.path.join(self.path_data, 'pages_nlp.sqlitedict')
-        # self.path_page_db = os.path.join(self.path_data, 'pages.sqlitedict')
-        self.path_page_db = os.path.join(self.path_data, 'work_pages.db')
-        self.path_page_db_counts = os.path.join(self.path_data, 'work_pages.db.counts')
-        self.path_work_ids = os.path.join(self.path_data, 'work_page_ids.json')
-        self._topicmodel = None
+        with logwatch(f'booting PPACorpus at {path}'):
+            self.path = os.path.abspath(os.path.expanduser(path))
+            self.do_clean=clean
+            self.path_texts = os.path.join(self.path,texts_dir) if not os.path.isabs(texts_dir) else texts_dir
+            self.path_texts_preproc = os.path.join(self.path,texts_preproc_dir) if not os.path.isabs(texts_preproc_dir) else texts_preproc_dir
+            self.path_metadata = os.path.join(self.path,metadata_fn) if not os.path.isabs(metadata_fn) else metadata_fn
+            self.path_data = os.path.join(self.path, 'data')
+            self.path_nlp_db = os.path.join(self.path_data, 'pages_nlp.sqlitedict')
+            # self.path_page_db = os.path.join(self.path_data, 'pages.sqlitedict')
+            self.path_page_db = os.path.join(self.path_data, 'work_pages.db')
+            self.path_page_db_counts = os.path.join(self.path_data, 'work_pages.db.counts')
+            self.path_work_ids = os.path.join(self.path_data, 'work_page_ids.json')
+            self._topicmodel = None
 
-        # init
-        self.textd
-        self.page_db
+            # init
+            self.textd
+            self.page_db
 
     def __iter__(self): yield from self.iter_texts()
 
     @cached_property
     def meta(self):
-        return pd.read_json(self.path_metadata).fillna('').set_index(self.WORK_ID_FIELD)
+        with logwatch('reading metadata'):
+            return pd.read_json(self.path_metadata).fillna('').set_index(self.WORK_ID_FIELD)
     
     @cache
     def get_text(self, work_id):
@@ -113,39 +115,41 @@ class PPACorpus:
         with SqliteDict(self.path_page_db_counts, autocommit=True) as db:
             key=f'frac_{frac}.min_doc_len={min_doc_len}.work_ids_{work_ids}'
             if not key in db:
-                with logwatch('Counting pages in query'):
+                with logwatch('counting pages in query'):
                     count = self.page_db.select().where(q).count() if q is not None else self.page_db.select().count()
                 db[key]=count
             return db[key]
     
     def iter_pages(self, work_ids=None, clean=None, lim=None, min_doc_len=None, frac=None, max_per_cluster=None, as_dict=True):
-        Page=self.page_db
-        if not frac or frac>1 or frac<=0: frac=None
-        i=0
-        clustd=Counter()
-        work_ids=set(work_ids) if work_ids else None
+        with logwatch('querying page database'):
+            Page=self.page_db
+            if not frac or frac>1 or frac<=0: frac=None
+            i=0
+            clustd=Counter()
+            work_ids=set(work_ids) if work_ids else None
+            
+            q=None
+            if frac and min_doc_len:
+                q = (Page._random<=frac) & (Page.page_num_content_words>=min_doc_len)
+            elif frac:
+                q = (Page._random<=frac)
+            elif min_doc_len:
+                q = (Page.page_num_content_words>=min_doc_len)
+            
+            total = self.page_db_count(q=q,frac=frac,min_doc_len=min_doc_len)
+            res = Page.select().where(q) if q is not None else Page.select()
         
-        q=None
-        if frac and min_doc_len:
-            q = (Page._random<=frac) & (Page.page_num_content_words>=min_doc_len)
-        elif frac:
-            q = (Page._random<=frac)
-        elif min_doc_len:
-            q = (Page.page_num_content_words>=min_doc_len)
-        
-        total = self.page_db_count(q=q,frac=frac,min_doc_len=min_doc_len)
-        res = Page.select().where(q) if q is not None else Page.select()
-        
-        for page_rec in tqdm(res,total=total,desc='Iterating over page search results'):
-            d=page_rec.__data__        
-            if 'id' in d: del d['id']
-            if work_ids and d['work_id'] not in work_ids: continue
-            if not max_per_cluster or clustd[d['cluster']]<max_per_cluster:
-                yield PPAPage(d['page_id'], self.textd[d['work_id']], **d) if not as_dict else d
-                if max_per_cluster: clustd[d['cluster']]+=1
-                i+=1
+        with logwatch('returning page database results'):
+            for page_rec in tqdm(res,total=total,desc='Iterating over page search results'):
+                d=page_rec.__data__        
+                if 'id' in d: del d['id']
+                if work_ids and d['work_id'] not in work_ids: continue
+                if not max_per_cluster or clustd[d['cluster']]<max_per_cluster:
+                    yield PPAPage(d['page_id'], self.textd[d['work_id']], **d) if not as_dict else d
+                    if max_per_cluster: clustd[d['cluster']]+=1
+                    i+=1
+                    if lim and i>=lim: break
                 if lim and i>=lim: break
-            if lim and i>=lim: break
 
     @cache
     def pages_df(self, **kwargs): 

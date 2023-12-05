@@ -184,7 +184,8 @@ class TomotopyTopicModel(BaseTopicModel):
 class BertTopicModel(BaseTopicModel):
     topicmodel_type='bertopic'
     def model(self, output_dir=None,force=False, lim=None):
-        from bertopic import BERTopic
+        with logwatch('importing BERTopic'):
+            from bertopic import BERTopic
 
         # get filename
         fdir=self.path if not output_dir else output_dir
@@ -195,8 +196,10 @@ class BertTopicModel(BaseTopicModel):
 
         with logwatch('loading documents into memory'):
             docs = [" ".join(page.content_words) for page in self.iter_docs(lim=lim)]
-        self._mdl = BERTopic(verbose=True)
-        self._topics, self._probs = self._mdl.fit_transform(docs)
+        
+        with logwatch('fitting model'):
+            self._mdl = BERTopic(verbose=True)
+            self._topics, self._probs = self._mdl.fit_transform(docs)
     
 
 
