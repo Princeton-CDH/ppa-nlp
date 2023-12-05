@@ -2,7 +2,8 @@ from .imports import *
 from .corpus import PPA
 import tomotopy as tp
 
-class PPATopicModel:
+class BaseTopicModel:
+    topicmodel_type='topicmodel_type'
     def __init__(
             self, 
             output_dir=None,
@@ -33,7 +34,7 @@ class PPATopicModel:
             'models',
             (
                 output_dir if output_dir else (
-                    f'data.tomotopy.model.ntopic_{self.ntopic}.niter_{self.niter}.min_doc_len_{self.min_doc_len}.frac_{self.frac}.max_per_cluster_{self.max_per_cluster}'
+                    f'data.{self.topicmodel_type}.model.ntopic_{self.ntopic}.niter_{self.niter}.min_doc_len_{self.min_doc_len}.frac_{self.frac}.max_per_cluster_{self.max_per_cluster}'
                 )
             )
         )
@@ -53,10 +54,22 @@ class PPATopicModel:
 
 
 
-    def model(self, output_dir=None,force=False, lim=None):
+    def model(self, **kwargs):
+        return # IMPLEMENT
+    
+    @cached_property
+    def mdl(self):
+        if self._mdl == None: self.model()
+        return self._mdl
+
         
+
+
+class TomotopyTopicModel(BaseTopicModel):
+    topicmodel_type='tomotopy'
+    def model(self, output_dir=None, force=False, lim=None):
         # get filename
-        fdir=self.path
+        fdir=self.path if not output_dir else output_dir
         os.makedirs(fdir, exist_ok=True)
         fn=self.path_model
         fnindex=self.path_index
@@ -113,11 +126,6 @@ class PPATopicModel:
         doc_topic_dists /= doc_topic_dists.sum(axis=1, keepdims=True)
         return doc_topic_dists
 
-    @cached_property
-    def mdl(self):
-        if self._mdl == None:
-            self.model()
-        return self._mdl
 
     @cached_property
     def doc_lengths(self):
@@ -166,3 +174,34 @@ class PPATopicModel:
         df = self.doc_topic_dists_df        
         df_avgs=df.groupby('work_id').mean(numeric_only=True)
         return self.corpus.meta.merge(df_avgs, on='work_id').set_index('work_id')
+    
+
+
+
+
+
+
+class BertTopicModel(BaseTopicModel):
+    topicmodel_type='bertopic'
+    def model(self, output_dir=None,force=False, lim=None):
+        from bertopic import BERTopic
+
+        # get filename
+        fdir=self.path if not output_dir else output_dir
+        os.makedirs(fdir, exist_ok=True)
+        fn=self.path_model
+        fnindex=self.path_index
+        fnparams=self.path_params
+
+        with logwatch('loading documents into memory'):
+            docs = [" ".join(page.content_words) for page in self.iter_docs(lim=lim)]
+        self._mdl = BERTopic()
+        self._topics, self._probs = self._mdl.fit_transform(docs)
+    
+
+
+def PPATopicModel(
+    model_type='tomotopy',
+    **kwargs
+):
+    return BertTopicModel(**kwargs) if model_type and model_type.startswith('bert') else TomotopyTopicModel(**kwargs)

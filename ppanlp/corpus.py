@@ -64,7 +64,6 @@ class PPACorpus:
     
     @cache
     def ents_db(self, flag='c', autocommit=True):
-        print('ents_db...')
         return SqliteDict(self.path_nlp_db, flag=flag, tablename='ents', autocommit=autocommit)
     
     @cached_property
@@ -114,7 +113,8 @@ class PPACorpus:
         with SqliteDict(self.path_page_db_counts, autocommit=True) as db:
             key=f'frac_{frac}.min_doc_len={min_doc_len}.work_ids_{work_ids}'
             if not key in db:
-                count = self.page_db.select().where(q).count() if q is not None else self.page_db.select().count()
+                with logwatch('Counting pages in query'):
+                    count = self.page_db.select().where(q).count() if q is not None else self.page_db.select().count()
                 db[key]=count
             return db[key]
     
@@ -201,6 +201,7 @@ class PPACorpus:
             if page.id in done: continue
             if not lim or numdone[page.text.id]<lim:
                 page.ner_parse()
+                numdone[page.text.id]+=1
 
     
 
@@ -216,7 +217,7 @@ class PPACorpus:
         return stopwords
     
     @cache
-    def topic_model(self, output_dir=None, ntopic=50, niter=100, min_doc_len=25, frac=1, max_per_cluster=None):
+    def topic_model(self, output_dir=None, model_type=None,ntopic=50, niter=100, min_doc_len=25, frac=1, max_per_cluster=None):
         from .topicmodel import PPATopicModel
         return PPATopicModel(
             output_dir=output_dir,
@@ -226,6 +227,7 @@ class PPACorpus:
             min_doc_len=min_doc_len,
             frac=frac,
             max_per_cluster=max_per_cluster,
+            model_type=model_type
         )
     
     @cached_property

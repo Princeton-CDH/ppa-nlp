@@ -189,3 +189,84 @@ def pmap(*x,**y):
 
 def pmap_run(*x,**y):
     for obj in pmap_iter(*x,**y): pass
+
+
+
+
+class logwatch:
+    """A class for monitoring and logging the duration of tasks.
+
+    Attributes:
+        started (float): The timestamp when the task started.
+        ended (float): The timestamp when the task ended.
+        level (str): The logging level for the task. Default is 'DEBUG'.
+        log (Logger): The logger object for logging the task status.
+        task_name (str): The name of the task being monitored.
+    """
+    def __init__(self, name=None, level='DEBUG'):
+        self.started = None
+        self.ended = None
+        self.level=level
+        self.log = getattr(logger,self.level.lower())
+        self.task_name = name
+    @property
+    def tdesc(self): 
+        """Returns the formatted timespan of the duration.
+        
+        Returns:
+            str: The formatted timespan of the duration.
+        
+        Examples:
+            >>> t = tdesc(self)
+            >>> print(t)
+            '2 hours 30 minutes'
+        """
+        return format_timespan(self.duration)
+    
+    @property
+    def duration(self): 
+        """Calculates the duration of an event.
+        
+        Returns:
+            float: The duration of the event in seconds.
+        """
+        return self.ended - self.started
+    
+    @property
+    def desc(self): 
+        """Returns a description of the task.
+        
+        If the task has both a start time and an end time, it returns a string
+        indicating the task name and the time it took to complete the task.
+        
+        If the task is currently running, it returns a string indicating that
+        the task is still running.
+        
+        Returns:
+            str: A description of the task.
+        """
+        if self.started is not None and self.ended is not None:
+            return f'{self.task_name} ... {self.tdesc}'
+        else:
+            return f'Task running ...' if not self.task_name else f'{self.task_name} ...'
+        
+    def __enter__(self):        
+        """Context manager method that is called when entering a 'with' statement.
+        
+        This method logs the description of the context manager and starts the timer.
+        
+        Examples:
+            with Logwatch():
+                # code to be executed within the context manager
+        """
+        self.log(self.desc)
+        self.started = time.time()
+        return self
+
+    def __exit__(self,*x):
+        """
+        Logs the resulting time.
+        """ 
+        self.ended = time.time()
+        self.log(self.desc)
+

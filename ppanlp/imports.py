@@ -12,6 +12,7 @@ from intspan import intspan
 import jsonlines
 import json
 import orjsonl
+import time
 
 ## ocr correction imports
 import re
@@ -29,6 +30,7 @@ from functools import cached_property
 from collections import Counter
 import gzip
 import numpy as np
+from humanfriendly import format_timespan
 # nltk.download('punkt')
 
 ## settings
@@ -74,5 +76,22 @@ PAGE_KEY='page_id'
 for pathstr in [PATH_HOME_DATA, PATH_ECCO_DATA, PATH_ECCO_RAW_DATA]:
     os.makedirs(pathstr, exist_ok=True)
 
+# setup logs
+LOG_FORMAT = '<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <cyan>{function}</cyan> | <level>{message}</level> | <cyan>{file}</cyan>:<cyan>{line}</cyan>'
 
+# 5 to include traces; 
+# 10 for debug; 20 info, 25 success; 
+# 30 warning, 40 error, 50 critical;
+LOG_LEVEL = 10
+
+from loguru import logger
+logger.remove()
+logger.add(
+    sink=sys.stderr,
+    format=LOG_FORMAT, 
+    level=LOG_LEVEL
+)
 from .utils import *
+from .cleanup import *
+from .corpus import *
+from .topicmodel import *
