@@ -202,7 +202,7 @@ class BertTopicModel(BaseTopicModel):
             docs = [page.txt for page in self.iter_docs(lim=lim)]
         
         with logwatch('fitting model'):
-            self._mdl = BERTopic(language='multilingual', verbose=True, representation_model=KeyBERTInspired())
+            self._mdl = BERTopic(verbose=True, representation_model=KeyBERTInspired())
             self._topics, self._probs = self._mdl.fit_transform(docs)
     
 
