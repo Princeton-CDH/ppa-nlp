@@ -366,7 +366,11 @@ class PPAText:
     def year_str(self): return str(self.meta.get('pub_date'))[:4]
     
     @cached_property
-    def year(self): return pd.to_numeric(self.meta.get('pub_date'),errors='coerce')
+    def year(self): 
+        try:
+            return int(self.year_str)
+        except:
+            return 0
 
     @cached_property
     def path(self): return os.path.join(self.corpus.path_texts, clean_filename(self.id+'.jsonl'))
