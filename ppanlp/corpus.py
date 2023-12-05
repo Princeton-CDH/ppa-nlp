@@ -78,7 +78,7 @@ class PPACorpus:
     
     @cache
     def ents_db(self, flag='c', autocommit=True):
-        return SqliteDict(self.path_nlp_db, flag=flag, tablename='ents', autocommit=autocommit)
+        return CompressedSqliteDict(self.path_nlp_db, flag=flag, tablename='ents', autocommit=autocommit)
     
     @cached_property
     def _page_db_conn(self):
