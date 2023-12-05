@@ -18,13 +18,15 @@ class PPACorpus:
     WORK_ID_FIELD = 'group_id_s'
 
     PAGE_RENAME_FIELDNAMES = dict(
+        work_id='group_id_s',
+        page_id='id',
         page_num='order',
         page_num_orig='label',
         page_text='content',
         page_tags='tags'
     )
 
-    def __init__(self, path:str, clean=True, texts_dir='texts', metadata_fn='metadata.jsonl', pages_fn='pages.jsonl',texts_preproc_dir='texts_preproc'):
+    def __init__(self, path:str, clean=True, texts_dir='texts', metadata_fn='metadata.jsonl', pages_fn='pages.jsonl.gz',texts_preproc_dir='texts_preproc'):
         path=path.strip()
         with logwatch(f'booting PPACorpus at {path}'):
             self.do_clean=clean
@@ -170,26 +172,11 @@ class PPACorpus:
         fn=self.path_pages_jsonl
         iterr=iter_json(fn)
         iterr=tqdm(iterr,desc=f'Iterating over {os.path.basename(fn)}',position=0)
-        last_group_id=None
-        work_id=None
         for d in iterr:
-            # group_id=d['group_id_s']
-            # page_num=d['order']
-            # if not work_id or group_id!=last_group_id:
-            #     work_id = f'{group_id}_{page_num}' if page_num!=1 else group_id
-            work_id=d['group_id_s']
-            page_num=d['order']
-            page_id=f'{work_id}_{page_num}'
-            
             yield {
-                'work_id':work_id,
-                'page_id':page_id,
-                **{
-                    k1:d.get(k2,'' if k1!='page_num' else -1) 
-                    for k1,k2 in self.PAGE_RENAME_FIELDNAMES.items()
-                }
+                k1:d.get(k2,'' if k1!='page_num' else -1) 
+                for k1,k2 in self.PAGE_RENAME_FIELDNAMES.items()
             }
-            # last_group_id = group_id
 
 
     def index(self, force=False):
@@ -209,10 +196,10 @@ class PPACorpus:
         work_ids_done=set()
         with mp.get_context(CONTEXT).Pool(num_proc) as pool:
             l = self.iter_pages_jsonl()
-            with logwatch('gathering pages'):
-                l = list(l)
-            with logwatch('sorting'):
-                l.sort(key=lambda d: (d['work_id'],d['page_num']))
+            # with logwatch('gathering pages'):
+                # l = list(l)
+            # with logwatch('sorting'):
+                # l.sort(key=lambda d: (d['work_id'],d['page_num']))
             with logwatch('saving'):
                 for d in l:
                     work_id=d.get('work_id')
