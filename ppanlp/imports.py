@@ -13,6 +13,8 @@ import jsonlines
 import json
 import orjsonl
 import time
+import multiprocess as mp
+
 
 ## ocr correction imports
 import re

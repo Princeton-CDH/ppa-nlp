@@ -19,3 +19,4 @@ peewee
 bertopic
 loguru
 humanfriendly
+multiprocess

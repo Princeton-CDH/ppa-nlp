@@ -15,7 +15,7 @@ def PPA(path=None, **kwargs):
 
 
 class PPACorpus:
-    WORK_ID_FIELD = 'id'
+    WORK_ID_FIELD = 'group_id_s'
 
     PAGE_RENAME_FIELDNAMES = dict(
         page_num='order',
@@ -50,7 +50,9 @@ class PPACorpus:
     @cached_property
     def meta(self):
         with logwatch('reading metadata'):
-            return pd.DataFrame(read_json(self.path_metadata)).fillna('').set_index(self.WORK_ID_FIELD)
+            df=pd.DataFrame(read_json(self.path_metadata)).fillna('')
+            df['work_id']=df[self.WORK_ID_FIELD]
+            return df.set_index('work_id')
     
     @cache
     def get_text(self, work_id):
@@ -166,13 +168,19 @@ class PPACorpus:
     
     def iter_pages_jsonl(self): 
         fn=self.path_pages_jsonl
-        nl=get_num_lines(fn)
         iterr=iter_json(fn)
-        iterr=tqdm(iterr,total=nl,desc=f'Iterating over {os.path.basename(fn)}')
+        iterr=tqdm(iterr,desc=f'Iterating over {os.path.basename(fn)}',position=0)
+        last_group_id=None
+        work_id=None
         for d in iterr:
+            # group_id=d['group_id_s']
+            # page_num=d['order']
+            # if not work_id or group_id!=last_group_id:
+            #     work_id = f'{group_id}_{page_num}' if page_num!=1 else group_id
             work_id=d['group_id_s']
-            page_orig=d['label']
-            page_id=f'{work_id}_{page_orig}'
+            page_num=d['order']
+            page_id=f'{work_id}_{page_num}'
+            
             yield {
                 'work_id':work_id,
                 'page_id':page_id,
@@ -181,6 +189,7 @@ class PPACorpus:
                     for k1,k2 in self.PAGE_RENAME_FIELDNAMES.items()
                 }
             }
+            # last_group_id = group_id
 
 
     def index(self, force=False):
@@ -192,35 +201,61 @@ class PPACorpus:
                 wdb[d['work_id']].add(d['page_id'])
             wdb={k:sorted(list(v)) for k,v in wdb.items()}
             write_json(wdb, self.path_work_ids)
-            return workids
 
-    def clean(self, num_proc=1, force=False):
-        objs=[
-            (t.path,t.path_preproc) 
-            for t in self.iter_texts(desc='Gathering texts needing cleaning') 
-            if force or not t.is_cleaned
-        ]
-        if objs:
-            pmap_run(
-                cleanup_pages_mp,
-                objs,
-                num_proc=num_proc,
-                shuffle=True,
-                desc='Cleaning up texts and storing in texts_preproc'
-            )
+    def preproc(self, num_proc=1, force=False):
+        last_work_id=None
+        last_pages=[]
+        resl=[]
+        work_ids_done=set()
+        with mp.get_context(CONTEXT).Pool(num_proc) as pool:
+            l = self.iter_pages_jsonl()
+            with logwatch('gathering pages'):
+                l = list(l)
+            with logwatch('sorting'):
+                l.sort(key=lambda d: (d['work_id'],d['page_num']))
+            with logwatch('saving'):
+                for d in l:
+                    work_id=d.get('work_id')
+                    if last_pages and work_id!=last_work_id:
+                        # assert work_id not in work_ids_done
+                        if last_work_id in work_ids_done:
+                            print('!!',last_work_id,d)
+                        else:
+                            work_ids_done.add(last_work_id)
+                            ofn=os.path.join(
+                                self.path_texts_preproc,
+                                clean_filename(last_work_id+'.json.gz')
+                            )
+                            if force or not os.path.exists(ofn):
+                                res = pool.apply_async(
+                                    save_cleanup_pages, 
+                                    kwds=dict(
+                                        pages_ld=last_pages,
+                                        save_to=ofn
+                                    )
+                                )
+                                resl.append(res)
+                        last_pages = []
+                    last_work_id=work_id
+                    last_pages.append(d)
+                
+                for res in tqdm(resl,desc=f'Preprocessing pages [{num_proc}x]'): 
+                    res.get()
 
-    def gen(self,force=False, num_proc=1):
-        num_proc=1  # doesn't work with mp
-        done_ids = {rec.work_id for rec in self.page_db.select(self.page_db.work_id).distinct()} if not force else None
-        objs = [(id,force) for id in self.text_ids if force or id not in done_ids]
+    # def gen_pagedb(self,force=False, num_proc=1):
+    #     done_ids = {rec.work_id for rec in self.page_db.select(self.page_db.work_id).distinct()} if not force else None
+    #     texts = [(id,force) for id in self.text_ids if force or id not in done_ids]
 
-        pmap_run(
-            gen_text_pages_mp,
-            objs,
-            num_proc=num_proc,
-            desc='Saving cleaned pages into page db',
-            shuffle=True
-        )
+    #     t = PPA().textd[work_id]
+    # t.gen_pagedb(force=force)
+
+    #     pmap_run(
+    #         gen_text_pages_mp,
+    #         objs,
+    #         num_proc=num_proc,
+    #         desc='Saving cleaned pages into page db',
+    #         shuffle=True
+    #     )
 
     def ner_parse_texts(self, lim=25, min_doc_len=25, **kwargs):
         texts=[t for t in self.texts]
@@ -405,7 +440,7 @@ class PPAText:
     def txt(self, sep='\n\n\n\n'):
         return sep.join(page.txt for page in self.pages)
     
-    def gen(self, force=False):
+    def gen_pagedb(self, force=False):
         Page=self.corpus.page_db
         if force or (count:=Page.select().where(Page.work_id==self.id).count()) != self.num_pages:
             if force or count: 
@@ -515,4 +550,8 @@ def cleanup_pages_mp(obj):
 def gen_text_pages_mp(obj):
     work_id,force = obj
     t = PPA().textd[work_id]
-    t.gen(force=force)
+    t.gen_pagedb(force=force)
+
+def save_cleanup_pages(pages_ld, save_to):
+    pages_ld=cleanup_pages(pages_ld)
+    write_json(pages_ld, save_to)
