@@ -185,9 +185,9 @@ class BertTopicModel(BaseTopicModel):
     topicmodel_type='bertopic'
     def model(self, output_dir=None,force=False, lim=None):
         with logwatch('importing BERTopic'):
+            os.environ['TOKENIZERS_PARALLELISM']='false'
             from bertopic import BERTopic
             from bertopic.representation import KeyBERTInspired
-
 
         # get filename
         fdir=self.path if not output_dir else output_dir
@@ -200,7 +200,7 @@ class BertTopicModel(BaseTopicModel):
         with logwatch('loading documents into memory') as lw:
             # docs = [" ".join(page.content_words) for page in self.iter_docs(lim=lim)]
             docs = [page.txt for page in self.iter_docs(lim=lim)]
-            lw.log(f'loaded {len(docs)}')
+            lw.log(f'loaded {len(docs):,} documents into memory')
         
         with logwatch('fitting model'):
             self._mdl = BERTopic(verbose=True, representation_model=KeyBERTInspired())
