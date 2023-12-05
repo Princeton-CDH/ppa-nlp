@@ -189,13 +189,13 @@ class PPACorpus:
             wdb={k:sorted(list(v)) for k,v in wdb.items()}
             write_json(wdb, self.path_work_ids)
 
-    def preproc(self, num_proc=1, force=False):
+    def install(self, num_proc=1, force=False):
         last_work_id=None
         last_pages=[]
         resl=[]
         work_ids_done=set()
         with mp.get_context(CONTEXT).Pool(num_proc) as pool:
-            with logwatch(f'saving jsonl.gz files to {self.path_texts_preproc}'):
+            with logwatch(f'saving jsonl files to {self.path_texts_preproc} [{num_proc}x]'):
                 for d in self.iter_pages_jsonl():
                     work_id=d.get('work_id')
                     if last_pages and work_id!=last_work_id:
@@ -205,15 +205,15 @@ class PPACorpus:
                         else:
                             work_ids_done.add(last_work_id)
                             ofn=os.path.join(
-                                self.path_texts_preproc,
-                                clean_filename(last_work_id+'.jsonl.gz')
+                                self.path_texts,
+                                clean_filename(last_work_id+'.jsonl')
                             )
                             if force or not os.path.exists(ofn):
                                 res = pool.apply_async(
-                                    save_cleanup_pages, 
-                                    kwds=dict(
-                                        pages_ld=last_pages,
-                                        save_to=ofn
+                                    write_json, 
+                                    args=(
+                                        last_pages,
+                                        ofn
                                     )
                                 )
                                 resl.append(res)
@@ -221,8 +221,18 @@ class PPACorpus:
                     last_work_id=work_id
                     last_pages.append(d)
                 
-                for res in tqdm(resl,desc=f'Preprocessing pages [{num_proc}x]'): 
+                for res in tqdm(resl,desc=f'Waiting for rest of processes to complete [{num_proc}x]'): 
                     res.get()
+
+    def preproc(self, num_proc=1, force=False, shuffle=True, lim=None):
+        objs = [(t.path, t.path_preproc,force) for t in self.texts if os.path.exists(t.path)]
+        pmap_run(
+            preproc_json,
+            objs,
+            num_proc=num_proc,
+            shuffle=shuffle,
+            lim=lim
+        )
 
     # def gen_pagedb(self,force=False, num_proc=1):
     #     done_ids = {rec.work_id for rec in self.page_db.select(self.page_db.work_id).distinct()} if not force else None
@@ -350,18 +360,32 @@ class PPAText:
     def year(self): return pd.to_numeric(self.meta.get('pub_date'),errors='coerce')
 
     @cached_property
-    def path(self): return os.path.join(self.corpus.path_texts, self.meta[self.FILE_ID_KEY]+'.json')
+    def path(self): return os.path.join(self.corpus.path_texts, clean_filename(self.id+'.jsonl'))
     
     @cached_property
-    def path_preproc(self): return os.path.join(self.corpus.path_texts_preproc, self.meta[self.FILE_ID_KEY]+'.json.gz')
+    def path_preproc(self):
+        return os.path.join(
+            self.corpus.path_texts_preproc,
+            clean_filename(self.id+'.jsonl.gz')
+        ) 
 
     @cached_property
-    def pages_json_preproc(self):
-        return [PPAPage(d['page_id'], self, **d) for d in self.clean(force=False)]
-    
+    def pages_preproc(self): 
+        return list(self.iter_pages_preproc())
     @cached_property
-    def pages_json(self): 
-        return [PPAPage(d['page_id'], self, **d) for d in read_json(self.path)]
+    def pages_orig(self): 
+        return list(self.iter_pages_orig())
+    
+    def iter_pages_preproc(self):
+        self.clean(force=False)
+        for d in iter_json(self.path_preproc):
+            yield PPAPage(d['page_id'], self, **d)
+    
+    
+    def iter_pages_orig(self): 
+        for d in self.corpus.iter_pages_jsonl():
+            if d['work_id']==self.id:
+                yield PPAPage(d['page_id'], self, **d)
     
     @cached_property
     def pages(self):
@@ -410,9 +434,6 @@ class PPAText:
             pages_ld = read_json(self.path)
             pages_ld = cleanup_pages(pages_ld, remove_headers=remove_headers)
             write_json(pages_ld, self.path_preproc)
-            return pages_ld
-        else:
-            return read_json(self.path_preproc)
     
     def iter_page_json(self):
         if os.path.exists(self.path):
@@ -537,3 +558,14 @@ def gen_text_pages_mp(obj):
 def save_cleanup_pages(pages_ld, save_to):
     pages_ld=cleanup_pages(pages_ld)
     write_json(pages_ld, save_to)
+
+def save_orig_pages(pages_ld, save_to):
+    pages_ld=cleanup_pages(pages_ld)
+    write_json(pages_ld, save_to)
+
+def preproc_json(obj):
+    ifn,ofn,force = obj
+    if force or not os.path.exists(ofn):
+        pages_ld = read_json(ifn)
+        pages_ld=cleanup_pages(pages_ld)
+        write_json(pages_ld, ofn)
