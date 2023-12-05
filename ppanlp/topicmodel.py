@@ -183,7 +183,7 @@ class TomotopyTopicModel(BaseTopicModel):
 
 class BertTopicModel(BaseTopicModel):
     topicmodel_type='bertopic'
-    def model(self, output_dir=None,force=False, lim=None):
+    def model(self, output_dir=None,force=False, lim=None,**kwargs):
         with logwatch('importing BERTopic'):
             os.environ['TOKENIZERS_PARALLELISM']='false'
             from bertopic import BERTopic
@@ -204,7 +204,7 @@ class BertTopicModel(BaseTopicModel):
             lw.log(f'loaded {len(docs):,} documents into memory')
         
         with logwatch('fitting model'):
-            self._mdl = BERTopic(verbose=True, representation_model=KeyBERTInspired())
+            self._mdl = BERTopic(verbose=True, representation_model=KeyBERTInspired(), **kwargs)
             self._topics, self._probs = self._mdl.fit_transform(docs)
     
 
