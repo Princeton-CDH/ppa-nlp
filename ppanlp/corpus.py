@@ -242,14 +242,17 @@ class PPACorpus:
             )
 
     def gendb(self,force=False,startover=False):
-        if startover:# and os.path.exists(self.path_page_db): 
-            self._page_db_conn.close()
-            for x in ['page_db','_page_db_conn']:
-                if x in self.__dict__:
-                    del self.__dict__[x]
-            os.unlink(self.path_page_db)
-            self.page_db
-        
+        if startover:
+            force=True
+            conn=self.__dict__.get('_page_db_conn')
+            db=self.__dict__.get('page_db')
+            if conn is not None: 
+                conn.close()
+                self.__dict__.pop('_page_db_conn')
+            if db is not None:
+                self.__dict__.pop('page_db')
+            if os.path.exists(self.path_page_db): 
+                os.unlink(self.path_page_db)
         with logwatch(f'generating page database at {self.path_page_db}'):
             for i,t in enumerate(self.iter_texts(desc='Saving texts to database')):
                 if t.is_cleaned:
