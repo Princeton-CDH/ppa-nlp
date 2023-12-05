@@ -195,7 +195,8 @@ class BertTopicModel(BaseTopicModel):
         fnparams=self.path_params
 
         with logwatch('loading documents into memory'):
-            docs = [" ".join(page.content_words) for page in self.iter_docs(lim=lim)]
+            # docs = [" ".join(page.content_words) for page in self.iter_docs(lim=lim)]
+            docs = [page.txt for page in self.iter_docs(lim=lim)]
         
         with logwatch('fitting model'):
             self._mdl = BERTopic(verbose=True)

@@ -236,12 +236,15 @@ class PPACorpus:
     
     @cached_property
     def nlp(self):
-        import stanza
-        try:
-            nlp = stanza.Pipeline(lang='en', processors='tokenize,ner')
-        except Exception:
-            nlp = stanza.Pipeline(lang='en', processors='tokenize,ner',download_method=None)
-        return nlp
+        with logwatch('initializing nlp'):
+            with logwatch('importing stanza'):
+                import stanza
+            with logwatch('loading stanza nlp object'):
+                try:
+                    nlp = stanza.Pipeline(lang='en', processors='tokenize,ner')
+                except Exception:
+                    nlp = stanza.Pipeline(lang='en', processors='tokenize,ner',download_method=None)
+                return nlp
     
         
 
