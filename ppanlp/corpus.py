@@ -190,7 +190,7 @@ class PPACorpus:
         work_ids_done=set()
         wdb=defaultdict(set)
         with mp.get_context(CONTEXT).Pool(num_proc) as pool:
-            with logwatch(f'saving jsonl files to {self.path_texts_preproc} [{num_proc}x]'):
+            with logwatch(f'saving jsonl files to {self.path_texs} [{num_proc}x]'):
                 for d in self.iter_pages_jsonl():
                     work_id=d.get('work_id')
                     wdb[work_id].add(d['page_id'])
