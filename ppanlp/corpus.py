@@ -239,7 +239,6 @@ class PPACorpus:
     def gendb(self,force=False):
         with logwatch(f'generating page database at {self.path_page_db}'):
             for i,t in enumerate(self.iter_texts(desc='Saving texts to database')):
-                if i<600: continue
                 if t.is_cleaned:
                     t.gendb(force=force)
 
