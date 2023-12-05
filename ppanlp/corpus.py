@@ -81,11 +81,16 @@ class PPACorpus:
         return SqliteDict(self.path_nlp_db, flag=flag, tablename='ents', autocommit=autocommit)
     
     @cached_property
-    def page_db(self):
-        from peewee import SqliteDatabase, Model, CharField, TextField, IntegerField, FloatField
-
+    def _page_db_conn(self):
+        from peewee import SqliteDatabase
         ensure_dir(self.path_page_db)
-        db = SqliteDatabase(self.path_page_db)
+        return SqliteDatabase(self.path_page_db)
+
+    @cached_property
+    def page_db(self):
+        from peewee import Model, CharField, TextField, IntegerField, FloatField
+
+        db=self._page_db_conn
 
         class BaseModel(Model):
             class Meta:
@@ -236,11 +241,19 @@ class PPACorpus:
                 lim=lim
             )
 
-    def gendb(self,force=False):
+    def gendb(self,force=False,startover=False):
+        if startover:# and os.path.exists(self.path_page_db): 
+            self._page_db_conn.close()
+            for x in ['page_db','_page_db_conn']:
+                if x in self.__dict__:
+                    del self.__dict__[x]
+            os.unlink(self.path_page_db)
+            self.page_db
+        
         with logwatch(f'generating page database at {self.path_page_db}'):
             for i,t in enumerate(self.iter_texts(desc='Saving texts to database')):
                 if t.is_cleaned:
-                    t.gendb(force=force)
+                    t.gendb(force=force,delete_existing=not startover)
 
     def ner_parse_texts(self, lim=25, min_doc_len=25, **kwargs):
         texts=[t for t in self.texts]
@@ -443,10 +456,10 @@ class PPAText:
     def txt(self, sep='\n\n\n\n'):
         return sep.join(page.txt for page in self.pages)
     
-    def gendb(self, force=False):
+    def gendb(self, force=False, delete_existing = True):
         Page=self.corpus.page_db
         if force or (count:=Page.select().where(Page.work_id==self.id).count()) != self.num_pages:
-            if force or count: 
+            if (force or count) and delete_existing: 
                 Page.delete().where(Page.work_id==self.id).execute()
 
             inp = [
@@ -462,7 +475,7 @@ class PPAText:
                     title = page.text.title[:255],
                     _random = random.random()
                 )
-                for page in self.pages_preproc
+                for page in self.iter_pages_preproc()
             ]
             if inp: 
                 with logwatch('inserting into db', level='TRACE'):
