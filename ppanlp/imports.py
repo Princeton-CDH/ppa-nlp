@@ -85,7 +85,7 @@ LOG_FORMAT = '<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <cyan>{function}</
 LOG_LEVEL = 10
 
 from loguru import logger
-logger.remove()
+# logger.remove()
 logger.add(
     sink=sys.stderr,
     format=LOG_FORMAT, 

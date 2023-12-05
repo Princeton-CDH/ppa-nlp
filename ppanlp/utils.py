@@ -203,7 +203,7 @@ class logwatch:
         log (Logger): The logger object for logging the task status.
         task_name (str): The name of the task being monitored.
     """
-    def __init__(self, name=None, level='DEBUG'):
+    def __init__(self, name='running task', level='DEBUG'):
         self.started = None
         self.ended = None
         self.level=level
@@ -246,7 +246,7 @@ class logwatch:
             str: A description of the task.
         """
         if self.started is not None and self.ended is not None:
-            return f'{self.task_name} ... {self.tdesc}'
+            return f'finished {self.task_name} in {self.tdesc}'
         else:
             return f'Task running ...' if not self.task_name else f'{self.task_name} ...'
         
