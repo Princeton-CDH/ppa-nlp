@@ -195,13 +195,8 @@ class PPACorpus:
         resl=[]
         work_ids_done=set()
         with mp.get_context(CONTEXT).Pool(num_proc) as pool:
-            l = self.iter_pages_jsonl()
-            # with logwatch('gathering pages'):
-                # l = list(l)
-            # with logwatch('sorting'):
-                # l.sort(key=lambda d: (d['work_id'],d['page_num']))
-            with logwatch('saving'):
-                for d in l:
+            with logwatch(f'saving jsonl.gz files to {self.path_texts_preproc}'):
+                for d in self.iter_pages_jsonl():
                     work_id=d.get('work_id')
                     if last_pages and work_id!=last_work_id:
                         # assert work_id not in work_ids_done
@@ -211,7 +206,7 @@ class PPACorpus:
                             work_ids_done.add(last_work_id)
                             ofn=os.path.join(
                                 self.path_texts_preproc,
-                                clean_filename(last_work_id+'.json.gz')
+                                clean_filename(last_work_id+'.jsonl.gz')
                             )
                             if force or not os.path.exists(ofn):
                                 res = pool.apply_async(
