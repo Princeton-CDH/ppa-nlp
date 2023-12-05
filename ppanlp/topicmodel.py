@@ -195,7 +195,7 @@ class BertTopicModel(BaseTopicModel):
 
         with logwatch('loading documents into memory'):
             docs = [" ".join(page.content_words) for page in self.iter_docs(lim=lim)]
-        self._mdl = BERTopic()
+        self._mdl = BERTopic(verbose=True)
         self._topics, self._probs = self._mdl.fit_transform(docs)
     
 
