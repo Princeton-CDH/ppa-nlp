@@ -128,34 +128,36 @@ class PPACorpus:
             yield self.get_text(work_id)
             pbar.update()
 
+    @cached_property
+    def page_db_query_cache(self):
+        return SqliteDict(self.path_page_db_counts, autocommit=True)
 
-    def page_db_count(self, q=None, frac=None, min_doc_len=None,work_ids=None):
-        with SqliteDict(self.path_page_db_counts, autocommit=True) as db:
-            key=f'frac_{frac}.min_doc_len={min_doc_len}.work_ids_{work_ids}'
-            if not key in db:
-                with logwatch('counting pages in query'):
-                    count = self.page_db.select().where(q).count() if q is not None else self.page_db.select().count()
-                db[key]=count
-            return db[key]
+
+    def page_db_query(self, frac=None, min_doc_len=None):
+        # build query
+        if not frac or frac>1 or frac<=0: frac=1
+        if not min_doc_len or min_doc_len<1: min_doc_len=1
+        q = (self.page_db._random<=frac) & (self.page_db.page_num_content_words>=min_doc_len)
+        
+        # find total
+        key=f'frac_{frac}.min_doc_len={min_doc_len}'
+        with self.page_db_query_cache as pdqc:
+            if key in pdqc:
+                total = pdqc[key]
+            else:
+                with logwatch(f'counting rows for query "{key}"'):
+                    total = self.page_db.select().where(q).count()
+                pdqc[key]=total
+        # query
+        res = self.page_db.select().where(q)
+        return (res,total)
     
     def iter_pages(self, work_ids=None, clean=None, lim=None, min_doc_len=None, frac=None, max_per_cluster=None, as_dict=True):
         with logwatch('querying page database'):
-            Page=self.page_db
-            if not frac or frac>1 or frac<=0: frac=None
             i=0
             clustd=Counter()
             work_ids=set(work_ids) if work_ids else None
-            
-            q=None
-            if frac and min_doc_len:
-                q = (Page._random<=frac) & (Page.page_num_content_words>=min_doc_len)
-            elif frac:
-                q = (Page._random<=frac)
-            elif min_doc_len:
-                q = (Page.page_num_content_words>=min_doc_len)
-            
-            total = self.page_db_count(q=q,frac=frac,min_doc_len=min_doc_len)
-            res = Page.select().where(q) if q is not None else Page.select()
+            res,total = self.page_db_query(frac=frac,min_doc_len=min_doc_len)
         
         with logwatch('returning page database results'):
             for page_rec in tqdm(res,total=total,desc='Iterating over page search results'):
@@ -289,7 +291,7 @@ class PPACorpus:
     def topic_model(self, output_dir=None, model_type=None,ntopic=50, niter=100, min_doc_len=25, frac=1, max_per_cluster=None,force=False):
         from .topicmodel import PPATopicModel
 
-        key=(output_dir,model_type,n_topic,niter,min_doc_len,frac,max_per_cluster)
+        key=(output_dir,model_type,ntopic,niter,min_doc_len,frac,max_per_cluster)
         if force or not key in self._topicmodels:
             mdl = PPATopicModel(
                 output_dir=output_dir,
