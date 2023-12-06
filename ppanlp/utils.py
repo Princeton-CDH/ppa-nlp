@@ -199,6 +199,7 @@ def pmap_run(*x,**y):
 
 
 NUM_LOGWATCHES=0
+LOGWATCH_ID=0
 
 class logwatch:
     """A class for monitoring and logging the duration of tasks.
@@ -211,6 +212,9 @@ class logwatch:
         task_name (str): The name of the task being monitored.
     """
     def __init__(self, name='running task', level='DEBUG'):
+        global LOGWATCH_ID
+        LOGWATCH_ID+=1
+        self.id = LOGWATCH_ID
         self.started = None
         self.ended = None
         self.level=level
@@ -252,11 +256,14 @@ class logwatch:
         Returns:
             str: A description of the task.
         """
-        pref = '  '*(self.num-1)
+        pref1=f'{"  "*(self.num-1)}' if self.num>1 else ''
+
         if self.started is not None and self.ended is not None:
-            return pref + f'finished {self.task_name} in {self.tdesc}'
+            pref = f'{pref1} <' if pref1 else f'<'
+            return f'{pref} took {self.tdesc}'
         else:
-            return pref + (f'Task running ...' if not self.task_name else f'started {self.task_name}')
+            pref = f'{pref1} >' if pref1 else f'>'
+            return f'{pref} {self.task_name}'
         
     def __enter__(self):        
         """Context manager method that is called when entering a 'with' statement.

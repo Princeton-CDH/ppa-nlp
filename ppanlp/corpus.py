@@ -16,6 +16,7 @@ def PPA(path=None, **kwargs):
 
 class PPACorpus:
     WORK_ID_FIELD = 'group_id_s'
+    NUM_LINES_JSONL = 2160441
 
     PAGE_RENAME_FIELDNAMES = dict(
         work_id='group_id_s',
@@ -121,7 +122,7 @@ class PPACorpus:
 
     def iter_texts(self, work_ids=None,progress=True,desc=None):
         if work_ids is None: work_ids=self.meta.index
-        pdesc='Iteration over texts in PPA' if not desc else desc
+        pdesc='Iterating over texts in PPA' if not desc else desc
         pbar = tqdm(total=len(work_ids), position=0, desc=pdesc,disable=not progress)
         for work_id in work_ids:
             # pbar.set_description(f'{pdesc}: {work_id}')
@@ -133,57 +134,83 @@ class PPACorpus:
         return SqliteDict(self.path_page_db_counts, autocommit=True)
 
 
-    def page_db_query(self, frac=None, min_doc_len=None):
+    def page_db_query(self, frac=None,frac_min=0,frac_max=1,min_doc_len=None):
         # build query
-        if not frac or frac>1 or frac<=0: frac=1
-        if not min_doc_len or min_doc_len<1: min_doc_len=1
-        q = (self.page_db._random<=frac) & (self.page_db.page_num_content_words>=min_doc_len)
+        if frac is not None and 0<frac<1: frac_max=frac_min+frac
+        if not min_doc_len or min_doc_len<1: min_doc_len=0
+        frac_min,frac_max=round(frac_min,4),round(frac_max,4)
+        q = (frac_min<=self.page_db._random<frac_max) & (self.page_db.page_num_content_words>=min_doc_len)
         
         # find total
-        key=f'frac_{frac}.min_doc_len={min_doc_len}'
+        #key=f'frac_{frac_min}_to_{frac_max}.min_doc_len={min_doc_len}'
+        keyd = {'min_doc_len':min_doc_len, 'frac_min':frac_min, 'frac_max':frac_max}
+        key = json.dumps(keyd)
         with self.page_db_query_cache as pdqc:
             if key in pdqc:
                 total = pdqc[key]
             else:
-                with logwatch(f'counting rows for query "{key}"'):
+                with logwatch(f'counting rows for query ({key})'):
                     total = self.page_db.select().where(q).count()
                 pdqc[key]=total
         # query
         res = self.page_db.select().where(q)
-        return (res,total)
+        return (res,total,key)
     
-    def iter_pages(self, work_ids=None, clean=None, lim=None, min_doc_len=None, frac=None, max_per_cluster=None, as_dict=True):
-        with logwatch('querying page database'):
+    def iter_pages(self, use_db=False, as_dict=False, **query_kwargs):
+        if (use_db or query_kwargs) and os.path.exists(self.path_page_db):
+            yield from self.iter_pages_db(as_dict=as_dict, **query_kwargs)
+        else:
+            if query_kwargs: 
+                logger.warning(f'no filtering applied to query-less json iteration: {query_kwargs}')
+            if os.path.exists(self.path_pages_jsonl):
+                yield from self.iter_pages_jsonl(as_dict=as_dict)
+            else:
+                yield from self.iter_pages_text_jsons(as_dict=as_dict)
+
+            
+    def iter_pages_text_jsons(self, **kwargs):
+        with logwatch('iterating pages by individual text json files'):
+            for text in self.iter_texts():
+                yield from text.iter_pages_orig(**kwargs)
+        
+    def iter_pages_db(self, work_ids=None, clean=None, lim=None, min_doc_len=None, frac=None, frac_min=0, max_per_cluster=None, as_dict=False):
+        with logwatch('iterating pages by page database'):
             i=0
             clustd=Counter()
             work_ids=set(work_ids) if work_ids else None
-            res,total = self.page_db_query(frac=frac,min_doc_len=min_doc_len)
-        
-        with logwatch('returning page database results'):
-            for page_rec in tqdm(res,total=total,desc='Iterating over page search results'):
-                d=page_rec.__data__        
-                if 'id' in d: del d['id']
-                if work_ids and d['work_id'] not in work_ids: continue
-                if not max_per_cluster or clustd[d['cluster']]<max_per_cluster:
-                    yield PPAPage(d['page_id'], self.textd[d['work_id']], **d) if not as_dict else d
-                    if max_per_cluster: clustd[d['cluster']]+=1
-                    i+=1
+            res,total,qkey = self.page_db_query(frac=frac,min_doc_len=min_doc_len,frac_min=frac_min)
+            
+            with logwatch(f'iterating page database results ({qkey})'):
+                for page_rec in tqdm(res,total=total,desc='Iterating over page search results'):
+                    d=page_rec.__data__        
+                    if 'id' in d: del d['id']
+                    if work_ids and d['work_id'] not in work_ids: continue
+                    if not max_per_cluster or clustd[d['cluster']]<max_per_cluster:
+                        yield PPAPage(d['page_id'], self.textd[d['work_id']], **d) if not as_dict else d
+                        if max_per_cluster: clustd[d['cluster']]+=1
+                        i+=1
+                        if lim and i>=lim: break
                     if lim and i>=lim: break
-                if lim and i>=lim: break
 
     @cache
     def pages_df(self, **kwargs): 
         return pd.DataFrame(page for page in self.iter_pages(as_dict=True,**kwargs))
     
-    def iter_pages_jsonl(self): 
-        fn=self.path_pages_jsonl
-        iterr=iter_json(fn)
-        iterr=tqdm(iterr,desc=f'Iterating over {os.path.basename(fn)}',position=0)
-        for d in iterr:
-            yield {
-                k1:d.get(k2,'' if k1!='page_num' else -1) 
-                for k1,k2 in self.PAGE_RENAME_FIELDNAMES.items()
-            }
+    def iter_pages_jsonl(self, as_dict=False): 
+        with logwatch('iterating pages by corpus jsonl file'):
+            fn=self.path_pages_jsonl
+            iterr=iter_json(fn)
+            iterr=tqdm(iterr,total=self.NUM_LINES_JSONL,desc=f'Iterating over {os.path.basename(fn)}',position=0)
+            for d in iterr:
+                od = {
+                    k1:d.get(k2,'' if k1!='page_num' else -1) 
+                    for k1,k2 in self.PAGE_RENAME_FIELDNAMES.items()
+                }
+                yield od if as_dict else PPAPage(
+                    od['page_id'],
+                    self.textd[od['work_id']],
+                    **od
+                )
 
 
     def index(self, force=False):
@@ -198,7 +225,7 @@ class PPACorpus:
         wdb=defaultdict(set)
         with mp.get_context(CONTEXT).Pool(num_proc) as pool:
             with logwatch(f'saving jsonl files to {self.path_texts} [{num_proc}x]'):
-                for d in self.iter_pages_jsonl():
+                for d in self.iter_pages_jsonl(as_dict=True):
                     work_id=d.get('work_id')
                     wdb[work_id].add(d['page_id'])
                     if last_pages and work_id!=last_work_id:
@@ -411,11 +438,17 @@ class PPAText:
                 raise e
 
     
-    def iter_pages_orig(self): 
-        for d in self.corpus.iter_pages_jsonl():
-            if d['work_id']==self.id:
+    def iter_pages_orig(self, as_dict=False):        
+        def iter_dicts():
+            if os.path.exists(self.path):
+                yield from self.iter_page_json()
+        
+        if as_dict:
+            yield from iter_dicts()
+        else:
+            for d in iter_dicts():
                 yield PPAPage(d['page_id'], self, **d)
-    
+        
     @cached_property
     def pages(self):
         # if we don't need to clean just return orig json

@@ -207,6 +207,11 @@ class BertTopicModel(BaseTopicModel):
         with logwatch('fitting model'):
             self._mdl = BERTopic(verbose=True, representation_model=KeyBERTInspired(), **kwargs)
             self._topics, self._probs = self._mdl.fit_transform(docs)
+
+
+    def save(self):
+        ensure_dir(self.path_model)
+        self.mdl.save(self.path_model)
     
 
 
