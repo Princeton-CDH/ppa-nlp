@@ -183,7 +183,7 @@ class TomotopyTopicModel(BaseTopicModel):
 
 class BertTopicModel(BaseTopicModel):
     topicmodel_type='bertopic'
-    def model(self, output_dir=None,force=False, lim=None,**kwargs):
+    def model(self, output_dir=None,force=False, lim=None, save=True, **kwargs):
         with logwatch('importing BERTopic'):
             os.environ['TOKENIZERS_PARALLELISM']='false'
             from bertopic import BERTopic
@@ -193,9 +193,7 @@ class BertTopicModel(BaseTopicModel):
         fdir=self.path if not output_dir else output_dir
         os.makedirs(fdir, exist_ok=True)
         fn=self.path_model
-        fnindex=self.path_index
-        fnparams=self.path_params
-        
+        if not force and os.path.exists(fn): return self.load()
 
         with logwatch('loading documents into memory') as lw:
             # docs = [" ".join(page.content_words) for page in self.iter_docs(lim=lim)]
@@ -207,11 +205,25 @@ class BertTopicModel(BaseTopicModel):
         with logwatch('fitting model'):
             self._mdl = BERTopic(verbose=True, representation_model=KeyBERTInspired(), **kwargs)
             self._topics, self._probs = self._mdl.fit_transform(docs)
+        
+        if save: self.save()
+        return self._mdl
 
 
     def save(self):
-        ensure_dir(self.path_model)
-        self.mdl.save(self.path_model)
+        if self._mdl is not None:
+            with logwatch(f'saving model to disk: {os.path.basename(self.path_model)}'):
+                ensure_dir(self.path_model)
+                self.mdl.save(self.path_model)
+
+    def load(self):
+        if os.path.exists(self.path_model):
+            with logwatch('importing BERTopic'):
+                from bertopic import BERTopic
+            with logwatch(f'loading model from disk: {os.path.basename(self.path_model)}'):
+                self._mdl = BERTopic.load(self.path_model)
+                return self._mdl
+
     
 
 

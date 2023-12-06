@@ -218,8 +218,14 @@ class logwatch:
         self.started = None
         self.ended = None
         self.level=level
-        self.log = getattr(logger,self.level.lower())
         self.task_name = name
+
+    def log(self, msg, pref='< '):
+        if msg:
+            logfunc = getattr(logger,self.level.lower())
+            logfunc(pref+msg)
+
+
     @property
     def tdesc(self): 
         """Returns the formatted timespan of the duration.
@@ -260,7 +266,7 @@ class logwatch:
 
         if self.started is not None and self.ended is not None:
             pref = f'{pref1} <' if pref1 else f'<'
-            return f'{pref} took {self.tdesc}'
+            return f'{pref} {self.tdesc}'
         else:
             pref = f'{pref1} >' if pref1 else f'>'
             return f'{pref} {self.task_name}'
@@ -277,7 +283,7 @@ class logwatch:
         global NUM_LOGWATCHES
         NUM_LOGWATCHES+=1
         self.num = NUM_LOGWATCHES
-        self.log(self.desc)
+        self.log(self.desc,pref='')
         self.started = time.time()
         return self
 
@@ -288,7 +294,8 @@ class logwatch:
         global NUM_LOGWATCHES
         NUM_LOGWATCHES-=1
         self.ended = time.time()
-        self.log(self.desc)
+        if self.tdesc!='0 seconds':
+            self.log(self.desc,pref='')
 
 
 
