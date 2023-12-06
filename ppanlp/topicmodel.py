@@ -27,6 +27,7 @@ class BaseTopicModel:
         self._mdl = None
         self.id2index = {}
         self.index2id = {}
+        self._id_docs,self._ids,self._docs = None,None,None
 
         self.path_topicmodel = os.path.join(self.corpus.path_data,'topicmodels') 
         self.path = output_dir if output_dir and os.path.isabs(output_dir) else os.path.join(
@@ -210,6 +211,29 @@ class BertTopicModel(BaseTopicModel):
             # )
         )
         return embedding_model
+    
+    def init_docs(self, by_sent=False, lim=None, force=False):
+        if force or self._id_docs is None:
+            for bk in ['id_docs','docs','ids','doc2id','id2doc']:
+                if bk in self.__dict__:
+                    self.__dict__.pop(bk)
+            with logwatch('loading documents into memory') as lw:
+                self._id_docs = list(self.iter_sents(lim=lim) if by_sent else self.iter_docs(lim=lim))
+                lw.log(f'loaded {len(self._id_docs):,} documents into memory')
+    
+    @cached_property
+    def id_docs(self):
+        if self._id_docs is None: self.init_docs()
+        return self._id_docs
+    @cached_property
+    def docs(self): return [y for x,y in self.id_docs]
+    @cached_property
+    def ids(self): return [x for x,y in self.id_docs]
+    @cached_property
+    def doc2id(self): return {y:x for x,y in self.id_docs}
+    @cached_property
+    def id2doc(self): return {x:y for x,y in self.id_docs}
+
 
     def model(self, output_dir=None,force=False, lim=None, save=True, embedding_model=None, by_sent=False, **kwargs):
         with logwatch('loading or generating model'):
@@ -224,13 +248,9 @@ class BertTopicModel(BaseTopicModel):
                 from bertopic import BERTopic
                 from bertopic.representation import KeyBERTInspired
 
-            with logwatch('loading documents into memory') as lw:
-                self._id_docs = list(self.iter_sents(lim=lim) if by_sent else self.iter_docs(lim=lim))
-                self._ids = [x for x,y in self._id_docs]
-                self._docs = [y for x,y in self._id_docs]
-                docs = self._docs
-                lw.log(f'loaded {len(docs):,} documents into memory')
-            
+            # get docs
+            docs = self.init_docs(by_sent=by_sent, lim=lim)
+
             with logwatch('fitting model'):
                 self._mdl = BERTopic(
                     embedding_model=embedding_model,
