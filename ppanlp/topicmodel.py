@@ -211,7 +211,7 @@ class BertTopicModel(BaseTopicModel):
         )
         return embedding_model
 
-    def model(self, output_dir=None,force=False, lim=None, save=True, embedding_model=None, **kwargs):
+    def model(self, output_dir=None,force=False, lim=None, save=True, embedding_model=None, by_sent=False, **kwargs):
         with logwatch('loading or generating model'):
             # get filename
             fdir=self.path if not output_dir else output_dir
@@ -225,7 +225,7 @@ class BertTopicModel(BaseTopicModel):
                 from bertopic.representation import KeyBERTInspired
 
             with logwatch('loading documents into memory') as lw:
-                self._id_docs = list(self.iter_sents(lim=lim))
+                self._id_docs = list(self.iter_sents(lim=lim) if by_sent else self.iter_docs(lim=lim))
                 self._ids = [x for x,y in self._id_docs]
                 self._docs = [y for x,y in self._id_docs]
                 docs = self._docs
