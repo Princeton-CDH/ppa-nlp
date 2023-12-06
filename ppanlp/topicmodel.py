@@ -233,7 +233,7 @@ class BertTopicModel(BaseTopicModel):
             
             with logwatch('fitting model'):
                 self._mdl = BERTopic(
-                    embedding_model=self.embedding_model,
+                    # embedding_model=self.embedding_model,
                     representation_model=KeyBERTInspired(), 
                     verbose=True, 
                     **kwargs
