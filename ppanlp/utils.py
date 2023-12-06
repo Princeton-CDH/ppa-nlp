@@ -263,6 +263,7 @@ class logwatch:
             str: A description of the task.
         """
         pref1=f'{"  "*(self.num-1)}' if self.num>1 else ''
+        pref1+=f'[{self.id}]'
 
         if self.started is not None and self.ended is not None:
             pref = f'{pref1} <' if pref1 else f'<'
@@ -291,11 +292,12 @@ class logwatch:
         """
         Logs the resulting time.
         """ 
-        global NUM_LOGWATCHES
+        global NUM_LOGWATCHES, LOGWATCH_ID
         NUM_LOGWATCHES-=1
         self.ended = time.time()
         if self.tdesc!='0 seconds':
             self.log(self.desc,pref='')
+        if NUM_LOGWATCHES==0: LOGWATCH_ID=0
 
 
 
@@ -325,3 +327,18 @@ def clean_filename(filename, whitelist=None, replace=' '):
     if len(cleaned_filename)>char_limit:
         print("Warning, filename truncated because it was over {}. Filenames may no longer be unique".format(char_limit))
     return cleaned_filename[:char_limit]    
+
+
+
+def truncfn(fn, lim=40):
+    dirs=fn.split(os.path.sep)
+    while dirs and len(fn)>lim:
+        dirs.pop(0)
+        fn='...'+os.path.sep.join(dirs)
+    return fn[-lim:]
+
+
+def iterlim(iterr, lim=None):
+    for i,x in enumerate(iterr):
+        if lim and i>=lim: break
+        yield x

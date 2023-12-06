@@ -43,7 +43,7 @@ class BaseTopicModel:
         self.path_params = os.path.join(self.path, 'params.json')
         self.path_ldavis = os.path.join(self.path, 'ldavis')
 
-    def iter_docs(self, lim=None):
+    def iter_pages(self, lim=None):
         yield from self.corpus.iter_pages(
             lim=lim,
             min_doc_len=self.min_doc_len,
@@ -52,6 +52,20 @@ class BaseTopicModel:
             as_dict=False
         )
 
+    def iter_docs(self, lim=None):
+        yield from (
+            (page.id,page.txt)
+            for page in self.iter_pages(lim=lim)
+        )
+
+    def iter_sents(self, lim=None, max_len=1024):
+        import nltk
+        iterr = (
+            (page.id,sent[:max_len])
+            for page in self.iter_pages()
+            for sent in nltk.sent_tokenize(page.txt)
+        )
+        yield from iterlim(iterr, lim)
 
 
     def model(self, **kwargs):
@@ -183,48 +197,68 @@ class TomotopyTopicModel(BaseTopicModel):
 
 class BertTopicModel(BaseTopicModel):
     topicmodel_type='bertopic'
+    embedding_model_name = 'emanjavacas/MacBERTh'
+
+    @cached_property
+    def embedding_model(self):
+        from transformers.pipelines import pipeline
+        embedding_model = pipeline(
+            "feature-extraction", 
+            model=self.embedding_model_name,
+            # model_kwargs=dict(
+                # max_length=512
+            # )
+        )
+        return embedding_model
+
     def model(self, output_dir=None,force=False, lim=None, save=True, **kwargs):
-        with logwatch('importing BERTopic'):
-            os.environ['TOKENIZERS_PARALLELISM']='false'
-            from bertopic import BERTopic
-            from bertopic.representation import KeyBERTInspired
+        with logwatch('loading or generating model'):
+            # get filename
+            fdir=self.path if not output_dir else output_dir
+            os.makedirs(fdir, exist_ok=True)
+            fn=self.path_model
+            if not force and os.path.exists(fn): return self.load(fn)
 
-        # get filename
-        fdir=self.path if not output_dir else output_dir
-        os.makedirs(fdir, exist_ok=True)
-        fn=self.path_model
-        if not force and os.path.exists(fn): return self.load()
+            with logwatch('importing BERTopic'):
+                os.environ['TOKENIZERS_PARALLELISM']='false'
+                from bertopic import BERTopic
+                from bertopic.representation import KeyBERTInspired
 
-        with logwatch('loading documents into memory') as lw:
-            # docs = [" ".join(page.content_words) for page in self.iter_docs(lim=lim)]
-            docids = [(page.id,page.txt) for page in self.iter_docs(lim=lim)]
-            self._ids = [x for x,y in docids]
-            self._docs = docs = [y for x,y in docids]
-            lw.log(f'loaded {len(docs):,} documents into memory')
-        
-        with logwatch('fitting model'):
-            self._mdl = BERTopic(verbose=True, representation_model=KeyBERTInspired(), **kwargs)
-            self._topics, self._probs = self._mdl.fit_transform(docs)
-        
-        if save: self.save()
-        return self._mdl
+            with logwatch('loading documents into memory') as lw:
+                self._id_docs = list(self.iter_sents(lim=lim))
+                self._ids = [x for x,y in self._id_docs]
+                self._docs = [y for x,y in self._id_docs]
+                docs = self._docs
+                lw.log(f'loaded {len(docs):,} documents into memory')
+            
+            with logwatch('fitting model'):
+                self._mdl = BERTopic(
+                    embedding_model=self.embedding_model,
+                    representation_model=KeyBERTInspired(), 
+                    verbose=True, 
+                    **kwargs
+                )
+                self._topics, self._probs = self._mdl.fit_transform(docs)
+            
+            if save: self.save()
+            return self._mdl
 
 
     def save(self):
         if self._mdl is not None:
-            with logwatch(f'saving model to disk: {os.path.basename(self.path_model)}'):
-                ensure_dir(self.path_model)
-                self.mdl.save(self.path_model)
+            fn=self.path_model
+            with logwatch(f'saving model to disk: {truncfn(fn)}'):
+                ensure_dir(fn)
+                self.mdl.save(fn)
 
-    def load(self):
-        if os.path.exists(self.path_model):
+    def load(self, fn=None):
+        if not fn: fn=self.path_model
+        if os.path.exists(fn):
             with logwatch('importing BERTopic'):
                 from bertopic import BERTopic
-            with logwatch(f'loading model from disk: {os.path.basename(self.path_model)}'):
+            with logwatch(f'loading model from disk: {truncfn(fn)}'):
                 self._mdl = BERTopic.load(self.path_model)
                 return self._mdl
-
-    
 
 
 def PPATopicModel(
