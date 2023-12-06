@@ -249,6 +249,29 @@ class logwatch:
         """
         return self.ended - self.started
     
+    # @property
+    # def desc(self): 
+    #     """Returns a description of the task.
+        
+    #     If the task has both a start time and an end time, it returns a string
+    #     indicating the task name and the time it took to complete the task.
+        
+    #     If the task is currently running, it returns a string indicating that
+    #     the task is still running.
+        
+    #     Returns:
+    #         str: A description of the task.
+    #     """
+    #     pref1=f'{"  "*(self.num-1)}' if self.num>1 else ''
+    #     pref1+=f'[{self.id}]'
+
+    #     if self.started is not None and self.ended is not None:
+    #         pref = f'{pref1} <' if pref1 else f'<'
+    #         return f'{pref} {self.tdesc}'
+    #     else:
+    #         pref = f'{pref1} >' if pref1 else f'>'
+    #         return f'{pref} {self.task_name}'
+
     @property
     def desc(self): 
         """Returns a description of the task.
@@ -262,15 +285,11 @@ class logwatch:
         Returns:
             str: A description of the task.
         """
-        pref1=f'{"  "*(self.num-1)}' if self.num>1 else ''
-        pref1+=f'[{self.id}]'
-
-        if self.started is not None and self.ended is not None:
-            pref = f'{pref1} <' if pref1 else f'<'
-            return f'{pref} {self.tdesc}'
+        pref="| " * (self.num-1)
+        if self.started is None or self.ended is None:
+            return f'{pref}| {self.task_name}'.strip()
         else:
-            pref = f'{pref1} >' if pref1 else f'>'
-            return f'{pref} {self.task_name}'
+            return f'{pref}| {self.tdesc}'.strip()
         
     def __enter__(self):        
         """Context manager method that is called when entering a 'with' statement.
