@@ -211,7 +211,7 @@ class BertTopicModel(BaseTopicModel):
         )
         return embedding_model
 
-    def model(self, output_dir=None,force=False, lim=None, save=True, **kwargs):
+    def model(self, output_dir=None,force=False, lim=None, save=True, embedding_model=None, **kwargs):
         with logwatch('loading or generating model'):
             # get filename
             fdir=self.path if not output_dir else output_dir
@@ -233,6 +233,7 @@ class BertTopicModel(BaseTopicModel):
             
             with logwatch('fitting model'):
                 self._mdl = BERTopic(
+                    embedding_model=embedding_model,
                     # embedding_model=self.embedding_model,
                     representation_model=KeyBERTInspired(), 
                     verbose=True, 
