@@ -29,7 +29,7 @@ class PPACorpus:
 
     def __init__(self, path:str, clean=True, texts_dir='texts', metadata_fn='metadata.jsonl', pages_fn='pages.jsonl.gz',texts_preproc_dir='texts_preproc'):
         path=path.strip()
-        with logwatch(f'booting PPACorpus at {path}'):
+        with logwatch(f'booting PPACorpus at {truncfn(path)}'):
             self.do_clean=clean
             self.path = os.path.abspath(os.path.expanduser(path))
             self.path_pages_jsonl = os.path.join(self.path,pages_fn) if not os.path.isabs(pages_fn) else pages_fn
@@ -181,7 +181,7 @@ class PPACorpus:
             res,total,qkey = self.page_db_query(frac=frac,min_doc_len=min_doc_len,frac_min=frac_min)
             
             with logwatch(f'iterating page database results ({qkey})'):
-                for page_rec in tqdm(res,total=total,desc='Iterating over page search results'):
+                for page_rec in tqdm(res,total=total,desc='Iterating over page search results',position=0):
                     d=page_rec.__data__        
                     if 'id' in d: del d['id']
                     if work_ids and d['work_id'] not in work_ids: continue
@@ -251,7 +251,7 @@ class PPACorpus:
                     last_work_id=work_id
                     last_pages.append(d)
                 
-                for res in tqdm(resl,desc=f'Waiting for rest of processes to complete [{num_proc}x]'): 
+                for res in tqdm(resl,desc=f'Waiting for rest of processes to complete [{num_proc}x]',position=0): 
                     res.get()
         
         # finally, save index
@@ -468,7 +468,7 @@ class PPAText:
         q=(self.corpus.page_db.work_id==self.id)
         # total = self.corpus.page_db_count(q,work_ids=self.id)
         res = self.corpus.page_db.select().where(q)
-        for page_rec in tqdm(res,desc='Iterating over page search results'):
+        for page_rec in tqdm(res,desc='Iterating over page search results',position=0):
             d=page_rec.__data__        
             if 'id' in d: del d['id']
             yield d if as_dict else PPAPage(d['page_id'], self, **d)

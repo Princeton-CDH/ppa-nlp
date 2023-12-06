@@ -349,12 +349,14 @@ def clean_filename(filename, whitelist=None, replace=' '):
 
 
 
-def truncfn(fn, lim=40):
+def truncfn(ifn, lim=25):
+    if ifn.startswith(os.path.sep): fn=ifn[1:]
     dirs=fn.split(os.path.sep)
-    while dirs and len(fn)>lim:
-        dirs.pop(0)
-        fn='...'+os.path.sep.join(dirs)
-    return fn[-lim:]
+    while len(dirs)>2 and len(fn)>lim:
+        if dirs[1]=='...': dirs.pop(1)
+        dirs[1]='...'
+        fn=os.path.sep.join(dirs)
+    return (ifn[0] if ifn.startswith(os.path.sep) else '')+fn[-lim:]
 
 
 def iterlim(iterr, lim=None):

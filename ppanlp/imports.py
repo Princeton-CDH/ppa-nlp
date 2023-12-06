@@ -1,6 +1,7 @@
 # imports...
 import os,sys,warnings,random
 warnings.filterwarnings('ignore')
+from string import punctuation
 from functools import cache
 from tqdm import tqdm
 from sqlitedict import SqliteDict
