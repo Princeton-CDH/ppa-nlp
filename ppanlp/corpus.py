@@ -302,6 +302,11 @@ class PPACorpus:
                 page.ner_parse()
                 numdone[page.text.id]+=1
 
+
+    def ner_model(self, **kwargs):
+        from .ner import NERModel
+        return NERModel(self, **kwargs)
+
     
 
     @cached_property

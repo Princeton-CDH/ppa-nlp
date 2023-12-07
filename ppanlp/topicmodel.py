@@ -281,9 +281,25 @@ class BertTopicModel(BaseTopicModel):
                 self._mdl = BERTopic.load(self.path_model)
                 return self._mdl
 
+    @cached_property
+    def doc_df(self):
+        docinfo = self.mdl.get_document_info(self.docs)
+        docinfo.columns = [x.lower() for x in docinfo]
+        docinfo['page_id']=[self.doc2id[doc] for doc in docinfo.document]
+        return docinfo
 
-def PPATopicModel(
-    model_type='tomotopy',
-    **kwargs
-):
-    return BertTopicModel(**kwargs) if model_type and model_type.startswith('bert') else TomotopyTopicModel(**kwargs)
+    @cached_property
+    def topic_df(self):
+        tdf = self.mdl.get_topic_info()
+        tdf.columns = [x.lower() for x in tdf]
+        tdf['representative_docs_ids']=[[self.doc2id[doc] for doc in docs] for docs in tdf.representative_docs]
+        return tdf
+
+    @cached_property
+    def page2topic(self):
+        return dict(zip(self.doc_df.page_id,self.doc_df.name))
+
+
+def PPATopicModel(model_type='bertopic',**kwargs):
+    if model_type and model_type.lower().startswith('tomo'): return TomotopyTopicModel(**kwargs)
+    return BertTopicModel(**kwargs)

@@ -100,4 +100,5 @@ from .utils import *
 from .cleanup import *
 from .corpus import *
 from .topicmodel import *
+from .ner import *
 from .cli import *
