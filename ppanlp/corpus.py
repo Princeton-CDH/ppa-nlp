@@ -336,7 +336,6 @@ class PPACorpus:
             os.makedirs(self.path_texts_preproc,exist_ok=True)
             numdone=0
             tries=0
-            lasttime=time.time()
 
             with mp.get_context(CONTEXT).Pool(num_proc) as pool:
                 if num_proc is None: 
@@ -347,9 +346,9 @@ class PPACorpus:
                 if max_queue is None: 
                     max_queue = 100
 
-
+                naptime=3
                 def getdesc():
-                    return f'{max_queue:,} texts in queue: {numdone:,} finished; {format_timespan(time.time() - lasttime)} since last completion'
+                    return f'preprocessing: {max_queue:,} texts in queue; {numdone:,} finished; {format_timespan(tries*naptime)} since last completion'
 
 
                 with logwatch(f'saving jsonl files to {self.path_texts_preproc} [{num_proc}x]') as lw:
@@ -398,7 +397,7 @@ class PPACorpus:
                                                 errors.append(res)
                                         except ValueError:
                                             pass
-                                    time.sleep(2)
+                                    time.sleep(naptime)
                                     lw.set_progress_desc(getdesc())
                             
                             last_pages = []
