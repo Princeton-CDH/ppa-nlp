@@ -302,7 +302,7 @@ class PPACorpus:
             self.preproc(num_proc=num_proc, force=force)
             self.gen_db(force=force, startover=clear)
 
-    def preproc(self, num_proc=None, force=False, shuffle=True, lim=None):
+    def preproc(self, num_proc=None, force=False, shuffle=True, lim=None, max_queue=None):
         with logwatch(f'preprocessing jsonl files'):
             last_work_id=None
             last_pages=[]
@@ -312,9 +312,14 @@ class PPACorpus:
             os.makedirs(self.path_texts_preproc,exist_ok=True)
             with mp.get_context(CONTEXT).Pool(num_proc) as pool:
                 if num_proc is None: 
-                    num_proc=mp.cpu_count() - 1 if mp.cpu_count()>1 else 1
+                    num_proc=mp.cpu_count() // 2 - 1
+                    if num_proc<1: 
+                        num_proc=1
+
+                if max_queue is None: 
+                    max_queue = num_proc * 2
                 with logwatch(f'saving jsonl files to {self.path_texts_preproc} [{num_proc}x]') as lw:
-                    for d in self.iter_pages_jsonl(as_dict=True, desc=f"sending each text's pages to a multiprocessing pool with {num_proc} CPUs"):
+                    for d in self.iter_pages_jsonl(as_dict=True, desc=f"preprocessing and saving pages on the fly in a multiprocessing pool with {num_proc} CPUs"):
                         work_id=d.get('work_id')
                         wdb[work_id].add(d['page_id'])
                         if last_pages and work_id!=last_work_id:
@@ -334,6 +339,12 @@ class PPACorpus:
                                     )
                                 )
                                 resl.append(res)
+                                if len(resl)>max_queue:
+                                    toolong = len(resl) - max_queue
+                                    finish_now,resl = resl[:toolong], resl[toolong:]
+                                    for res in finish_now:
+                                        res.get()
+                            
                             last_pages = []
                         last_work_id=work_id
                         last_pages.append(d)
