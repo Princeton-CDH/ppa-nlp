@@ -348,13 +348,10 @@ class PPACorpus:
                 if max_queue is None: 
                     max_queue = 99
 
-                naptime=.1
+                naptime=1
                 numinqueue=0
-                def ftime(fd={'0 seconds':'0.0 seconds'}):
-                    res=format_timespan(tries*naptime)
-                    return fd.get(res,res)
                 def getdesc():
-                    return f'preprocessing [{num_proc}x]: {len(work_ids_done_preproc):,} texts done; {numinqueue:,} in queue; {ftime()} since last'
+                    return f'preprocessing [{num_proc}x]: {len(work_ids_done_preproc):,} texts done; {numinqueue:,} in queue; {format_timespan(tries*naptime)} since last'
 
 
                 with logwatch(f'saving jsonl files to {self.path_texts_preproc} [{num_proc}x]') as lw:
