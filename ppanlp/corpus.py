@@ -281,29 +281,28 @@ class PPACorpus:
     
     def iter_pages_jsonl(self, as_dict=False, desc=None,progress=True):
         from .page import PPAPage
-        desc='iterating pages by corpus jsonl file' if desc is None else desc
-        with logwatch(desc) as lw:
-            fn=self.path_pages_jsonl
-            iterr=iter_json(fn)
-            
-            def iter_func():
-                for d in iterr:
-                    if not d['work_id'] in self.textd:
-                        raise Exception('work not found: '+str(d))
-                    yield d if as_dict else PPAPage(
-                        d['page_id'],
-                        self.textd.get(d['work_id']),
-                        **d
-                    )
-            
-            if not progress:
-                yield from iter_func()
-            else:
+        fn=self.path_pages_jsonl
+        iterr=iter_json(fn)
+        
+        def iter_func():
+            for d in iterr:
+                if not d['work_id'] in self.textd:
+                    raise Exception('work not found: '+str(d))
+                yield d if as_dict else PPAPage(
+                    d['page_id'],
+                    self.textd.get(d['work_id']),
+                    **d
+                )
+        if progress:
+            desc='iterating pages by corpus jsonl file' if desc is None else desc
+            with logwatch(desc) as lw:
                 yield from lw.iter_progress(
                     iter_func(),
                     total=self.num_pages,
                     disable=not progress
                 )
+        else:
+            yield from iter_func()
             
 
     def index(self, force=False):
@@ -336,6 +335,8 @@ class PPACorpus:
             errors = []
             os.makedirs(self.path_texts_preproc,exist_ok=True)
             numdone=0
+            tries=0
+
             with mp.get_context(CONTEXT).Pool(num_proc) as pool:
                 if num_proc is None: 
                     num_proc=mp.cpu_count() // 2 - 1
@@ -344,6 +345,12 @@ class PPACorpus:
 
                 if max_queue is None: 
                     max_queue = 100
+
+
+                def getdesc():
+                    return f'{max_queue} texts in queue, {numdone} finished; {format_timespan(tries)} since last completion'
+
+
                 with logwatch(f'saving jsonl files to {self.path_texts_preproc} [{num_proc}x]') as lw:
                     iterr = self.iter_pages_jsonl(
                         as_dict=True, 
@@ -352,7 +359,8 @@ class PPACorpus:
                     )
                     iterr = lw.iter_progress(
                         iterr,
-                        total=self.num_pages
+                        total=self.num_pages,
+                        desc=getdesc()
                     )
                     for d in iterr:
                         work_id=d.get('work_id')
@@ -389,7 +397,7 @@ class PPACorpus:
                                         except ValueError:
                                             pass
                                     time.sleep(1)
-                                    lw.set_progress_desc(f'{max_queue} texts in queue, {numdone} finished; have waited {format_timespan(tries)}')
+                                    lw.set_progress_desc(getdesc())
                             
                             last_pages = []
                         last_work_id=work_id
