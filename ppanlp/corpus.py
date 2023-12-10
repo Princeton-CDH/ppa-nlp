@@ -143,8 +143,9 @@ class PPACorpus:
     
     @cached_property
     def page_ids(self):
-        self.index(force=False)
-        return read_json(self.path_work_ids)
+        # self.index(force=False)
+        res = read_json(self.path_work_ids)
+        return {} if not res else res
     
     @cached_property
     def num_pages(self):
@@ -278,10 +279,10 @@ class PPACorpus:
     def pages_df(self, **kwargs): 
         return pd.DataFrame(page for page in self.iter_pages(as_dict=True,**kwargs)).set_index('page_id')
     
-    def iter_pages_jsonl(self, as_dict=False, desc=None,progress=True, _logwatch=None): 
+    def iter_pages_jsonl(self, as_dict=False, desc=None,progress=True):
         from .page import PPAPage
         desc='iterating pages by corpus jsonl file' if desc is None else desc
-        with (logwatch(desc) if _logwatch is None else _logwatch) as lw:
+        with logwatch(desc) as lw:
             fn=self.path_pages_jsonl
             iterr=iter_json(fn)
             
@@ -295,11 +296,14 @@ class PPACorpus:
                         **d
                     )
             
-            yield from lw.iter_progress(
-                iter_func(),
-                total=self.num_pages,
-                disable=not progress
-            )
+            if not progress:
+                yield from iter_func()
+            else:
+                yield from lw.iter_progress(
+                    iter_func(),
+                    total=self.num_pages,
+                    disable=not progress
+                )
             
 
     def index(self, force=False):
@@ -309,6 +313,11 @@ class PPACorpus:
                 for d in self.iter_pages_jsonl(as_dict=True):
                     wdb[d['work_id']].append(d['page_id'])
                 write_json(wdb, self.path_work_ids)
+        
+        # refresh
+        for k in ['page_ids', 'num_pages']:
+            if k in self.__dict__:
+                del self.__dict__[k]
     
     def install(self, num_proc=None, force=False, clear=False):
         with logwatch('installing corpus: indexing, preprocessing, saving to sqlite'):
