@@ -217,9 +217,7 @@ def identify_headers(pages, remove_headers=True, similarity_threshold=80):
         return substantial_lines
 
     for i,page in enumerate(pages):
-        # if not 'page_corrections' in page: page['page_corrections']={}
-        # if not 'headers' in page['page_corrections']: page['page_corrections']['headers']=[]
-        current_page_text = page['page_text']
+        current_page_text = page.get('page_text','')
         current_substantial_lines = get_substantial_lines(current_page_text)
 
         # determine the range of pages to compare with
@@ -232,7 +230,7 @@ def identify_headers(pages, remove_headers=True, similarity_threshold=80):
             if i == j:
                 continue
 
-            comparison_page_text = pages[j]['page_text']
+            comparison_page_text = pages[j].get('page_text','')
             comparison_substantial_lines = get_substantial_lines(comparison_page_text)
 
             for current_line in current_substantial_lines:
@@ -345,7 +343,7 @@ def cleanup_page(page_d, remove_headers=None):
     """
     Cleanup a page dictionary
     """
-    txt=page_d.get('page_text')
+    txt=page_d.get('page_text','')
     odx=cleanup_str(txt, remove_headers=remove_headers, **page_d)
     return odx
 

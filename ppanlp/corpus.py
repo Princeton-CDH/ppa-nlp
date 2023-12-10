@@ -20,17 +20,10 @@ def PPA(path=None, **kwargs):
 class PPACorpus:
     WORK_ID_FIELD = 'group_id_s'
     NUM_LINES_JSONL = 2160441
+    QUANT_COLS = ['pub_year']
 
-    PAGE_RENAME_FIELDNAMES = dict(
-        work_id='group_id_s',
-        page_id='id',
-        page_num='order',
-        page_num_orig='label',
-        page_text='content',
-        page_tags='tags'
-    )
 
-    def __init__(self, path:str, clean=True, texts_dir='texts', metadata_fn='metadata.jsonl', pages_fn='pages.jsonl.gz',texts_preproc_dir='texts_preproc'):
+    def __init__(self, path:str, clean=True, texts_dir='texts', metadata_fn='metadata.json', pages_fn='pages.jsonl.gz',texts_preproc_dir='texts_preproc'):
         path=path.strip()
         with logwatch(f'booting PPACorpus at {truncfn(path)}'):
             self.do_clean=clean
@@ -65,9 +58,10 @@ class PPACorpus:
     def meta(self):
         with logwatch('reading metadata'):
             df=read_df(self.path_metadata).fillna('')
-            fd = {v:k for k,v in self.PAGE_RENAME_FIELDNAMES.items()}
-            df.columns = [fd.get(col,col) for col in df.columns]
+            for col in self.QUANT_COLS:
+                df[col] = pd.to_numeric(df[col],errors='coerce')
             return df.set_index('work_id')
+    
     
     @cache
     def get_text(self, work_id):
@@ -279,17 +273,13 @@ class PPACorpus:
     def pages_df(self, **kwargs): 
         return pd.DataFrame(page for page in self.iter_pages(as_dict=True,**kwargs)).set_index('page_id')
     
-    def iter_pages_jsonl(self, as_dict=False): 
+    def iter_pages_jsonl(self, as_dict=False, desc=None): 
         from .page import PPAPage
-        with logwatch('iterating pages by corpus jsonl file'):
+        with logwatch('iterating pages by corpus jsonl file' if desc is None else desc) as lw:
             fn=self.path_pages_jsonl
             iterr=iter_json(fn)
-            iterr=tqdm(iterr,total=self.NUM_LINES_JSONL,desc=f'iterating over corpus jsonl file',position=0)
-            fd = {v:k for k,v in self.PAGE_RENAME_FIELDNAMES.items()}
+            iterr=lw.iter_progress(iterr,total=self.NUM_LINES_JSONL)#,desc=f'iterating over corpus jsonl file' if not desc else desc)
             for d in iterr:
-                for k in list(d.keys()):
-                    if k in fd:
-                        d[fd[k]]=d.pop(k)
                 if not d['work_id'] in self.textd:
                     raise Exception('work not found: '+str(d))
                 yield d if as_dict else PPAPage(
@@ -299,18 +289,20 @@ class PPACorpus:
                 )
 
     def index(self, force=False):
-        if force or not os.path.exists(self.path_work_ids):
-            wdb=defaultdict(list)
-            for d in self.iter_pages_jsonl(as_dict=True):
-                wdb[d['work_id']].append(d['page_id'])
-            write_json(wdb, self.path_work_ids)
+        with logwatch('indexing corpus, storing page ids per work'):
+            if force or not os.path.exists(self.path_work_ids):
+                wdb=defaultdict(list)
+                for d in self.iter_pages_jsonl(as_dict=True):
+                    wdb[d['work_id']].append(d['page_id'])
+                write_json(wdb, self.path_work_ids)
     
-    def install(self, num_proc=1, force=False, clear=False):
-        self.index()
-        self.preproc(num_proc=num_proc, force=force)
-        self.gen_db(force=force, startover=clear)
+    def install(self, num_proc=None, force=False, clear=False):
+        with logwatch('installing corpus: indexing, preprocessing, saving to sqlite'):
+            self.index()
+            self.preproc(num_proc=num_proc, force=force)
+            self.gen_db(force=force, startover=clear)
 
-    def preproc(self, num_proc=1, force=False, shuffle=True, lim=None):
+    def preproc(self, num_proc=None, force=False, shuffle=True, lim=None):
         with logwatch(f'preprocessing jsonl files'):
             last_work_id=None
             last_pages=[]
@@ -318,8 +310,10 @@ class PPACorpus:
             work_ids_done=set()
             wdb=defaultdict(set)
             with mp.get_context(CONTEXT).Pool(num_proc) as pool:
-                with logwatch(f'saving jsonl files to {self.path_texts} [{num_proc}x]'):
-                    for d in self.iter_pages_jsonl(as_dict=True):
+                if num_proc is None: 
+                    num_proc=mp.cpu_count() - 1 if mp.cpu_count()>1 else 1
+                with logwatch(f'saving jsonl files to {self.path_texts} [{num_proc}x]') as lw:
+                    for d in self.iter_pages_jsonl(as_dict=True, desc='sending each text\'s pages to multiprocessing pool'):
                         work_id=d.get('work_id')
                         wdb[work_id].add(d['page_id'])
                         if last_pages and work_id!=last_work_id:
@@ -343,7 +337,7 @@ class PPACorpus:
                         last_work_id=work_id
                         last_pages.append(d)
                     
-                    for res in tqdm(resl,desc=f'Waiting for rest of processes to complete [{num_proc}x]',position=0): 
+                    for res in lw.iter_progress(resl,desc=f'preprocessing remaining files [{num_proc}x]',position=0): 
                         res.get()
         
 

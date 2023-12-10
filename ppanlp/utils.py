@@ -30,8 +30,9 @@ def read_json(fn):
                         return orjson.loads(zipfile.read())
                 except gzip.BadGzipFile:
                     pass
-            with open(fn, 'rb') as f:
-                return orjson.loads(f.read())
+            else:
+                with open(fn, 'rb') as f:
+                    return orjson.loads(f.read())
         except Exception as e:
             # print('!!',fn,e)
             pass    
@@ -227,9 +228,9 @@ class logwatch:
             logfunc = getattr(logger,(self.level if not level else level).lower())
             logfunc(f'{(self.inner_pref if inner_pref else self.pref) if pref is None else pref}{msg}')
 
-    def iter_progress(self, iterator, desc='iterating', pref=None, **kwargs):
-        desc=f'{self.inner_pref if pref is None else pref}{desc}'
-        return tqdm(iterator,desc=desc,**kwargs)
+    def iter_progress(self, iterator, desc='iterating', pref=None, position=0, **kwargs):
+        desc=f'{self.inner_pref if pref is None else pref}{desc if desc is not None else ""}'
+        return tqdm(iterator,desc=desc,position=position,**kwargs)
 
     @property
     def tdesc(self): 
@@ -305,7 +306,8 @@ class logwatch:
         if exc_type:
             LOGWATCH_ID=0
             NUM_LOGWATCHES=0
-            logger.error(f'\n{exc_type.__name__} {exc_value}')
+            # logger.error(f'{exc_type.__name__} {exc_value}')
+            self.log(f'{exc_type.__name__} {exc_value}', level='error')
         else:
             NUM_LOGWATCHES-=1
             self.ended = time.time()
