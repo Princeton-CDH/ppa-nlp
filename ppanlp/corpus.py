@@ -309,11 +309,12 @@ class PPACorpus:
             resl=[]
             work_ids_done=set()
             wdb=defaultdict(set)
+            os.makedirs(self.path_texts_preproc,exist_ok=True)
             with mp.get_context(CONTEXT).Pool(num_proc) as pool:
                 if num_proc is None: 
                     num_proc=mp.cpu_count() - 1 if mp.cpu_count()>1 else 1
-                with logwatch(f'saving jsonl files to {self.path_texts} [{num_proc}x]') as lw:
-                    for d in self.iter_pages_jsonl(as_dict=True, desc='sending each text\'s pages to multiprocessing pool'):
+                with logwatch(f'saving jsonl files to {self.path_texts_preproc} [{num_proc}x]') as lw:
+                    for d in self.iter_pages_jsonl(as_dict=True, desc=f"sending each text's pages to an {num_proc} CPU multiprocessing pool"):
                         work_id=d.get('work_id')
                         wdb[work_id].add(d['page_id'])
                         if last_pages and work_id!=last_work_id:
