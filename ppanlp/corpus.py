@@ -350,7 +350,7 @@ class PPACorpus:
                 naptime=.2
                 numinqueue=0
                 def getdesc():
-                    return f'preprocessing [{num_proc}x]: {len(work_ids_done_preproc):,} texts done; {numinqueue:,} in queue; {format_timespan(tries*naptime)} since last'
+                    return f'preprocessing [{num_proc}x]: {len(work_ids_done_preproc):,} texts done; {numinqueue:,} in queue; {format_timespan(tries*naptime).replace('0 seconds','0.0 seconds')} since last'
 
 
                 with logwatch(f'saving jsonl files to {self.path_texts_preproc} [{num_proc}x]') as lw:
