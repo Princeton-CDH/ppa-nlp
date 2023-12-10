@@ -546,9 +546,10 @@ def gen_text_pages_mp(obj):
     t = PPA().textd[work_id]
     t.gen_pagedb(force=force)
 
-def save_cleanup_pages(pages_ld, save_to):
-    pages_ld=cleanup_pages(pages_ld)
-    write_json(pages_ld, save_to)
+def save_cleanup_pages(pages_ld, save_to, force=False):
+    if force or not os.path.exists(save_to):
+        pages_ld=cleanup_pages(pages_ld)
+        write_json(pages_ld, save_to)
 
 def save_orig_pages(pages_ld, save_to):
     pages_ld=cleanup_pages(pages_ld)
