@@ -347,7 +347,7 @@ class PPACorpus:
                 if max_queue is None: 
                     max_queue = 100
 
-                naptime=3
+                naptime=1
                 numinqueue=0
                 def getdesc():
                     return f'preprocessing: {numinqueue:,} texts in queue; {len(work_ids_done_preproc):,} finished; {format_timespan(tries*naptime)} since last completion'
