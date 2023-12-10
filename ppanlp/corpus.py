@@ -46,6 +46,10 @@ class PPACorpus:
 
     def __iter__(self): yield from self.iter_texts()
 
+    @cached_property
+    def paths(self):
+        return {k:v for k,v in ppa.__dict__.items() if k.startswith('path')}
+
     def __getitem__(self, work_or_page_id):
         if is_page_id(work_or_page_id):
             work_id = get_work_id(work_or_page_id)
@@ -144,13 +148,11 @@ class PPACorpus:
     
 
     def iter_texts(self, work_ids=None,progress=True,desc=None):
-        if work_ids is None: work_ids=self.meta.index
         pdesc='iterating over texts in PPA' if not desc else desc
-        pbar = tqdm(total=len(work_ids), position=0, desc=pdesc,disable=not progress)
-        for work_id in work_ids:
-            # pbar.set_description(f'{pdesc}: {work_id}')
-            yield self.get_text(work_id)
-            pbar.update()
+        with logwatch(pdesc) as lw:
+            if work_ids is None: work_ids=self.meta.index
+            iterr = lw.iter_progress(work_ids,disable=not progress)
+            yield from (self.get_text(work_id) for work_id in iterr)
 
     @cached_property
     def page_db_query_cache(self):
@@ -388,7 +390,7 @@ class PPACorpus:
             clustwordcount=Counter()
             workwordcount=Counter()
             batch = []
-            for text in self.iter_texts(desc='Saving preprocessed pages to database'):
+            for text in self.iter_texts(desc='saving preprocessed pages to database'):
                 if (force or not text.is_in_db) and text.is_cleaned:
                     self.page_db.delete().where(self.page_db.work_id==text.id).execute()
 

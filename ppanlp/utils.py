@@ -312,7 +312,8 @@ class logwatch:
             NUM_LOGWATCHES-=1
             self.ended = time.time()
             if not self.min_seconds_logworthy or self.duration>=self.min_seconds_logworthy:
-                self.log(self.desc, inner_pref=False)
+                if self.tdesc!='0 seconds':
+                    self.log(self.desc, inner_pref=False)
             if NUM_LOGWATCHES==0: LOGWATCH_ID=0
 
 
