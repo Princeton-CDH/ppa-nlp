@@ -60,7 +60,7 @@ class PPAText:
     def path_preproc(self):
         return os.path.join(
             self.corpus.path_texts_preproc,
-            clean_filename(self.id+'.jsonl.gz')
+            clean_filename(self.id+'.json.gz')
         ) 
 
     @cached_property

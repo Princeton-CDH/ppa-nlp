@@ -373,7 +373,7 @@ class PPACorpus:
                             work_ids_done.add(last_work_id)
                             ofn=os.path.join(
                                 self.path_texts_preproc,
-                                clean_filename(last_work_id+'.jsonl.gz')
+                                clean_filename(last_work_id+'.json.gz')
                             )
                             # if force or not os.path.exists(ofn):
                             res = pool.apply_async(
