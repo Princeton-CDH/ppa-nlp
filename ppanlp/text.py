@@ -44,7 +44,7 @@ class PPAText:
     def author(self): return self.meta.get('author')
     
     @cached_property
-    def year_str(self): return str(self.meta.get('pub_date'))[:4]
+    def year_str(self): return str(self.meta.get('pub_year'))[:4]
     
     @cached_property
     def year(self): 
