@@ -317,7 +317,7 @@ class PPACorpus:
                         num_proc=1
 
                 if max_queue is None: 
-                    max_queue = num_proc * 2
+                    max_queue = 100
                 with logwatch(f'saving jsonl files to {self.path_texts_preproc} [{num_proc}x]') as lw:
                     for d in self.iter_pages_jsonl(as_dict=True, desc=f"preprocessing and saving pages on the fly in a multiprocessing pool with {num_proc} CPUs"):
                         work_id=d.get('work_id')
