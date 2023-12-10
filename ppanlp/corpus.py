@@ -348,7 +348,7 @@ class PPACorpus:
                         num_proc=1
 
                 if max_queue is None: 
-                    max_queue = 998
+                    max_queue = 98
 
                 naptime=.1
                 numinqueue=0
@@ -358,7 +358,6 @@ class PPACorpus:
 
 
                 def wait_and_run(max_queue=max_queue):
-                    global lasttime
                     while get_num_waiting(resl)>max_queue:
                         for id,res in mp_iter_finished_res(resl):
                             work_ids_done_preproc.add(id)
