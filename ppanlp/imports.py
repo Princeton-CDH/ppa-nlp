@@ -33,7 +33,14 @@ from functools import cached_property
 from collections import Counter
 import gzip
 import numpy as np
-from humanfriendly import format_timespan
+from humanfriendly import format_timespan as ftspan
+
+def format_timespan(*args,replace={'0 seconds':'0.0 seconds'},**kwargs):
+    res = ftspan(*args,**kwargs)
+    return replace.get(res,res)
+
+
+
 # nltk.download('punkt')
 
 ## settings
