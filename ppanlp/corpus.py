@@ -146,6 +146,9 @@ class PPACorpus:
         self.index(force=False)
         return read_json(self.path_work_ids)
     
+    @cached_property
+    def num_pages(self):
+        return sum(len(v) for k,v in self.page_ids.items())
 
     def iter_texts(self, work_ids=None,progress=True,desc=None):
         pdesc='iterating over texts in PPA' if not desc else desc
@@ -275,20 +278,29 @@ class PPACorpus:
     def pages_df(self, **kwargs): 
         return pd.DataFrame(page for page in self.iter_pages(as_dict=True,**kwargs)).set_index('page_id')
     
-    def iter_pages_jsonl(self, as_dict=False, desc=None): 
+    def iter_pages_jsonl(self, as_dict=False, desc=None,progress=True, _logwatch=None): 
         from .page import PPAPage
-        with logwatch('iterating pages by corpus jsonl file' if desc is None else desc) as lw:
+        desc='iterating pages by corpus jsonl file' if desc is None else desc
+        with (logwatch(desc) if _logwatch is None else _logwatch) as lw:
             fn=self.path_pages_jsonl
             iterr=iter_json(fn)
-            iterr=lw.iter_progress(iterr,total=self.NUM_LINES_JSONL)#,desc=f'iterating over corpus jsonl file' if not desc else desc)
-            for d in iterr:
-                if not d['work_id'] in self.textd:
-                    raise Exception('work not found: '+str(d))
-                yield d if as_dict else PPAPage(
-                    d['page_id'],
-                    self.textd.get(d['work_id']),
-                    **d
-                )
+            
+            def iter_func():
+                for d in iterr:
+                    if not d['work_id'] in self.textd:
+                        raise Exception('work not found: '+str(d))
+                    yield d if as_dict else PPAPage(
+                        d['page_id'],
+                        self.textd.get(d['work_id']),
+                        **d
+                    )
+            
+            yield from lw.iter_progress(
+                iter_func(),
+                total=self.num_pages,
+                disable=not progress
+            )
+            
 
     def index(self, force=False):
         with logwatch('indexing corpus, storing page ids per work'):
@@ -311,7 +323,10 @@ class PPACorpus:
             resl=[]
             work_ids_done=set()
             wdb=defaultdict(set)
+            successful = []
+            errors = []
             os.makedirs(self.path_texts_preproc,exist_ok=True)
+            numdone=0
             with mp.get_context(CONTEXT).Pool(num_proc) as pool:
                 if num_proc is None: 
                     num_proc=mp.cpu_count() // 2 - 1
@@ -321,7 +336,16 @@ class PPACorpus:
                 if max_queue is None: 
                     max_queue = 100
                 with logwatch(f'saving jsonl files to {self.path_texts_preproc} [{num_proc}x]') as lw:
-                    for d in self.iter_pages_jsonl(as_dict=True, desc=f"preprocessing and saving pages with a multiprocessing pool of {num_proc} CPUs"):
+                    iterr = self.iter_pages_jsonl(
+                        as_dict=True, 
+                        desc=f"preprocessing and saving pages with a multiprocessing pool of {num_proc} CPUs", 
+                        progress=False,
+                    )
+                    iterr = lw.iter_progress(
+                        iterr,
+                        total=self.num_pages
+                    )
+                    for d in iterr:
                         work_id=d.get('work_id')
                         wdb[work_id].add(d['page_id'])
                         if last_pages and work_id!=last_work_id:
@@ -341,17 +365,28 @@ class PPACorpus:
                                     )
                                 )
                                 resl.append(res)
-                                if len(resl)>max_queue:
-                                    toolong = len(resl) - max_queue
-                                    finish_now,resl = resl[:toolong], resl[toolong:]
-                                    for res in finish_now:
-                                        res.get()
+                                tries=0
+                                while len(resl)>=max_queue:
+                                    tries+=1
+                                    for i,res in enumerate([x for x in resl]):
+                                        try:
+                                            if res.successful():
+                                                successful.append(res)
+                                                resl.pop(i)
+                                                numdone+=1
+                                                tries=0
+                                            else:
+                                                errors.append(res)
+                                        except ValueError:
+                                            pass
+                                    time.sleep(1)
+                                    lw.set_progress_desc(f'{max_queue} texts in queue, {numdone} finished; have waited {format_timespan(tries)}')
                             
                             last_pages = []
                         last_work_id=work_id
                         last_pages.append(d)
                     
-                    for res in lw.iter_progress(resl,desc=f'preprocessing remaining files [{num_proc}x]',position=0): 
+                    for res in lw.iter_progress(resl,desc=f'preprocessing remaining texts [{num_proc}x]',position=0): 
                         res.get()
         
 

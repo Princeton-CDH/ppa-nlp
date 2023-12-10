@@ -7,7 +7,6 @@ from sqlitedict import SqliteDict
 import orjson
 import pickle
 import zlib
-import time
 import pandas as pd
 from intspan import intspan
 import jsonlines

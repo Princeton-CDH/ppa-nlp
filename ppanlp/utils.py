@@ -230,7 +230,13 @@ class logwatch:
 
     def iter_progress(self, iterator, desc='iterating', pref=None, position=0, **kwargs):
         desc=f'{self.inner_pref if pref is None else pref}{desc if desc is not None else ""}'
-        return tqdm(iterator,desc=desc,position=position,**kwargs)
+        self.pbar = tqdm(iterator,desc=desc,position=position,**kwargs)
+        return self.pbar
+    
+    def set_progress_desc(self, desc,pref=None,**kwargs):
+        if desc:
+            desc=f'{self.inner_pref if pref is None else pref}{desc if desc is not None else ""}'
+            self.pbar.set_description(desc,**kwargs)
 
     @property
     def tdesc(self): 
