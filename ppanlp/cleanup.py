@@ -323,18 +323,23 @@ def cleanup_str(txt, use_nltk_tokenizer=False, remove_headers:list=None, **page_
 
     # convert corrected tokens back to text for further processing
     corrected_text = untokenize_agnostic(corrected_tokens)
-    corrected_tokens_l = [x.strip().lower() for x in corrected_tokens if x.strip() and x.strip()[0].isalpha()]
+    # corrected_tokens_l = [x.strip().lower() for x in corrected_tokens if x.strip() and x.strip()[0].isalpha()]
 
-    return {
+    definitelyd = {
         **{k:v for k,v in page_attrs.items() if k!='page_text'}, 
         'page_text':corrected_text, 
-        'page_text_orig':page_text, 
-        # 'page_tokens':corrected_tokens_l,  # files too too large?
+        'page_text_orig':page_text
+    }
+    maybed = {
         'page_corrections_headers':list(set(specific_header_corrections)),
         'page_corrections_linebreaks':list(set(specific_linebreak_corrections)),
         'page_corrections_long_s':list(set(specific_long_s_corrections)),
         'page_corrections_ocr':list(set(specific_ocr_corrections)),
         'page_corrections_f_s':list(set(specific_f_s_hack_corrections)),
+    }
+    return {
+        **definitelyd,
+        **{k:v for k,v in maybed.items() if v}
     }
 
 
