@@ -16,7 +16,7 @@ def check_install(path):
 def cli(): pass
 
 @cli.command()
-@click.argument('command', type=click.Choice(['check','preproc','gendb']))
+@click.argument('command', type=click.Choice(['check','preproc','gen_db']))
 @click.option('--path', default=PATH_PPA_CORPUS, help=f'path to corpus [default: {PATH_PPA_CORPUS}]')
 def run(command, path):
     if command=='check':

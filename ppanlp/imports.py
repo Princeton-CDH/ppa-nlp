@@ -1,11 +1,11 @@
 # imports...
 import os,sys,warnings,random
-warnings.filterwarnings('ignore')
 from string import punctuation
 from functools import cache
 from tqdm import tqdm
 from sqlitedict import SqliteDict
 import orjson
+import pickle
 import zlib
 import time
 import pandas as pd
@@ -82,7 +82,8 @@ for pathstr in [PATH_HOME_DATA, PATH_ECCO_DATA, PATH_ECCO_RAW_DATA]:
 
 # setup logs
 # LOG_FORMAT = '<green>{time:YYYY-MM-DD HH:mm:ss,SSS}</green> - <cyan>{function}</cyan> - <level>{message}</level> - <cyan>{file}</cyan>:<cyan>{line}</cyan>'
-LOG_FORMAT = '<green>{time:YYYY-MM-DD HH:mm:ss,SSS}</green> <level>{message}</level>'
+# LOG_FORMAT = '<green>{time:YYYY-MM-DD HH:mm:ss,SSS}</green> <level>{message}</level>'
+LOG_FORMAT = '<level>{message}</level> @ <green>{time:YYYY-MM-DD HH:mm:ss,SSS}</green>'
 
 # 5 to include traces; 
 # 10 for debug; 20 info, 25 success; 
@@ -99,6 +100,11 @@ logger.add(
 from .utils import *
 from .cleanup import *
 from .corpus import *
+from .text import *
+from .page import *
+from .subcorpus import *
 from .topicmodel import *
 from .ner import *
 from .cli import *
+
+warnings.filterwarnings('ignore')

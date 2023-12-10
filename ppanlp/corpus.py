@@ -1,8 +1,11 @@
 from .imports import *
-from .cleanup import cleanup_pages
 
 PPA_OBJ=None
 PATH_CORPUS=PATH_PPA_CORPUS
+
+def get_work_id(page_id): return '.'.join(page_id.split('.')[:-1])
+def is_page_id(page_id): return page_id.split('.')[-1].isdigit()
+
 
 def set_corpus_path(path=None,**kwargs):
     global PPA_OBJ,PATH_CORPUS
@@ -39,8 +42,8 @@ class PPACorpus:
             self.path_data = os.path.join(self.path, 'data')
             self.path_nlp_db = os.path.join(self.path_data, 'pages_nlp.sqlitedict')
             # self.path_page_db = os.path.join(self.path_data, 'pages.sqlitedict')
-            self.path_page_db = os.path.join(self.path_data, 'work_pages.db')
-            self.path_page_db_counts = os.path.join(self.path_data, 'work_pages.db.counts')
+            self.path_page_db = os.path.join(self.path_data, 'pages.sqlite')
+            self.path_page_db_counts = os.path.join(self.path_data, 'page_query_cache.sqlitedict')
             self.path_work_ids = os.path.join(self.path_data, 'work_page_ids.json')
             self._topicmodels = {}
 
@@ -50,15 +53,25 @@ class PPACorpus:
 
     def __iter__(self): yield from self.iter_texts()
 
+    def __getitem__(self, work_or_page_id):
+        if is_page_id(work_or_page_id):
+            work_id = get_work_id(work_or_page_id)
+            text = self.get_text(work_id)
+            return text[work_or_page_id]
+        else:
+            return self.get_text(work_or_page_id)
+
     @cached_property
     def meta(self):
         with logwatch('reading metadata'):
-            df=pd.DataFrame(read_json(self.path_metadata)).fillna('')
-            df['work_id']=df[self.WORK_ID_FIELD]
+            df=read_df(self.path_metadata).fillna('')
+            fd = {v:k for k,v in self.PAGE_RENAME_FIELDNAMES.items()}
+            df.columns = [fd.get(col,col) for col in df.columns]
             return df.set_index('work_id')
     
     @cache
     def get_text(self, work_id):
+        from .text import PPAText
         return PPAText(work_id, corpus=self)
 
     @cached_property
@@ -98,9 +111,15 @@ class PPACorpus:
                 database = db
 
         class Page(BaseModel):
-            page_id = CharField()
+            page_id = CharField(primary_key=True)
             page_text = TextField()
-            page_num_content_words = IntegerField()
+            page_num = IntegerField()
+            page_num_orig = CharField()
+            page_num_cluster = IntegerField(null=True)
+            page_num_content_words = IntegerField(null=True)
+            page_num_content_words_work = IntegerField(null=True)
+            page_num_content_words_cluster = IntegerField(null=True)
+            page_ocr_accuracy = FloatField(null=True)
             work_id = CharField()
             cluster = CharField()
             source = CharField()
@@ -108,6 +127,16 @@ class PPACorpus:
             author = CharField()
             title = CharField()
             _random = FloatField()
+
+            class Meta:
+                indexes = (
+                    # create a unique on from/to/date
+                    (('page_num_content_words', 'page_num_content_words_work', 'page_num_content_words_cluster','_random'), False),
+                    (('page_num_content_words', 'page_num_content_words_cluster','_random'), False),
+                    (('page_num_content_words','_random'), False),
+                    (('page_num_content_words','_random'), False),
+                    (('work_id',), False),
+                )
 
         db.connect()
 
@@ -122,7 +151,7 @@ class PPACorpus:
 
     def iter_texts(self, work_ids=None,progress=True,desc=None):
         if work_ids is None: work_ids=self.meta.index
-        pdesc='Iterating over texts in PPA' if not desc else desc
+        pdesc='iterating over texts in PPA' if not desc else desc
         pbar = tqdm(total=len(work_ids), position=0, desc=pdesc,disable=not progress)
         for work_id in work_ids:
             # pbar.set_description(f'{pdesc}: {work_id}')
@@ -132,160 +161,248 @@ class PPACorpus:
     @cached_property
     def page_db_query_cache(self):
         return SqliteDict(self.path_page_db_counts, autocommit=True)
+    
+    @cached_property
+    def page_db_count(self):
+        return self.page_db.select().count()
+    @cached_property
+    def page_db_counts(self):
+        with logwatch('gathering page counts by work in db'):
+            return Counter(
+                res.work_id
+                for res in self.page_db.select(self.page_db.work_id)
+            )
 
-
-    def page_db_query(self, frac=None,frac_min=0,frac_max=1,min_doc_len=None):
+    def get_page_db_query(self, frac=None,frac_min=0,frac_max=1,min_doc_len=None, work_ids=None, max_work_len=None, max_cluster_len=None):
         # build query
         if frac is not None and 0<frac<1: frac_max=frac_min+frac
         if not min_doc_len or min_doc_len<1: min_doc_len=0
         frac_min,frac_max=round(frac_min,4),round(frac_max,4)
-        q = (frac_min<=self.page_db._random<frac_max) & (self.page_db.page_num_content_words>=min_doc_len)
+
         
+
+        # if work_ids:
+        #     q = (self.page_db.work_id.in_(set(work_ids)))
+        # elif max_cluster_len and max_work_len:
+        #     q = (
+        #         (frac_min<=self.page_db._random<frac_max)
+        #         & (self.page_db.page_num_content_words>=min_doc_len)
+        #         & (self.page_db.page_num_content_words_cluster<=max_cluster_len)
+        #         & (self.page_db.page_num_content_words_work<=max_work_len)
+        #     )
+        # elif max_cluster_len:
+        #     q = (
+        #         (frac_min<=self.page_db._random<frac_max)
+        #         & (self.page_db.page_num_content_words>=min_doc_len)
+        #         & (self.page_db.page_num_content_words_cluster<=max_cluster_len)
+        #     )
+        # else:
+        #     q = (
+        #         (frac_min<=self.page_db._random<frac_max)
+        #         & (self.page_db.page_num_content_words>=min_doc_len)
+        #     )
+
+
+        ql=[
+            '(frac_min<=self.page_db._random<frac_max)',
+            '(self.page_db.page_num_content_words>=min_doc_len)',
+        ]
+        if work_ids:
+            ql.append('(self.page_db.work_id.in_(set(work_ids)))')
+        
+        if max_cluster_len:
+            ql.append('(self.page_db.page_num_content_words_cluster<=max_cluster_len)')
+
+        if max_work_len:
+            ql.append('(self.page_db.page_num_content_words_work<=max_work_len)')
+
+        qstr = ' & '.join(ql)
+        q=eval(qstr)
         # find total
-        #key=f'frac_{frac_min}_to_{frac_max}.min_doc_len={min_doc_len}'
-        keyd = {'min_doc_len':min_doc_len, 'frac_min':frac_min, 'frac_max':frac_max}
-        key = json.dumps(keyd)
+        keyd={
+            'work_ids':work_ids,
+            'min_doc_len':min_doc_len,
+            'max_cluster_len':max_cluster_len,
+            'max_work_len':max_work_len,
+            'frac_min':frac_min, 
+            'frac_max':frac_max
+        }
+        keyj = json.dumps(keyd)
+        key = hashstr(keyj)
         with self.page_db_query_cache as pdqc:
             if key in pdqc:
                 total = pdqc[key]
             else:
-                with logwatch(f'counting rows for query ({key})'):
+                with logwatch(f'counting rows for query ({keyj})'):
                     total = self.page_db.select().where(q).count()
                 pdqc[key]=total
         # query
         res = self.page_db.select().where(q)
-        return (res,total,key)
+        return (res,total,keyj)
     
-    def iter_pages(self, use_db=False, as_dict=False, **query_kwargs):
+    
+    def iter_pages(self, use_db=True, as_dict=False, preproc=True, **query_kwargs):
         if (use_db or query_kwargs) and os.path.exists(self.path_page_db):
             yield from self.iter_pages_db(as_dict=as_dict, **query_kwargs)
         else:
             if query_kwargs: 
                 logger.warning(f'no filtering applied to query-less json iteration: {query_kwargs}')
-            if os.path.exists(self.path_pages_jsonl):
+            if preproc:
+                yield from self.iter_pages_text_jsons(preproc=True,as_dict=as_dict)
+            elif os.path.exists(self.path_pages_jsonl):
                 yield from self.iter_pages_jsonl(as_dict=as_dict)
             else:
-                yield from self.iter_pages_text_jsons(as_dict=as_dict)
+                raise Exception('no page source')
 
             
-    def iter_pages_text_jsons(self, **kwargs):
+    def iter_pages_text_jsons(self, preproc=True, **kwargs):
         with logwatch('iterating pages by individual text json files'):
             for text in self.iter_texts():
-                yield from text.iter_pages_orig(**kwargs)
+                yield from text.iter_pages_orig(**kwargs) if not preproc else text.iter_pages_preproc(**kwargs)
         
-    def iter_pages_db(self, work_ids=None, clean=None, lim=None, min_doc_len=None, frac=None, frac_min=0, max_per_cluster=None, as_dict=False):
+    def iter_pages_db(self, work_ids=None, clean=None, lim=None, min_doc_len=None, frac=None, frac_min=0, max_per_cluster=None, max_cluster_len=None,max_work_len=None, as_dict=False):
+        from .page import PPAPage
         with logwatch('iterating pages by page database'):
             i=0
-            clustd=Counter()
             work_ids=set(work_ids) if work_ids else None
-            res,total,qkey = self.page_db_query(frac=frac,min_doc_len=min_doc_len,frac_min=frac_min)
+            res,total,qkey = self.get_page_db_query(frac=frac,min_doc_len=min_doc_len,frac_min=frac_min,max_cluster_len=max_cluster_len,max_work_len=max_work_len,work_ids=work_ids)
             
-            with logwatch(f'iterating page database results ({qkey})'):
-                for page_rec in tqdm(res,total=total,desc='Iterating over page search results',position=0):
+            with logwatch(f'iterating page database results ({qkey})') as lw:
+                for page_rec in lw.iter_progress(res,total=total,desc='iterating over page search results',position=0):
                     d=page_rec.__data__        
                     if 'id' in d: del d['id']
-                    if work_ids and d['work_id'] not in work_ids: continue
-                    if not max_per_cluster or clustd[d['cluster']]<max_per_cluster:
-                        yield PPAPage(d['page_id'], self.textd[d['work_id']], **d) if not as_dict else d
-                        if max_per_cluster: clustd[d['cluster']]+=1
-                        i+=1
-                        if lim and i>=lim: break
+                    yield PPAPage(d['page_id'], self.textd[d['work_id']], **d) if not as_dict else d
+                    i+=1
                     if lim and i>=lim: break
 
     @cache
     def pages_df(self, **kwargs): 
-        return pd.DataFrame(page for page in self.iter_pages(as_dict=True,**kwargs))
+        return pd.DataFrame(page for page in self.iter_pages(as_dict=True,**kwargs)).set_index('page_id')
     
     def iter_pages_jsonl(self, as_dict=False): 
+        from .page import PPAPage
         with logwatch('iterating pages by corpus jsonl file'):
             fn=self.path_pages_jsonl
             iterr=iter_json(fn)
-            iterr=tqdm(iterr,total=self.NUM_LINES_JSONL,desc=f'Iterating over {os.path.basename(fn)}',position=0)
+            iterr=tqdm(iterr,total=self.NUM_LINES_JSONL,desc=f'iterating over corpus jsonl file',position=0)
+            fd = {v:k for k,v in self.PAGE_RENAME_FIELDNAMES.items()}
             for d in iterr:
-                od = {
-                    k1:d.get(k2,'' if k1!='page_num' else -1) 
-                    for k1,k2 in self.PAGE_RENAME_FIELDNAMES.items()
-                }
-                yield od if as_dict else PPAPage(
-                    od['page_id'],
-                    self.textd[od['work_id']],
-                    **od
+                for k in list(d.keys()):
+                    if k in fd:
+                        d[fd[k]]=d.pop(k)
+                if not d['work_id'] in self.textd:
+                    raise Exception('work not found: '+str(d))
+                yield d if as_dict else PPAPage(
+                    d['page_id'],
+                    self.textd.get(d['work_id']),
+                    **d
                 )
-
 
     def index(self, force=False):
         if force or not os.path.exists(self.path_work_ids):
-            self.install()
-        
-    def install(self, num_proc=1, force=False):
-        last_work_id=None
-        last_pages=[]
-        resl=[]
-        work_ids_done=set()
-        wdb=defaultdict(set)
-        with mp.get_context(CONTEXT).Pool(num_proc) as pool:
-            with logwatch(f'saving jsonl files to {self.path_texts} [{num_proc}x]'):
-                for d in self.iter_pages_jsonl(as_dict=True):
-                    work_id=d.get('work_id')
-                    wdb[work_id].add(d['page_id'])
-                    if last_pages and work_id!=last_work_id:
-                        # assert work_id not in work_ids_done
-                        if last_work_id in work_ids_done:
-                            print('!!',last_work_id,d)
-                        else:
+            wdb=defaultdict(list)
+            for d in self.iter_pages_jsonl(as_dict=True):
+                wdb[d['work_id']].append(d['page_id'])
+            write_json(wdb, self.path_work_ids)
+    
+    def install(self, num_proc=1, force=False, clear=False):
+        self.index()
+        self.preproc(num_proc=num_proc, force=force)
+        self.gen_db(force=force, startover=clear)
+
+    def preproc(self, num_proc=1, force=False, shuffle=True, lim=None):
+        with logwatch(f'preprocessing jsonl files'):
+            last_work_id=None
+            last_pages=[]
+            resl=[]
+            work_ids_done=set()
+            wdb=defaultdict(set)
+            with mp.get_context(CONTEXT).Pool(num_proc) as pool:
+                with logwatch(f'saving jsonl files to {self.path_texts} [{num_proc}x]'):
+                    for d in self.iter_pages_jsonl(as_dict=True):
+                        work_id=d.get('work_id')
+                        wdb[work_id].add(d['page_id'])
+                        if last_pages and work_id!=last_work_id:
+                            assert last_work_id not in work_ids_done, \
+                                'we assume that original jsonl file is sorted by work id'
                             work_ids_done.add(last_work_id)
                             ofn=os.path.join(
-                                self.path_texts,
-                                clean_filename(last_work_id+'.jsonl')
+                                self.path_texts_preproc,
+                                clean_filename(last_work_id+'.jsonl.gz')
                             )
                             if force or not os.path.exists(ofn):
                                 res = pool.apply_async(
-                                    write_json, 
+                                    save_cleanup_pages, 
                                     args=(
                                         last_pages,
                                         ofn
                                     )
                                 )
                                 resl.append(res)
-                        last_pages = []
-                    last_work_id=work_id
-                    last_pages.append(d)
-                
-                for res in tqdm(resl,desc=f'Waiting for rest of processes to complete [{num_proc}x]',position=0): 
-                    res.get()
+                            last_pages = []
+                        last_work_id=work_id
+                        last_pages.append(d)
+                    
+                    for res in tqdm(resl,desc=f'Waiting for rest of processes to complete [{num_proc}x]',position=0): 
+                        res.get()
         
-        # finally, save index
-        wdb={k:sorted(list(v)) for k,v in wdb.items()}
-        write_json(wdb, self.path_work_ids)
 
+    @cached_property
+    def lemmatizer(self):
+        from nltk.stem import WordNetLemmatizer
+        return WordNetLemmatizer()
+    
+    @cache
+    def lemmatize(self, word):
+        import nltk
+        try:
+            return self.lemmatizer.lemmatize(word)
+        except LookupError:
+            nltk.download('wordnet')
+            return self.lemmatize(word)
 
-    def preproc(self, num_proc=1, force=False, shuffle=True, lim=None):
-        with logwatch(f'preprocessing jsonl files'):
-            objs = [(t.path, t.path_preproc,force) for t in self.texts if os.path.exists(t.path)]
-            pmap_run(
-                preproc_json,
-                objs,
-                num_proc=num_proc,
-                shuffle=shuffle,
-                lim=lim
-            )
+    def cleardb(self):
+        conn=self.__dict__.get('_page_db_conn')
+        db=self.__dict__.get('page_db')
+        if conn is not None: 
+            conn.close()
+            self.__dict__.pop('_page_db_conn')
+        if db is not None:
+            self.__dict__.pop('page_db')
+        if os.path.exists(self.path_page_db): 
+            os.unlink(self.path_page_db)
 
-    def gendb(self,force=False,startover=False):
+    def gen_db(self,force=False,startover=False, batchsize=1000):
         if startover:
             force=True
-            conn=self.__dict__.get('_page_db_conn')
-            db=self.__dict__.get('page_db')
-            if conn is not None: 
-                conn.close()
-                self.__dict__.pop('_page_db_conn')
-            if db is not None:
-                self.__dict__.pop('page_db')
-            if os.path.exists(self.path_page_db): 
-                os.unlink(self.path_page_db)
+            self.cleardb()
+            
         with logwatch(f'generating page database at {self.path_page_db}'):
-            for i,t in enumerate(self.iter_texts(desc='Saving texts to database')):
-                if t.is_cleaned:
-                    t.gendb(force=force,delete_existing=not startover)
+            clustcount=Counter()
+            clustwordcount=Counter()
+            workwordcount=Counter()
+            batch = []
+            for text in self.iter_texts(desc='Saving preprocessed pages to database'):
+                if (force or not text.is_in_db) and text.is_cleaned:
+                    self.page_db.delete().where(self.page_db.work_id==text.id).execute()
+
+                    for page in text.iter_pages_preproc():
+                        clustcount[page.text.cluster]+=1
+                        clustwordcount[page.text.cluster]+=page.num_content_words
+                        workwordcount[page.text.id]+=page.num_content_words
+                        inpd = {
+                            **page.db_input, 
+                            'page_num_cluster':clustcount[page.text.cluster], 
+                            'page_num_content_words_work':workwordcount[page.text.id],
+                            'page_num_content_words_cluster':clustwordcount[page.text.cluster],
+                        }
+                        batch.append(inpd)
+
+                        if len(batch)>=batchsize:
+                            self.page_db.insert(batch).execute()
+                            batch = []
+            if batch:
+                self.page_db.insert(batch).execute()
 
     def ner_parse_texts(self, lim=25, min_doc_len=25, **kwargs):
         texts=[t for t in self.texts]
@@ -320,25 +437,13 @@ class PPACorpus:
             stopwords = set(stops.words('english'))
         return stopwords
     
-    def topic_model(self, output_dir=None, model_type=None,ntopic=50, niter=100, min_doc_len=25, frac=1, max_per_cluster=None,force=False):
+    def topic_model(self, model_type=None, **query_kwargs):
         from .topicmodel import PPATopicModel
-
-        key=(output_dir,model_type,ntopic,niter,min_doc_len,frac,max_per_cluster)
-        if force or not key in self._topicmodels:
-            mdl = PPATopicModel(
-                output_dir=output_dir,
-                corpus=self,
-                ntopic=ntopic,
-                niter=niter,
-                min_doc_len=min_doc_len,
-                frac=frac,
-                max_per_cluster=max_per_cluster,
-                model_type=model_type
-            )
-            self._topicmodels[key] = mdl
-        else:
-            mdl = self._topicmodels[key]
-        
+        mdl = PPATopicModel(
+            model_type=model_type,
+            corpus=self,
+            **query_kwargs
+        )
         return mdl
     
     @cached_property
@@ -365,250 +470,6 @@ class PPACorpus:
 
 
 
-class PPAText:
-    FILE_ID_KEY='work_id'
-
-    def __init__(self, id, corpus=None,clean=None):
-        self.id=id
-        self.corpus=corpus if corpus is not None else PPA()
-        self.do_clean=self.corpus.do_clean if clean==None else clean
-
-    def __iter__(self): yield from self.pages
-    def __repr__(self):
-        return f'''PPAText({self.id})'''
-    def _repr_html_(self):
-        return f'<b>PPAText({self.id})</b> [{self.author+", " if self.author else ""}<i>{self.title}</i> ({self.year_str})]'
-
-    @cached_property
-    def cluster(self): return self.meta.get(CLUSTER_KEY,self.id)
-    
-    @cached_property
-    def source(self): return self.meta.get(SOURCE_KEY,self.id)
-    
-    @cached_property
-    def is_excerpt(self): return self.id != self.source
-    
-    @cached_property
-    def page_ids(self): return self.corpus.page_ids.get(self.id,[])
-    
-    @cached_property
-    def num_pages(self): return len(self.page_ids)
-    
-    @cached_property
-    def meta(self): return dict(self.corpus.meta.loc[self.id])
-    
-    @cached_property
-    def title(self): return self.meta.get('title')
-    
-    @cached_property
-    def author(self): return self.meta.get('author')
-    
-    @cached_property
-    def year_str(self): return str(self.meta.get('pub_date'))[:4]
-    
-    @cached_property
-    def year(self): 
-        try:
-            return int(self.year_str)
-        except:
-            return 0
-
-    @cached_property
-    def path(self): return os.path.join(self.corpus.path_texts, clean_filename(self.id+'.jsonl'))
-    
-    @cached_property
-    def path_preproc(self):
-        return os.path.join(
-            self.corpus.path_texts_preproc,
-            clean_filename(self.id+'.jsonl.gz')
-        ) 
-
-    @cached_property
-    def pages_preproc(self): 
-        return list(self.iter_pages_preproc())
-    @cached_property
-    def pages_orig(self): 
-        return list(self.iter_pages_orig())
-    
-    def iter_pages_preproc(self, force_clean=False):
-        self.clean(force=force_clean)
-        try:
-            for d in iter_json(self.path_preproc):
-                yield PPAPage(d['page_id'], self, **d)
-        except Exception as e:
-            if not force_clean:
-                # could be that cleaned file was saved improperly
-                yield from self.iter_pages_preproc(force_clean=True)
-            else:
-                raise e
-
-    
-    def iter_pages_orig(self, as_dict=False):        
-        def iter_dicts():
-            if os.path.exists(self.path):
-                yield from self.iter_page_json()
-        
-        if as_dict:
-            yield from iter_dicts()
-        else:
-            for d in iter_dicts():
-                yield PPAPage(d['page_id'], self, **d)
-        
-    @cached_property
-    def pages(self):
-        # if we don't need to clean just return orig json
-        if not self.do_clean: return self.pages_json
-
-        # if we already have preproc file just load that
-        if os.path.exists(self.path_preproc): return self.pages_json_preproc
-        
-        # if we only have the db on file use that
-        if self.pages_db: return self.pages_db
-
-        # otherwise clean the text and load the result
-        return self.pages_json_preproc
-    
-    
-    def iter_pages_db(self, as_dict=True):
-        q=(self.corpus.page_db.work_id==self.id)
-        # total = self.corpus.page_db_count(q,work_ids=self.id)
-        res = self.corpus.page_db.select().where(q)
-        for page_rec in tqdm(res,desc='Iterating over page search results',position=0):
-            d=page_rec.__data__        
-            if 'id' in d: del d['id']
-            yield d if as_dict else PPAPage(d['page_id'], self, **d)
-    
-    @cached_property
-    def pages_db(self):
-        return list(self.iter_pages_db(as_dict=False))
-            
-    
-    @cached_property
-    def pages_d(self):
-        return {page.id:page for page in self.pages}
-
-    @cached_property
-    def pages_df(self):
-        return pd.DataFrame([p.meta for p in self.pages]).set_index('page_id')
-    @property
-    def page(self):
-        return random.choice(self.pages)
-    @property
-    def is_cleaned(self):
-        return os.path.exists(self.path_preproc)
-    def clean(self,remove_headers=True,force=False):
-        if force or not self.is_cleaned:
-            pages_ld = read_json(self.path)
-            pages_ld = cleanup_pages(pages_ld, remove_headers=remove_headers)
-            write_json(pages_ld, self.path_preproc)
-    
-    def iter_page_json(self):
-        if os.path.exists(self.path):
-            yield from iter_json(self.path)
-
-    @cached_property
-    def txt(self, sep='\n\n\n\n'):
-        return sep.join(page.txt for page in self.pages)
-    
-    def gendb(self, force=False, delete_existing = True):
-        Page=self.corpus.page_db
-        if force or (count:=Page.select().where(Page.work_id==self.id).count()) != self.num_pages:
-            if (force or count) and delete_existing: 
-                Page.delete().where(Page.work_id==self.id).execute()
-
-            inp = [
-                dict(
-                    page_id=page.id,
-                    page_text=page.txt,
-                    page_num_content_words=page.num_content_words,
-                    work_id=page.text.id,
-                    cluster = page.text.cluster,
-                    source = page.text.source,
-                    year = page.text.year,
-                    author = page.text.author,
-                    title = page.text.title[:255],
-                    _random = random.random()
-                )
-                for page in self.iter_pages_preproc()
-            ]
-            if inp: 
-                with logwatch('inserting into db', level='TRACE'):
-                    Page.insert(inp).execute()
-
-    def ner_parse(self, lim=None, min_doc_len=None, **kwargs):
-        pages = [page for page in self.pages if not min_doc_len or page.num_content_words>=min_doc_len]
-        random.shuffle(pages)
-        with self.corpus.ents_db(flag='r') as db: done = {p.id for p in pages if p.id in db}
-        undone = [p for p in pages if p.id not in done]
-        if not lim or len(done)<lim:
-            todo = undone if not lim else undone[:lim-len(done)]
-            for page in piter(todo, desc='Iterating pages',color='blue'):
-                page.ents
-                if 'ents' in page.__dict__: del page.__dict__['ents']
-
-
-
-class PPAPage:
-    def __init__(self, id, text=None,**_meta):
-        self.id = id
-        self.text = text if text is not None else PPA().textd[id.split('_')[0]]
-        self.corpus = text.corpus
-        self._meta = _meta if _meta else text.pages_d.get(self.id)._meta
-
-    
-    
-    @cached_property
-    def meta(self):
-        return {
-            **self._meta,
-            'page_content_words':self.content_words,
-            'page_num_tokens':len(self.tokens),
-            'page_num_content_words':len(self.content_words),
-            'work_id':self.text.id, 
-            'cluster':self.text.cluster,
-            'source':self.text.source,
-            'year':self.text.year,
-            'author':self.text.author,
-            'title':self.text.title
-        }
-    
-    @cached_property
-    def txt(self):
-        return self._meta.get('page_text')
-    
-    @cached_property
-    def tokens(self):
-        tokens=self._meta.get('page_tokens')
-        if not tokens: tokens=tokenize_agnostic(self.txt)
-        tokens = [x.strip().lower() for x in tokens if x.strip() and x.strip()[0].isalpha()]
-        return tokens
-
-    @cached_property
-    def content_words(self): 
-        return self.get_content_words()
-    @cached_property
-    def num_content_words(self): 
-        res=self._meta.get('page_num_content_words')
-        if res is None: res=len(self.content_words)
-        return res
-    @cached_property
-    def stopwords(self): return self.corpus.stopwords
-
-    def get_content_words(self, min_tok_len=4):
-        return [tok for tok in self.tokens if len(tok)>=min_tok_len and tok not in self.stopwords]
-    
-
-    @cached_property
-    def ents(self):
-        return self.ner_parse()
-    
-    def ner_parse(self, db=None):
-        if db is None: db = self.corpus.ents_db()
-        if self.id in db: return db[self.id]
-        doc = self.corpus.nlp(self.txt)
-        res = [(ent.text, ent.type) for ent in doc.ents]
-        db[self.id] = res
-        return res
 
 
 
@@ -638,3 +499,12 @@ def preproc_json(obj):
         pages_ld = read_json(ifn)
         pages_ld=cleanup_pages(pages_ld)
         write_json(pages_ld, ofn)
+
+
+
+
+
+
+
+
+

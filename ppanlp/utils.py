@@ -211,7 +211,7 @@ class logwatch:
         log (Logger): The logger object for logging the task status.
         task_name (str): The name of the task being monitored.
     """
-    def __init__(self, name='running task', level='DEBUG'):
+    def __init__(self, name='running task', level='DEBUG', min_seconds_logworthy=None):
         global LOGWATCH_ID
         LOGWATCH_ID+=1
         self.id = LOGWATCH_ID
@@ -219,12 +219,17 @@ class logwatch:
         self.ended = None
         self.level=level
         self.task_name = name
+        self.min_seconds_logworthy = min_seconds_logworthy
+        self.vertical_char = '￨'
 
-    def log(self, msg, pref='< '):
+    def log(self, msg, pref=None, inner_pref=True,level=None):
         if msg:
-            logfunc = getattr(logger,self.level.lower())
-            logfunc(pref+msg)
+            logfunc = getattr(logger,(self.level if not level else level).lower())
+            logfunc(f'{(self.inner_pref if inner_pref else self.pref) if pref is None else pref}{msg}')
 
+    def iter_progress(self, iterator, desc='iterating', pref=None, **kwargs):
+        desc=f'{self.inner_pref if pref is None else pref}{desc}'
+        return tqdm(iterator,desc=desc,**kwargs)
 
     @property
     def tdesc(self): 
@@ -249,28 +254,13 @@ class logwatch:
         """
         return self.ended - self.started
     
-    # @property
-    # def desc(self): 
-    #     """Returns a description of the task.
-        
-    #     If the task has both a start time and an end time, it returns a string
-    #     indicating the task name and the time it took to complete the task.
-        
-    #     If the task is currently running, it returns a string indicating that
-    #     the task is still running.
-        
-    #     Returns:
-    #         str: A description of the task.
-    #     """
-    #     pref1=f'{"  "*(self.num-1)}' if self.num>1 else ''
-    #     pref1+=f'[{self.id}]'
-
-    #     if self.started is not None and self.ended is not None:
-    #         pref = f'{pref1} <' if pref1 else f'<'
-    #         return f'{pref} {self.tdesc}'
-    #     else:
-    #         pref = f'{pref1} >' if pref1 else f'>'
-    #         return f'{pref} {self.task_name}'
+    @cached_property
+    def pref(self):
+        return f"{self.vertical_char} " * (self.num-1)
+    @cached_property
+    def inner_pref(self):
+        return f"{self.vertical_char} " * (self.num)
+    
 
     @property
     def desc(self): 
@@ -285,11 +275,10 @@ class logwatch:
         Returns:
             str: A description of the task.
         """
-        pref="| " * (self.num-1)
         if self.started is None or self.ended is None:
-            return f'{pref}| {self.task_name}'.strip()
+            return f'{self.task_name}'.strip()
         else:
-            return f'{pref}| {self.tdesc}'.strip()
+            return f'⎿ {self.tdesc}'.strip()
         
     def __enter__(self):        
         """Context manager method that is called when entering a 'with' statement.
@@ -303,20 +292,26 @@ class logwatch:
         global NUM_LOGWATCHES
         NUM_LOGWATCHES+=1
         self.num = NUM_LOGWATCHES
-        self.log(self.desc,pref='')
+        self.log(self.desc, inner_pref=False)
         self.started = time.time()
         return self
 
-    def __exit__(self,*x):
+    def __exit__(self, exc_type, exc_value, traceback):
         """
         Logs the resulting time.
         """ 
         global NUM_LOGWATCHES, LOGWATCH_ID
-        NUM_LOGWATCHES-=1
-        self.ended = time.time()
-        if self.tdesc!='0 seconds':
-            self.log(self.desc,pref='')
-        if NUM_LOGWATCHES==0: LOGWATCH_ID=0
+
+        if exc_type:
+            LOGWATCH_ID=0
+            NUM_LOGWATCHES=0
+            logger.error(f'\n{exc_type.__name__} {exc_value}')
+        else:
+            NUM_LOGWATCHES-=1
+            self.ended = time.time()
+            if not self.min_seconds_logworthy or self.duration>=self.min_seconds_logworthy:
+                self.log(self.desc, inner_pref=False)
+            if NUM_LOGWATCHES==0: LOGWATCH_ID=0
 
 
 
@@ -349,8 +344,8 @@ def clean_filename(filename, whitelist=None, replace=' '):
 
 
 
-def truncfn(ifn, lim=25):
-    if ifn.startswith(os.path.sep): fn=ifn[1:]
+def truncfn(ifn, lim=155):
+    fn=ifn[1:] if ifn.startswith(os.path.sep) else ifn
     dirs=fn.split(os.path.sep)
     while len(dirs)>2 and len(fn)>lim:
         if dirs[1]=='...': dirs.pop(1)
@@ -363,3 +358,134 @@ def iterlim(iterr, lim=None):
     for i,x in enumerate(iterr):
         if lim and i>=lim: break
         yield x
+
+
+def read_df(path):
+    if '.json' in path: return pd.DataFrame(read_json(path))
+    if '.csv' in path: return pd.read_csv(path)
+    if '.pkl' in path: return pd.read_pickle(path)
+    raise Exception(f'what type of file is this: {path}')
+
+
+def printm(x):
+    from IPython.display import Markdown, display
+    display(Markdown(x))
+
+def write_excel(df,fn,**kwargs):
+    return df.to_excel(fn)
+
+# def write_excel(df, fn, wrap=True, col_width=20, col_widths={}):
+#     # Create a Pandas Excel writer using XlsxWriter as the engine.
+#     with pd.ExcelWriter(fn, engine='xlsxwriter') as writer:
+
+#         # Convert the dataframe to an XlsxWriter Excel object.
+#         df.to_excel(writer, sheet_name='data')
+    
+#         workbook  = writer.book
+#         cell_format = workbook.add_format({'text_wrap': True})
+#         header_format = workbook.add_format({
+#             'bold': True,
+#             'text_wrap': True,
+#             'valign': 'top',
+#             'fg_color': '#f2f2f2',
+#             'border': 1}
+#         )
+#         worksheet = writer.sheets['data']
+
+#         for col_num,col_name in enumerate(df.columns):
+#             worksheet.set_column(col_num, col_num+1, col_widths.get(col_name,col_width), cell_format)
+#             worksheet.write(0, col_num, col_name, header_format)
+#         for row_num,(rowid,row) in enumerate(df.iterrows()):
+#             for col_num,col_name in enumerate(df.columns):
+#                 cell_value = row[col_name]
+#                 if not type(cell_value) in {str,float,np.float64,int}:
+#                     cell_value = json.dumps(cell_value)
+#                 worksheet.write(row_num+1, col_num, cell_value, cell_format)
+
+#     # Close the Pandas Excel writer and output the Excel file.
+#     writer.close()
+
+
+# def write_excel(df, fn):
+#     import pandas as pd
+#     from pandas.io.excel._xlsxwriter import XlsxWriter
+#     from openpyxl.styles import Font
+#     import re
+
+#     class RichExcelWriter(XlsxWriter):
+#         def __init__(self, *args, **kwargs):
+#             super(RichExcelWriter, self).__init__(*args, **kwargs)
+
+#         def _value_with_fmt(self, val):
+#             if type(val) == list:
+#                 return val, None
+#             return super(RichExcelWriter, self)._value_with_fmt(val)
+
+#         def _write_cells(self, cells, sheet_name=None, startrow=0, startcol=0, freeze_panes=None):
+#             sheet_name = self._get_sheet_name(sheet_name)
+#             if sheet_name in self.sheets:
+#                 wks = self.sheets[sheet_name]
+#             else:
+#                 wks = self.book.add_worksheet(sheet_name)
+#                 wks.add_write_handler(list, lambda worksheet, row, col, list, style: worksheet._write_rich_string(row, col, *list))
+#                 self.sheets[sheet_name] = wks
+#             super(RichExcelWriter, self)._write_cells(cells, sheet_name, startrow, startcol, freeze_panes)
+
+#     # Define the words to be made bold
+#     normal_font = Font(bold=False, italic=False)
+#     bolditalic_font = Font(bold=True, italic=True)
+#     bold_font = Font(bold=True, italic=False)
+#     italic_font = Font(bold=False, italic=True)
+
+#     # Create a list to hold formatted rows
+#     formatted_rows = []
+
+#     # Iterate through each row in the DataFrame
+#     for _, row in df.iterrows():
+#         formatted_row = []
+#         for cell_value in row:
+#             if isinstance(cell_value, str):
+#                 formatted_cell_value = []
+#                 words = cell_value.split()
+#                 for word in words:
+#                     if word.startswith('***') and word.endswith('***'):
+#                         formatted_cell_value.extend([bolditalic_font, word[3:-3]])
+#                     elif word.startswith('**') and word.endswith('**'):
+#                         formatted_cell_value.extend([bold_font, word[2:-2]])
+#                     elif word.startswith('*') and word.endswith('*'):
+#                         formatted_cell_value.extend([italic_font, word[1:-1]])
+#                     else:
+#                         formatted_cell_value.extend([normal_font,word])
+#                 formatted_row.append(formatted_cell_value)
+#             else:
+#                 formatted_row.append(cell_value)
+#         formatted_rows.append(formatted_row)
+
+#     # Create a new DataFrame with the formatted rows
+#     formatted_df = pd.DataFrame(formatted_rows, columns=df.columns)
+#     writer = RichExcelWriter(fn)
+#     formatted_df.to_excel(writer, sheet_name='Sample', index=False)
+#     writer.save()
+
+
+@cache
+def get_english_wordlist(fn='english_wordlist.txt'):
+    fnfn=os.path.join(PATH_REPO_DATA,fn)
+    if os.path.exists(fnfn):
+        with open(fnfn) as f:
+            return set(f.read().split())
+    else:
+        return set()
+
+
+def nowstr():
+    from datetime import datetime
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
+
+
+def hashstr(input_string, length=None):
+    import hashlib
+    # Create a SHA-256 hash of the input string
+    sha256_hash = hashlib.sha256(input_string.encode()).hexdigest()
+    # Truncate the hash to the specified length
+    return sha256_hash[:length]

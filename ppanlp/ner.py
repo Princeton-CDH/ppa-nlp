@@ -124,28 +124,28 @@ class NERModel:
             workid='.'.join(pageid.split('.')[:-1])
             text = self.corpus.textd[workid]
             pageppl = {d['ent'] for d in pagedata}
-            
+
             # if text.author: 
                 # pageppl.add(aupref+text.author)
-            
+
             if text.year>0:
                 prd=50
                 prd1=text.year//prd*prd
                 prd2=prd1+prd
                 pageppl.add(f'{prpref}{prd1}-{prd2}')
-            
+
             if topic_model:
                 topic=topic_model.page2topic.get(pageid)
                 if topic and not topic.startswith('-1'):
                     pageppl.add(toppref+topic)
-            
+
             for x in pageppl: 
                 person1[x]+=1
                 allppl.add(x)
                 for y in pageppl:
                     if x<y:
                         person2[x,y]+=1
-        
+
         def count_ind(x):
             return person1[x]
         def count_solo(x,y):
@@ -164,20 +164,20 @@ class NERModel:
             return prob_ind(x) * prob_ind(y)
         def prob_obsexp(x,y):
             return prob_obs(x,y) / prob_exp(x,y)
-        
+
         def gettype(x):
             if x.startswith(toppref): return 'Topic'
             if x.startswith(aupref): return 'Author'
             if x.startswith(prpref): return 'Period'
             return 'Person'
-        
+
         def get_contingency_table(x,y):
             tl=count_together(x,y)
             tr=count_solo(x,y)
             bl=count_solo(y,x)
             br=count_neither(x,y)
             return ((tl,tr),(bl,br))
-        
+
         def iter_res():
             minc=min_page_count
             cmps = [
@@ -188,8 +188,8 @@ class NERModel:
                 and count_ind(x)>=minc 
                 and count_ind(y)>=minc
                 and not (x.startswith(aupref) and y.startswith(prpref))
-                and not x in y 
-                and not y in x
+                and not x.lower() in y.lower()
+                and not y.lower() in x.lower()
             ]
             for x,y in tqdm(cmps,desc='Iterating over statistical comparisons',position=0):
                 val_d={
@@ -223,6 +223,11 @@ class NERModel:
         if not o: return pd.DataFrame()
         odf = pd.DataFrame(o).query('fisher_exact_p!=1').sort_values('odds_ratio',ascending=False)
         odf['prob_xy_obsexp_log']=odf['prob_xy_obsexp'].apply(np.log10)
+        odf=odf.replace([np.inf, -np.inf], np.nan)
+        odf=odf[~odf.odds_ratio.isna()]
         return odf
+
+
+
 
 
