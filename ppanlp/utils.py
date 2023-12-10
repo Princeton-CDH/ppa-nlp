@@ -498,3 +498,25 @@ def hashstr(input_string, length=None):
     sha256_hash = hashlib.sha256(input_string.encode()).hexdigest()
     # Truncate the hash to the specified length
     return sha256_hash[:length]
+
+
+
+def get_num_waiting(resl):
+    nw=0
+    for id,res in resl:
+        try:
+            if res.successful():
+                pass
+        except ValueError:
+            nw+=1
+    return nw
+
+def mp_iter_finished_res(resl, errors=True):
+    for id,res in resl:
+        try:
+            if res.successful():
+                yield id,res
+            elif errors:
+                yield id,res
+        except ValueError:
+            pass

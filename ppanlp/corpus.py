@@ -336,6 +336,7 @@ class PPACorpus:
             os.makedirs(self.path_texts_preproc,exist_ok=True)
             numdone=0
             tries=0
+            work_ids_done_preproc = set()
 
             with mp.get_context(CONTEXT).Pool(num_proc) as pool:
                 if num_proc is None: 
@@ -347,8 +348,9 @@ class PPACorpus:
                     max_queue = 100
 
                 naptime=3
+                numinqueue=0
                 def getdesc():
-                    return f'preprocessing: {max_queue:,} texts in queue; {numdone:,} finished; {format_timespan(tries*naptime)} since last completion'
+                    return f'preprocessing: {numinqueue:,} texts in queue; {len(work_ids_done_preproc):,} finished; {format_timespan(tries*naptime)} since last completion'
 
 
                 with logwatch(f'saving jsonl files to {self.path_texts_preproc} [{num_proc}x]') as lw:
@@ -373,36 +375,36 @@ class PPACorpus:
                                 self.path_texts_preproc,
                                 clean_filename(last_work_id+'.jsonl.gz')
                             )
-                            if force or not os.path.exists(ofn):
-                                res = pool.apply_async(
-                                    save_cleanup_pages, 
-                                    args=(
-                                        last_pages,
-                                        ofn
-                                    )
+                            # if force or not os.path.exists(ofn):
+                            res = pool.apply_async(
+                                save_cleanup_pages, 
+                                args=(
+                                    last_pages,
+                                    ofn,
+                                    force
                                 )
-                                resl.append(res)
-                                tries=0
-                                while len(resl)>=max_queue:
-                                    tries+=1
-                                    for i,res in enumerate([x for x in resl]):
-                                        try:
-                                            if res.successful():
-                                                successful.append(res)
-                                                resl.pop(i)
-                                                numdone+=1
-                                                tries=0
-                                                lasttime=time.time()
-                                            else:
-                                                errors.append(res)
-                                        except ValueError:
-                                            pass
-                                    time.sleep(naptime)
-                                    lw.set_progress_desc(getdesc())
-                            
+                            )                            
+                            resl.append((work_id,res))
                             last_pages = []
+
+                            for id,res in mp_iter_finished_res(resl):
+                                work_ids_done_preproc.add(id)
+                            lw.set_progress_desc(getdesc())
+
                         last_work_id=work_id
                         last_pages.append(d)
+
+
+                        
+                        while (numinqueue:=get_num_waiting(resl))>=max_queue:
+                            for id,res in mp_iter_finished_res(resl):
+                                work_ids_done_preproc.add(id)
+                            lw.set_progress_desc(getdesc())
+                            tries+=1
+                            time.sleep(naptime)
+                            lw.set_progress_desc(getdesc())
+                        
+
                     
                     for res in lw.iter_progress(resl,desc=f'preprocessing remaining texts [{num_proc}x]',position=0): 
                         res.get()
@@ -550,6 +552,7 @@ def save_cleanup_pages(pages_ld, save_to, force=False):
     if force or not os.path.exists(save_to):
         pages_ld=cleanup_pages(pages_ld)
         write_json(pages_ld, save_to)
+    return True
 
 def save_orig_pages(pages_ld, save_to):
     pages_ld=cleanup_pages(pages_ld)
