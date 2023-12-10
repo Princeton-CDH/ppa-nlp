@@ -348,7 +348,7 @@ class PPACorpus:
                         num_proc=1
 
                 if max_queue is None: 
-                    max_queue = 999
+                    max_queue = 998
 
                 naptime=.5
                 numinqueue=0
