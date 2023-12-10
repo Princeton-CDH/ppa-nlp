@@ -472,7 +472,7 @@ def write_excel(df,fn,**kwargs):
 
 @cache
 def get_english_wordlist(fn='english_wordlist.txt'):
-    fnfn=os.path.join(PATH_REPO_DATA,fn)
+    fnfn=os.path.join(PATH_OCR_RULESETS,fn)
     if os.path.exists(fnfn):
         with open(fnfn) as f:
             return set(f.read().split())

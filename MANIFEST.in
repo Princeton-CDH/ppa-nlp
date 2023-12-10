@@ -1,3 +1,4 @@
-include data/english_wordlist.txt
-include data/ocr_cleanup_rulesets
-include data/ocr_cleanup_rulesets/*
+include requirements.txt
+include README.md
+graft data/ocr_cleanup_rulesets
+global-exclude .DS_Store
