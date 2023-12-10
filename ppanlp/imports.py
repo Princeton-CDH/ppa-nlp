@@ -43,6 +43,7 @@ pd.options.display.max_columns=None
 ## constants
 PATH_HERE = os.path.abspath(os.path.dirname(__file__))
 PATH_REPO = os.path.dirname(PATH_HERE)
+PATH_REPO_CODE = os.path.join(PATH_REPO,'ppanlp')
 PATH_REPO_DATA = os.path.join(PATH_REPO, 'data')
 PATH_HOME_DATA = os.path.expanduser('~/ppa_data')
 PATH_ECCO_DATA = os.path.join(PATH_HOME_DATA, 'ecco')
@@ -62,7 +63,7 @@ PATH_HATHI_PAGE_JSONL = os.path.join(PATH_REPO_DATA, 'data.hathi_pages.jsonl')
 PATH_TEXT_CORPUS_ROOT = os.path.join(PATH_HOME_DATA, 'corpus')
 PATH_TEXT_CORPUS_TEXTS = os.path.join(PATH_TEXT_CORPUS_ROOT, 'texts')
 PATH_TEXT_CORPUS_METADATA = os.path.join(PATH_TEXT_CORPUS_ROOT, 'metadata.csv')
-PATH_OCR_RULESETS = os.path.join(PATH_REPO_DATA, 'ocr_cleanup_rulesets')
+PATH_OCR_RULESETS = os.path.join(PATH_REPO_CODE, 'ocr_cleanup_rulesets')
 
 PATH_JSON_CORPUS_ROOT = os.path.join(PATH_HOME_DATA,'corpus_json1')
 PATH_JSON_CORPUS_TEXTS = os.path.join(PATH_JSON_CORPUS_ROOT, 'texts')

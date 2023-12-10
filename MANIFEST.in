@@ -1,4 +1,5 @@
 include requirements.txt
 include README.md
-graft data/ocr_cleanup_rulesets
+graft ppanlp
+graft ppanlp/ocr_cleanup_rulesets
 global-exclude .DS_Store
