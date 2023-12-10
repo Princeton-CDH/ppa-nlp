@@ -1,3 +1,2 @@
-data/english_wordlist.txt
-data/ocr_cleanup_rulesets
-data/ocr_cleanup_rulesets/*
+include data/english_wordlist.txt
+recursive-include data/ocr_cleanup_rulesets *
