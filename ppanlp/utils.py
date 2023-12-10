@@ -222,6 +222,7 @@ class logwatch:
         self.task_name = name
         self.min_seconds_logworthy = min_seconds_logworthy
         self.vertical_char = '￨'
+        self.last_lap = None
 
     def log(self, msg, pref=None, inner_pref=True,level=None):
         if msg:
@@ -252,6 +253,18 @@ class logwatch:
         """
         return format_timespan(self.duration)
     
+    def lap(self):
+        self.last_lap = time.time()
+    
+    @property
+    def lap_duration(self):
+        return time.time() - self.last_lap if self.last_lap else 0
+    
+    @property
+    def lap_tdesc(self):
+        return format_timespan(self.lap_duration)
+    
+
     @property
     def duration(self): 
         """Calculates the duration of an event.
@@ -300,7 +313,7 @@ class logwatch:
         NUM_LOGWATCHES+=1
         self.num = NUM_LOGWATCHES
         self.log(self.desc, inner_pref=False)
-        self.started = time.time()
+        self.started = self.last_lap = time.time()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):

@@ -325,7 +325,7 @@ class PPACorpus:
             self.gen_db(force=force, startover=clear)
 
     def preproc(self, num_proc=None, force=False, shuffle=True, lim=None, max_queue=None):
-        with logwatch(f'preprocessing jsonl files'):
+        with logwatch(f'preprocessing jsonl files') as lw:
             last_work_id=None
             last_pages=[]
             resl=[]
@@ -338,6 +338,8 @@ class PPACorpus:
             tries=0
             work_ids_done_preproc = set()
 
+            
+
             with mp.get_context(CONTEXT).Pool(num_proc) as pool:
                 if num_proc is None: 
                     # num_proc=mp.cpu_count() // 2 - 1
@@ -348,10 +350,22 @@ class PPACorpus:
                 if max_queue is None: 
                     max_queue = 999
 
-                naptime=1
+                naptime=.5
                 numinqueue=0
                 def getdesc():
-                    return f'preprocessing [{num_proc}x]: {len(work_ids_done_preproc):,} texts done; {numinqueue:,} in queue; {format_timespan(tries*naptime)} since last'
+                    return f'preprocessing [{num_proc}x]: {len(work_ids_done_preproc):,} texts done; {get_num_waiting(resl):,} in queue; {lw.lap_tdesc} since last'
+
+
+
+                def wait_and_run(max_queue=max_queue):
+                    global lasttime
+                    while get_num_waiting(resl)>max_queue:
+                        for id,res in mp_iter_finished_res(resl):
+                            work_ids_done_preproc.add(id)
+                            lw.lap()
+                        lw.set_progress_desc(getdesc())
+                        time.sleep(naptime)
+                        lw.set_progress_desc(getdesc())
 
 
                 with logwatch(f'saving jsonl files to {self.path_texts_preproc} [{num_proc}x]') as lw:
@@ -388,29 +402,14 @@ class PPACorpus:
                                 resl.append((work_id,res))                        
                             else:
                                 work_ids_done_preproc.add(work_id)
+                                lw.lap()
                             last_pages = []
-                            for id,res in mp_iter_finished_res(resl):
-                                work_ids_done_preproc.add(id)
-                            lw.set_progress_desc(getdesc())
+                            wait_and_run()
 
                         last_work_id=work_id
                         last_pages.append(d)
 
-
-                        
-                        while (numinqueue:=get_num_waiting(resl))>=max_queue:
-                            for id,res in mp_iter_finished_res(resl):
-                                work_ids_done_preproc.add(id)
-                                tries = 0
-                            lw.set_progress_desc(getdesc())
-                            tries+=1
-                            time.sleep(naptime)
-                            lw.set_progress_desc(getdesc())
-                        
-
-                    
-                    for res in lw.iter_progress(resl,desc=f'preprocessing remaining texts [{num_proc}x]',position=0): 
-                        res.get()
+                    wait_and_run(0)
         
 
     @cached_property
