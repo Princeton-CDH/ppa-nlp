@@ -328,7 +328,7 @@ def cleanup_str(txt, use_nltk_tokenizer=False, remove_headers:list=None, **page_
     definitelyd = {
         **{k:v for k,v in page_attrs.items() if k!='page_text'}, 
         'page_text':corrected_text, 
-        'page_text_orig':page_text
+        # 'page_text_orig':page_text
     }
     maybed = {
         'page_corrections_headers':list(set(specific_header_corrections)),
