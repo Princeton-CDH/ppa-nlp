@@ -329,7 +329,7 @@ def cleanup_str(txt, use_nltk_tokenizer=False, remove_headers:list=None, **page_
         **{k:v for k,v in page_attrs.items() if k!='page_text'}, 
         'page_text':corrected_text, 
         'page_text_orig':page_text, 
-        'page_tokens':corrected_tokens_l,
+        # 'page_tokens':corrected_tokens_l,  # files too too large?
         'page_corrections_headers':list(set(specific_header_corrections)),
         'page_corrections_linebreaks':list(set(specific_linebreak_corrections)),
         'page_corrections_long_s':list(set(specific_long_s_corrections)),
