@@ -345,7 +345,7 @@ class PPACorpus:
                         num_proc=1
 
                 if max_queue is None: 
-                    max_queue = 999
+                    max_queue = 99
 
                 naptime=1
                 numinqueue=0
@@ -375,18 +375,19 @@ class PPACorpus:
                                 self.path_texts_preproc,
                                 clean_filename(last_work_id+'.json.gz')
                             )
-                            # if force or not os.path.exists(ofn):
-                            res = pool.apply_async(
-                                save_cleanup_pages, 
-                                args=(
-                                    last_pages,
-                                    ofn,
-                                    force
-                                )
-                            )                            
-                            resl.append((work_id,res))
+                            if force or not os.path.exists(ofn):
+                                res = pool.apply_async(
+                                    save_cleanup_pages, 
+                                    args=(
+                                        last_pages,
+                                        ofn,
+                                        force
+                                    )
+                                )    
+                                resl.append((work_id,res))                        
+                            else:
+                                work_ids_done_preproc.add(work_id)
                             last_pages = []
-
                             for id,res in mp_iter_finished_res(resl):
                                 work_ids_done_preproc.add(id)
                             lw.set_progress_desc(getdesc())
