@@ -345,7 +345,7 @@ class PPACorpus:
                         num_proc=1
 
                 if max_queue is None: 
-                    max_queue = 100
+                    max_queue = 99
 
                 naptime=1
                 numinqueue=0
@@ -399,6 +399,7 @@ class PPACorpus:
                         while (numinqueue:=get_num_waiting(resl))>=max_queue:
                             for id,res in mp_iter_finished_res(resl):
                                 work_ids_done_preproc.add(id)
+                                tries = 0
                             lw.set_progress_desc(getdesc())
                             tries+=1
                             time.sleep(naptime)
