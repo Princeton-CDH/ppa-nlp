@@ -45,6 +45,7 @@ def format_timespan(*args,replace={'0 seconds':'0.0 seconds'},**kwargs):
 
 ## settings
 pd.options.display.max_columns=None
+pd.options.display.max_rows=10
 
 ## constants
 PATH_HERE = os.path.abspath(os.path.dirname(__file__))
