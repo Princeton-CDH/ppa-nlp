@@ -48,7 +48,7 @@ class PPACorpus:
 
     @cached_property
     def paths(self):
-        return {k:v for k,v in ppa.__dict__.items() if k.startswith('path')}
+        return {k:v for k,v in self.__dict__.items() if k.startswith('path')}
 
     def __getitem__(self, work_or_page_id):
         if is_page_id(work_or_page_id):
@@ -409,6 +409,7 @@ class PPACorpus:
                         last_pages.append(d)
 
                     wait_and_run(0)
+                    lw.set_progress_desc(getdesc())
         
 
     @cached_property
