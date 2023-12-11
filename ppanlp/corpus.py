@@ -220,7 +220,7 @@ class PPACorpus:
         q=eval(qstr)
         # find total
         keyd={
-            'work_ids':tuple(work_ids),
+            'work_ids':tuple(work_ids) if work_ids else None,
             'min_doc_len':min_doc_len,
             'max_cluster_len':max_cluster_len,
             'max_work_len':max_work_len,
