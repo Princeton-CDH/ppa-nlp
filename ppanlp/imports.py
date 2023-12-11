@@ -19,6 +19,7 @@ import multiprocessing as mp
 
 ## ocr correction imports
 import re
+from io import StringIO
 import wordfreq
 import os
 import json
@@ -43,7 +44,6 @@ def format_timespan(*args,replace={'0 seconds':'0.0 seconds'},**kwargs):
 
 
 
-# nltk.download('punkt')
 
 ## settings
 pd.options.display.max_columns=None

@@ -415,18 +415,14 @@ class PPACorpus:
 
     @cached_property
     def lemmatizer(self):
+        import nltk
         from nltk.stem import WordNetLemmatizer
+        nltk.download('wordnet', print_error_to=StringIO())
         return WordNetLemmatizer()
     
     @cache
     def lemmatize(self, word):
-        import nltk
-        try:
-            return self.lemmatizer.lemmatize(word)
-        except LookupError:
-            with all_logging_disabled():
-                nltk.download('wordnet')
-            return self.lemmatize(word)
+        return self.lemmatizer.lemmatize(word)
 
     def cleardb(self):
         conn=self.__dict__.get('_page_db_conn')
@@ -500,8 +496,7 @@ class PPACorpus:
             stopwords = set(stops.words('english'))
         except Exception:
             import nltk
-            with all_logging_disabled():
-                nltk.download('stopwords')  
+            nltk.download('stopwords', print_error_to=StringIO())
             stopwords = set(stops.words('english'))
         return stopwords
     
