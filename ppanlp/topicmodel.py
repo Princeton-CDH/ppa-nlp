@@ -293,7 +293,9 @@ class TomotopyTopicModel(BaseTopicModel):
     def work_df(self):
         mdf=self.corpus.meta.reset_index()
         docdf=self.doc_df.groupby('work_id').mean().reset_index()
-        return mdf.merge(docdf,on='work_id').set_index(list(mdf.columns))
+        odf=mdf.merge(docdf,on='work_id')
+        odf=odf.set_index([c for c in mdf if c in set(odf.columns)])
+        return odf
 
         
     def topicize_text(self, txt, topic_id):

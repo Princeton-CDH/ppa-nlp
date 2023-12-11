@@ -170,3 +170,5 @@ file_system_backend
 !data/ocr_cleanup_rulesets/*
 !data/english_wordlist.txt
 *.db
+
+notebooks/dev
