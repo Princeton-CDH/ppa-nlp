@@ -74,11 +74,12 @@ class BaseTopicModel:
         return None
 
     def iter_pages(self, lim=None):
-        yield from self.corpus.iter_pages(
-            lim=lim,
-            as_dict=False,
+        
+        yield from self.corpus.iter_pages(**{
+            'lim':lim,
+            'as_dict':as_dict,
             **self.query_kwargs
-        )
+        })
 
     def iter_docs(self, lim=None, lemmatize=False, orig_txt=False, as_str=True):
         yield from (
