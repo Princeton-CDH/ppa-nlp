@@ -35,6 +35,7 @@ import gzip
 import numpy as np
 from humanfriendly import format_timespan as ftspan
 from contextlib import contextmanager
+import logging
 
 def format_timespan(*args,replace={'0 seconds':'0.0 seconds'},**kwargs):
     res = ftspan(*args,**kwargs)
