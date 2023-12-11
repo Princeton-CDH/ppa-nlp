@@ -277,7 +277,8 @@ class PPACorpus:
 
     @cache
     def pages_df(self, **kwargs): 
-        return pd.DataFrame(page for page in self.iter_pages(as_dict=True,**kwargs)).set_index('page_id')
+        odf=pd.DataFrame(page for page in self.iter_pages(as_dict=True,**kwargs))
+        return odf.set_index('page_id') if len(odf) else odf
     
     def iter_pages_jsonl(self, as_dict=False, desc=None,progress=True):
         from .page import PPAPage
