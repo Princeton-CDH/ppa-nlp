@@ -12,7 +12,7 @@ class PPAPage:
     
     @cached_property
     def meta(self):
-        return {
+        return pd.Series({
             **self._meta,
             'page_content_words':self.content_words,
             'page_num_tokens':len(self.tokens),
@@ -23,7 +23,7 @@ class PPAPage:
             'year':self.text.year,
             'author':self.text.author,
             'title':self.text.title
-        }
+        }, name=self.id)
     
     @cached_property
     def db_input(page):
