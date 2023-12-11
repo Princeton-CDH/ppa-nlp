@@ -124,4 +124,5 @@ warnings.filterwarnings('ignore')
 
 with all_logging_disabled():
     nltk.download('wordnet', print_error_to=StringIO())
+    nltk.download('omw-1.4', print_error_to=StringIO())
     nltk.download('stopwords', print_error_to=StringIO())
