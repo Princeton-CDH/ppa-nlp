@@ -43,7 +43,7 @@ class PPASubcorpus(PPACorpus):
                 with logwatch('inserting into db', level='TRACE'):
                     self.page_db.insert(batch).execute()
             for page in self.iter_pages_from_ppa():
-                of.write(json.dumps(page.meta)+'\n')
+                of.write(json.dumps(dict(page.meta))+'\n')
                 batch.append(page.db_input)
                 if len(batch)>=batchsize:
                     savebatch()
@@ -55,6 +55,6 @@ class PPASubcorpus(PPACorpus):
             if page.text.id in self.page_ranges:
                 pagerange = self.page_ranges[page.text.id]
                 if not pagerange or page.num in pagerange:
-                    yield page if not as_dict else page.meta
+                    yield page if not as_dict else dict(page.meta)
 
     

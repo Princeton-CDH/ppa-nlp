@@ -131,9 +131,10 @@ class PPAText:
     def pages_d(self):
         return {page.id:page for page in self.pages}
 
-    @cached_property
-    def pages_df(self):
-        return pd.DataFrame([p.meta for p in self.pages]).set_index('page_id')
+    def pages_df(self,**kwargs):
+        kwargs['work_ids']=(self.id,)
+        return self.corpus.pages_df(**kwargs)
+        # return pd.DataFrame([p.meta for p in self.pages]).set_index('page_id')
     @property
     def page(self):
         return random.choice(self.pages)
