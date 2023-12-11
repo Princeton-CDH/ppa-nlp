@@ -161,13 +161,15 @@ class TomotopyTopicModel(BaseTopicModel):
                     of.write(orjson.dumps(docd,option=orjson.OPT_INDENT_2))
                 lw.log(f'saved: {fnindex}')
 
-                params=dict(
-                    ntopic=ntopic,
-                    niter=niter,
-                    lim=lim,
-                    lemmatize=lemmatize,
+                params={
+                    **dict(
+                        ntopic=ntopic,
+                        niter=niter,
+                        lim=lim,
+                        lemmatize=lemmatize
+                    ),
                     **self.query_kwargs
-                )
+                }
                 with open(fnparams,'wb') as of:
                     of.write(orjson.dumps(params,option=orjson.OPT_INDENT_2))
         
