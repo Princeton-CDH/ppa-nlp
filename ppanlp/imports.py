@@ -38,6 +38,9 @@ from humanfriendly import format_timespan as ftspan
 from contextlib import contextmanager
 import logging
 
+
+
+
 def format_timespan(*args,replace={'0 seconds':'0.0 seconds'},**kwargs):
     res = ftspan(*args,**kwargs)
     return replace.get(res,res)
@@ -118,3 +121,7 @@ from .ner import *
 from .cli import *
 
 warnings.filterwarnings('ignore')
+
+with all_logging_disabled():
+    nltk.download('wordnet', print_error_to=StringIO())
+    nltk.download('stopwords', print_error_to=StringIO())

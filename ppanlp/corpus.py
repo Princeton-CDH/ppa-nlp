@@ -415,9 +415,7 @@ class PPACorpus:
 
     @cached_property
     def lemmatizer(self):
-        import nltk
         from nltk.stem import WordNetLemmatizer
-        nltk.download('wordnet', print_error_to=StringIO())
         return WordNetLemmatizer()
     
     @cache
@@ -492,12 +490,7 @@ class PPACorpus:
     @cached_property
     def stopwords(self):
         from nltk.corpus import stopwords as stops
-        try:
-            stopwords = set(stops.words('english'))
-        except Exception:
-            import nltk
-            nltk.download('stopwords', print_error_to=StringIO())
-            stopwords = set(stops.words('english'))
+        stopwords = set(stops.words('english'))
         return stopwords
     
     def topic_model(self, model_type=None, **query_kwargs):
