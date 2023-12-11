@@ -217,9 +217,7 @@ def identify_headers(pages, remove_headers=True, similarity_threshold=80):
         return substantial_lines
 
     for i,page in enumerate(pages):
-        # if not 'page_corrections' in page: page['page_corrections']={}
-        # if not 'headers' in page['page_corrections']: page['page_corrections']['headers']=[]
-        current_page_text = page['page_text']
+        current_page_text = page.get('page_text','')
         current_substantial_lines = get_substantial_lines(current_page_text)
 
         # determine the range of pages to compare with
@@ -232,7 +230,7 @@ def identify_headers(pages, remove_headers=True, similarity_threshold=80):
             if i == j:
                 continue
 
-            comparison_page_text = pages[j]['page_text']
+            comparison_page_text = pages[j].get('page_text','')
             comparison_substantial_lines = get_substantial_lines(comparison_page_text)
 
             for current_line in current_substantial_lines:
@@ -325,18 +323,23 @@ def cleanup_str(txt, use_nltk_tokenizer=False, remove_headers:list=None, **page_
 
     # convert corrected tokens back to text for further processing
     corrected_text = untokenize_agnostic(corrected_tokens)
-    corrected_tokens_l = [x.strip().lower() for x in corrected_tokens if x.strip() and x.strip()[0].isalpha()]
+    # corrected_tokens_l = [x.strip().lower() for x in corrected_tokens if x.strip() and x.strip()[0].isalpha()]
 
-    return {
+    definitelyd = {
         **{k:v for k,v in page_attrs.items() if k!='page_text'}, 
         'page_text':corrected_text, 
-        'page_text_orig':page_text, 
-        'page_tokens':corrected_tokens_l,
+        # 'page_text_orig':page_text
+    }
+    maybed = {
         'page_corrections_headers':list(set(specific_header_corrections)),
         'page_corrections_linebreaks':list(set(specific_linebreak_corrections)),
         'page_corrections_long_s':list(set(specific_long_s_corrections)),
         'page_corrections_ocr':list(set(specific_ocr_corrections)),
         'page_corrections_f_s':list(set(specific_f_s_hack_corrections)),
+    }
+    return {
+        **definitelyd,
+        **{k:v for k,v in maybed.items() if v}
     }
 
 
@@ -345,7 +348,7 @@ def cleanup_page(page_d, remove_headers=None):
     """
     Cleanup a page dictionary
     """
-    txt=page_d.get('page_text')
+    txt=page_d.get('page_text','')
     odx=cleanup_str(txt, remove_headers=remove_headers, **page_d)
     return odx
 

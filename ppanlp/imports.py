@@ -1,19 +1,25 @@
 # imports...
 import os,sys,warnings,random
-warnings.filterwarnings('ignore')
+from string import punctuation
 from functools import cache
 from tqdm import tqdm
 from sqlitedict import SqliteDict
 import orjson
+import pickle
 import zlib
 import pandas as pd
 from intspan import intspan
 import jsonlines
 import json
 import orjsonl
+import time
+import click
+import multiprocessing as mp
+
 
 ## ocr correction imports
 import re
+from io import StringIO
 import wordfreq
 import os
 import json
@@ -28,14 +34,28 @@ from functools import cached_property
 from collections import Counter
 import gzip
 import numpy as np
-# nltk.download('punkt')
+from humanfriendly import format_timespan as ftspan
+from contextlib import contextmanager
+import logging
+
+
+
+
+def format_timespan(*args,replace={'0 seconds':'0.0 seconds'},**kwargs):
+    res = ftspan(*args,**kwargs)
+    return replace.get(res,res)
+
+
+
 
 ## settings
 pd.options.display.max_columns=None
+pd.options.display.max_rows=10
 
 ## constants
 PATH_HERE = os.path.abspath(os.path.dirname(__file__))
 PATH_REPO = os.path.dirname(PATH_HERE)
+PATH_REPO_CODE = os.path.join(PATH_REPO,'ppanlp')
 PATH_REPO_DATA = os.path.join(PATH_REPO, 'data')
 PATH_HOME_DATA = os.path.expanduser('~/ppa_data')
 PATH_ECCO_DATA = os.path.join(PATH_HOME_DATA, 'ecco')
@@ -55,7 +75,7 @@ PATH_HATHI_PAGE_JSONL = os.path.join(PATH_REPO_DATA, 'data.hathi_pages.jsonl')
 PATH_TEXT_CORPUS_ROOT = os.path.join(PATH_HOME_DATA, 'corpus')
 PATH_TEXT_CORPUS_TEXTS = os.path.join(PATH_TEXT_CORPUS_ROOT, 'texts')
 PATH_TEXT_CORPUS_METADATA = os.path.join(PATH_TEXT_CORPUS_ROOT, 'metadata.csv')
-PATH_OCR_RULESETS = os.path.join(PATH_REPO_DATA, 'ocr_cleanup_rulesets')
+PATH_OCR_RULESETS = os.path.join(PATH_REPO_CODE, 'ocr_cleanup_rulesets')
 
 PATH_JSON_CORPUS_ROOT = os.path.join(PATH_HOME_DATA,'corpus_json1')
 PATH_JSON_CORPUS_TEXTS = os.path.join(PATH_JSON_CORPUS_ROOT, 'texts')
@@ -73,5 +93,36 @@ PAGE_KEY='page_id'
 for pathstr in [PATH_HOME_DATA, PATH_ECCO_DATA, PATH_ECCO_RAW_DATA]:
     os.makedirs(pathstr, exist_ok=True)
 
+# setup logs
+# LOG_FORMAT = '<green>{time:YYYY-MM-DD HH:mm:ss,SSS}</green> - <cyan>{function}</cyan> - <level>{message}</level> - <cyan>{file}</cyan>:<cyan>{line}</cyan>'
+# LOG_FORMAT = '<green>{time:YYYY-MM-DD HH:mm:ss,SSS}</green> <level>{message}</level>'
+LOG_FORMAT = '<level>{message}</level> @ <green>{time:YYYY-MM-DD HH:mm:ss,SSS}</green>'
 
+# 5 to include traces; 
+# 10 for debug; 20 info, 25 success; 
+# 30 warning, 40 error, 50 critical;
+LOG_LEVEL = 10
+
+from loguru import logger
+logger.remove()
+logger.add(
+    sink=sys.stderr,
+    format=LOG_FORMAT, 
+    level=LOG_LEVEL
+)
 from .utils import *
+from .cleanup import *
+from .corpus import *
+from .text import *
+from .page import *
+from .subcorpus import *
+from .topicmodel import *
+from .ner import *
+from .cli import *
+
+warnings.filterwarnings('ignore')
+
+with all_logging_disabled():
+    nltk.download('wordnet', print_error_to=StringIO())
+    nltk.download('omw-1.4', print_error_to=StringIO())
+    nltk.download('stopwords', print_error_to=StringIO())
