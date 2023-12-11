@@ -77,7 +77,7 @@ class BaseTopicModel:
         
         yield from self.corpus.iter_pages(**{
             'lim':lim,
-            'as_dict':as_dict,
+            'as_dict':False,
             **self.query_kwargs
         })
 
