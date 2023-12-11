@@ -424,7 +424,8 @@ class PPACorpus:
         try:
             return self.lemmatizer.lemmatize(word)
         except LookupError:
-            nltk.download('wordnet')
+            with all_logging_disabled():
+                nltk.download('wordnet')
             return self.lemmatize(word)
 
     def cleardb(self):
@@ -499,7 +500,8 @@ class PPACorpus:
             stopwords = set(stops.words('english'))
         except Exception:
             import nltk
-            nltk.download('stopwords')  
+            with all_logging_disabled():
+                nltk.download('stopwords')  
             stopwords = set(stops.words('english'))
         return stopwords
     
