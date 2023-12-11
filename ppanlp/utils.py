@@ -533,3 +533,8 @@ def mp_iter_finished_res(resl, errors=True):
                 yield id,res
         except ValueError:
             pass
+
+
+def printm(x):
+    from IPython.display import display,Markdown
+    display(Markdown(x))
