@@ -177,7 +177,7 @@ class TomotopyTopicModel(BaseTopicModel):
                 write_excel(self.topic_df.reset_index(), self.path_topicdf)
 
             else:
-                lw.og(f'loading: {fn}')
+                lw.log(f'loading: {fn}')
                 self.mdl = tp.LDAModel.load(fn)
                 with open(fnindex,'rb') as f: self.id2index=orjson.loads(f.read())
                 self.index2id={v:k for k,v in self.id2index.items()}
