@@ -33,3 +33,4 @@ path = "src/corppa/__init__.py"
 test = [
   "pytest",
 ]
+dev = ["pre-commit", "corppa[test]"]
