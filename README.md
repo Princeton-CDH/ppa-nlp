@@ -12,7 +12,7 @@ This repo uses [git-flow](https://github.com/nvie/gitflow) branching conventions
 
 - Install the local checked out version of this package in editable mode (`-e`), including all python dependencies  and optional dependencies for development and testing:
 ```sh
-pip install -e .[dev]
+pip install -e ".[dev]"
 ```
 
 - This repository uses [pre-commit](https://pre-commit.com/) for python code linting and consistent formatting. Run this command to initialize and install pre-commit hooks:
