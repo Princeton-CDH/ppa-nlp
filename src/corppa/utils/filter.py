@@ -1,6 +1,8 @@
 """
 Utility for filtering PPA full-text corpus to work with a subset of
 pages. Currently supports filtering by a list of PPA source ids.
+Currently, there is no way to filter to a specific excerpt when
+there are multiple.
 
 Can be run via command-line or python code. Takes jsonl file (compressed or
 not) as input, a filename for output, and a file with a list of
