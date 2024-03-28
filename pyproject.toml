@@ -37,5 +37,6 @@ path = "src/corppa/__init__.py"
 [project.optional-dependencies]
 test = [
   "pytest",
+  "pytest-cov"
 ]
 dev = ["pre-commit", "corppa[test]"]

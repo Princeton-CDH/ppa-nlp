@@ -29,7 +29,7 @@ jobs:
             pip-
 
       - name: Install dependencies
-        run: pip install ".[dev]"
+        run: pip install ".[test]"
 
       - name: Run pytest
         run: pytest --cov=./ --cov-report=xml
