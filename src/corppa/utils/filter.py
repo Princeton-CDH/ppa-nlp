@@ -2,7 +2,7 @@
 Utility for filtering PPA full-text corpus to work with a subset of
 pages. Currently supports filtering by a list of PPA source ids.
 Currently, there is no way to filter to a specific excerpt when
-there are multiple.
+there are multiple excerpts from a single source.
 
 Can be run via command-line or python code. Takes jsonl file (compressed or
 not) as input, a filename for output, and a file with a list of
@@ -18,6 +18,7 @@ with or without compression; e.g. `.jsonl`, `.jsonl.gz`, `.jsonl.bz2`, etc.
 """
 
 import argparse
+import os.path
 
 import orjsonl
 from tqdm import tqdm
@@ -53,7 +54,9 @@ def filter_pages(input_filename, source_ids, disable_progress=False):
     # based on HathiTrust page tags like UNTYPICAL_PAGE or text content
 
 
-def save_filtered_corpus(input_filename, output_filename, idfile):
+def save_filtered_corpus(
+    input_filename, output_filename, idfile, disable_progress=False
+):
     """Takes a filename for input PPA full-text corpus in a format
     orjsonl supports, filename where filtered corpus should be saved,
     and a filename with a list of source ids, one id per line.
@@ -63,7 +66,10 @@ def save_filtered_corpus(input_filename, output_filename, idfile):
         source_ids = [line.strip() for line in idfile_content]
 
     # use orjsonl to stream filtered pages to specified output file
-    orjsonl.save(output_filename, filter_pages(input_filename, source_ids))
+    orjsonl.save(
+        output_filename,
+        filter_pages(input_filename, source_ids, disable_progress=disable_progress),
+    )
 
 
 def main():
@@ -80,9 +86,24 @@ def main():
         "output", help="filename where the filtered corpus should be saved"
     )
     parser.add_argument("idfile", help="filename with list of source ids, one per line")
+    parser.add_argument(
+        "--progress",
+        help="Show progress",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
 
     args = parser.parse_args()
-    save_filtered_corpus(args.input, args.output, args.idfile)
+    # progress bar is enabled by default; disable if requested
+    disable_progress = not args.progress
+
+    output_filename = args.output
+    # if requested output filename has no extension, add jsonl
+    if os.path.splitext(output_filename)[1] == "":
+        output_filename = f"{output_filename}.jsonl"
+    save_filtered_corpus(
+        args.input, output_filename, args.idfile, disable_progress=disable_progress
+    )
 
 
 if __name__ == "__main__":

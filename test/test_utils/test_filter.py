@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from corppa.utils.filter import filter_pages, save_filtered_corpus
+from corppa.utils.filter import filter_pages, save_filtered_corpus, main
 
 # minimal/mock page data fixture for testing
 fixture_page_data = [
@@ -44,10 +44,27 @@ def test_filter_pages_progressbar(mock_orjsonl, mock_tqdm, corpus_file):
     mock_tqdm.assert_called_with(
         mock_orjsonl.stream.return_value,
         desc="Filtering",
-        bar_format="{desc}: {n:,} pages{postfix} | elapsed: {elapsed}",
+        bar_format="{desc}: checked {n:,} pages{postfix} | elapsed: {elapsed}",
         disable=False,
     )
     mock_tqdm.return_value.set_postfix_str.assert_any_call("selected 1")
+
+
+@patch("corppa.utils.filter.tqdm")
+@patch("corppa.utils.filter.orjsonl")
+def test_filter_pages_noprogressbar(mock_orjsonl, mock_tqdm, corpus_file):
+    # test disabling progressbar
+    # configure mock tqdm iterator to return fixture page data
+    mock_tqdm.return_value.__iter__.return_value = fixture_page_data
+    # use list to consume the generator
+    list(filter_pages(str(corpus_file), ["foo"], disable_progress=True))
+    mock_orjsonl.stream.assert_called_with(str(corpus_file))
+    mock_tqdm.assert_called_with(
+        mock_orjsonl.stream.return_value,
+        desc="Filtering",
+        bar_format="{desc}: checked {n:,} pages{postfix} | elapsed: {elapsed}",
+        disable=True,
+    )
 
 
 @patch("corppa.utils.filter.filter_pages")
@@ -61,8 +78,46 @@ def test_save_filtered_corpus(mock_orjsonl, mock_filter_pages, tmpdir):
 
     save_filtered_corpus(input_filename, output_filename, str(idfile))
     # filter should be called with input file and list of ids from text file
-    mock_filter_pages.assert_called_with(input_filename, ids)
+    mock_filter_pages.assert_called_with(input_filename, ids, disable_progress=False)
     # should save result to specified output filename
     mock_orjsonl.save.assert_called_with(
         output_filename, mock_filter_pages.return_value
     )
+
+
+@pytest.mark.parametrize(
+    "cli_args, call_params",
+    [
+        # all required params, default progressbar behavior
+        (
+            ["filter.py", "pages.json", "subset.jsonl", "id.txt"],
+            (("pages.json", "subset.jsonl", "id.txt"), {"disable_progress": False}),
+        ),
+        # disable progress bar
+        (
+            [
+                "filter.py",
+                "pages.json.bz2",
+                "subset.jsonl.gz",
+                "id.txt",
+                "--no-progress",
+            ],
+            (
+                ("pages.json.bz2", "subset.jsonl.gz", "id.txt"),
+                {"disable_progress": True},
+            ),
+        ),
+        # no extension on output file; should add jsonl
+        (
+            ["filter.py", "pages.json", "subset", "id.txt"],
+            (("pages.json", "subset.jsonl", "id.txt"), {"disable_progress": False}),
+        ),
+    ],
+)
+@patch("corppa.utils.filter.save_filtered_corpus")
+def test_main(mock_save_filtered_corpus, cli_args, call_params):
+    # patch in test args for argparse to parse
+    with patch("sys.argv", cli_args):
+        main()
+        args, kwargs = call_params
+        mock_save_filtered_corpus.assert_called_with(*args, **kwargs)
