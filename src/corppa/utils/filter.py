@@ -58,7 +58,7 @@ def save_filtered_corpus(input_filename, output_filename, idfile):
     """
     # read the id file and generate a list of ids
     with open(idfile) as idfile_content:
-        source_ids = [line.strip() for line in idfile_content.readlines()]
+        source_ids = [line.strip() for line in idfile_content]
 
     # use orjsonl to stream filtered pages to specified output file
     orjsonl.save(output_filename, filter_pages(input_filename, source_ids))
