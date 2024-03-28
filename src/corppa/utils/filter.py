@@ -33,7 +33,7 @@ def filter_pages(input_filename, source_ids, disable_progress=False):
     progress_pages = tqdm(
         orjsonl.stream(input_filename),
         desc="Filtering",
-        bar_format="{desc}: {n:,} pages{postfix} | elapsed: {elapsed}",
+        bar_format="{desc}: checked {n:,} pages{postfix} | elapsed: {elapsed}",
         disable=disable_progress,
     )
     for page in progress_pages:
