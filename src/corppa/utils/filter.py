@@ -83,3 +83,7 @@ def main():
 
     args = parser.parse_args()
     save_filtered_corpus(args.input, args.output, args.idfile)
+
+
+if __name__ == "__main__":
+    main()
