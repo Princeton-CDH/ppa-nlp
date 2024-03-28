@@ -71,7 +71,7 @@ def main():
     )
     parser.add_argument(
         "input",
-        help="path to PPA full-text corpus to be "
+        help="PPA full-text corpus to be "
         + "filtered; must be a JSONL file (compressed or not)",
     )
     parser.add_argument(
