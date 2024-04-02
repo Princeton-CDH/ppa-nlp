@@ -76,7 +76,7 @@ def test_save_filtered_corpus(mock_orjsonl, mock_filter_pages, tmpdir):
     input_filename = "input.jsonl"
     output_filename = "output.jsonl"
 
-    save_filtered_corpus(input_filename, output_filename, str(idfile))
+    save_filtered_corpus(input_filename, str(idfile), output_filename)
     # filter should be called with input file and list of ids from text file
     mock_filter_pages.assert_called_with(input_filename, ids, disable_progress=False)
     # should save result to specified output filename
@@ -90,27 +90,30 @@ def test_save_filtered_corpus(mock_orjsonl, mock_filter_pages, tmpdir):
     [
         # all required params, default progressbar behavior
         (
-            ["filter.py", "pages.json", "subset.jsonl", "id.txt"],
-            (("pages.json", "subset.jsonl", "id.txt"), {"disable_progress": False}),
+            ["filter.py", "pages.json", "id.txt", "subset.jsonl"],
+            (
+                ("pages.json", "id.txt", "subset.jsonl"),
+                {"disable_progress": False},
+            ),
         ),
         # disable progress bar
         (
             [
                 "filter.py",
                 "pages.json.bz2",
-                "subset.jsonl.gz",
                 "id.txt",
+                "subset.jsonl.gz",
                 "--no-progress",
             ],
             (
-                ("pages.json.bz2", "subset.jsonl.gz", "id.txt"),
+                ("pages.json.bz2", "id.txt", "subset.jsonl.gz"),
                 {"disable_progress": True},
             ),
         ),
         # no extension on output file; should add jsonl
         (
-            ["filter.py", "pages.json", "subset", "id.txt"],
-            (("pages.json", "subset.jsonl", "id.txt"), {"disable_progress": False}),
+            ["filter.py", "pages.json", "id.txt", "subset"],
+            (("pages.json", "id.txt", "subset.jsonl"), {"disable_progress": False}),
         ),
     ],
 )

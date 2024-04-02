@@ -1,38 +1,53 @@
 """
 Utility for filtering PPA full-text corpus to work with a subset of
 pages. Currently supports filtering by a list of PPA source ids.
-Currently, there is no way to filter to a specific excerpt when
-there are multiple excerpts from a single source.
 
-Can be run via command-line or python code. Takes jsonl file (compressed or
-not) as input, a filename for output, and a file with a list of
+.. Note::
+    Currently, there is no way to filter to a specific excerpt when
+    there are multiple excerpts from a single source.
+
+Filter methods can be run via command-line or python code. Takes jsonl file
+(compressed or not) as input, a filename for output, and a file with a list of
 selected source ids.
 
-To use as a command-line script:
+To use as a command-line script, pass corpus as input, desired output filename,
+and filemae with the list of source ids:
+
 ```
-corppa-filter-corpus path/to/ppa_pages.jsonl output/ppa_subset_pages.jsonl my_ids.txt
+corppa-filter-corpus path/to/ppa_pages.jsonl my_ids.txt output/ppa_subset_pages.jsonl
 ```
-Input format and output filename can use any extension supported by mod:`orjsonl`,
+
+Input format and output filename can use any extension supported by :mod:`orjsonl`,
 with or without compression; e.g. `.jsonl`, `.jsonl.gz`, `.jsonl.bz2`, etc.
 
 """
 
 import argparse
 import os.path
+from typing import Iterator
 
 import orjsonl
+from orjson import JSONDecodeError
 from tqdm import tqdm
 
 
-def filter_pages(input_filename, source_ids, disable_progress=False):
+def filter_pages(
+    input_filename: str, source_ids: list[str], disable_progress: bool = False
+) -> Iterator[dict]:
     """Takes a filename for a PPA full-text corpus in a format orjsonl supports
     and a list of source ids. Returns a generator of filtered pages from the
-    full corpus corresponding to the list of ids.
+    full corpus corresponding to the list of ids.  Displays progress
+    with :mod:`tqdm` progress bar unless disabled.
+
+    :param input_filename: str, filename for corpus input
+    :param source_ids: list of str, source ids to include in filtered pages
+    :param disable_progress: boolean, disable progress bar (optional, default: False)
+    :returns: generator of dict with page data
+    :raises: FileNotFoundError, orjson.JSONDecodeError
     """
     # convert list of source ids to set for fast hashmap lookup
     source_ids = set(source_ids)
     selected_pages = 0
-    # TODO: handle errors orjson.JSONDecodeError; FileNotFoundError
     progress_pages = tqdm(
         orjsonl.stream(input_filename),
         desc="Filtering",
@@ -55,11 +70,20 @@ def filter_pages(input_filename, source_ids, disable_progress=False):
 
 
 def save_filtered_corpus(
-    input_filename, output_filename, idfile, disable_progress=False
-):
+    input_filename: str,
+    idfile: str,
+    output_filename: str,
+    disable_progress: bool = False,
+) -> None:
     """Takes a filename for input PPA full-text corpus in a format
     orjsonl supports, filename where filtered corpus should be saved,
     and a filename with a list of source ids, one id per line.
+    Calls :meth:`filter_pages`.
+
+    :param input_filename: str, filename for corpus input
+    :param idfile: str, filename for list of source ids
+    :param output_filename: str, filename for filtered corpus output
+    :param disable_progress: boolean, disable progress bar (optional, default: False)
     """
     # read the id file and generate a list of ids
     with open(idfile) as idfile_content:
@@ -73,7 +97,9 @@ def save_filtered_corpus(
 
 
 def main():
-    # command-line access to filtering the corpus
+    """Command-line access to filtering the corpus. Available as
+    `corppa-filter-corpus` when this package is installed with pip."""
+
     parser = argparse.ArgumentParser(
         description="Filters PPA full-text corpus by list of source ids",
     )
@@ -82,10 +108,10 @@ def main():
         help="PPA full-text corpus to be "
         + "filtered; must be a JSONL file (compressed or not)",
     )
+    parser.add_argument("idfile", help="filename with list of source ids, one per line")
     parser.add_argument(
         "output", help="filename where the filtered corpus should be saved"
     )
-    parser.add_argument("idfile", help="filename with list of source ids, one per line")
     parser.add_argument(
         "--progress",
         help="Show progress",
@@ -101,9 +127,15 @@ def main():
     # if requested output filename has no extension, add jsonl
     if os.path.splitext(output_filename)[1] == "":
         output_filename = f"{output_filename}.jsonl"
-    save_filtered_corpus(
-        args.input, output_filename, args.idfile, disable_progress=disable_progress
-    )
+    try:
+        save_filtered_corpus(
+            args.input, args.idfile, output_filename, disable_progress=disable_progress
+        )
+    except (FileNotFoundError, JSONDecodeError) as err:
+        # catch known possible errors and display briefly
+        # with the type of error and the brief message
+        print(f"{err.__class__.__name__}: {err}")
+        exit(-1)
 
 
 if __name__ == "__main__":
