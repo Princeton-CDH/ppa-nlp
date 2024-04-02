@@ -123,10 +123,24 @@ def main():
     # progress bar is enabled by default; disable if requested
     disable_progress = not args.progress
 
-    output_filename = args.output
+    if not os.path.exists(args.idfile):
+        print(f"Error: idfile {args.idfile} does not exist")
+        exit(-1)
+    elif os.path.getsize(args.idfile) == 0:
+        print(f"Error: idfile {args.idfile} is empty")
+        exit(-1)
+
     # if requested output filename has no extension, add jsonl
+    output_filename = args.output
     if os.path.splitext(output_filename)[1] == "":
         output_filename = f"{output_filename}.jsonl"
+
+    if os.path.exists(output_filename):
+        print(
+            f"Error: requested output file {args.output} already exists; not overwriting"
+        )
+        exit(-1)
+
     try:
         save_filtered_corpus(
             args.input, args.idfile, output_filename, disable_progress=disable_progress

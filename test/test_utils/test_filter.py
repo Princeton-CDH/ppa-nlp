@@ -1,4 +1,5 @@
 import json
+import os
 from unittest.mock import patch
 
 import pytest
@@ -118,9 +119,50 @@ def test_save_filtered_corpus(mock_orjsonl, mock_filter_pages, tmpdir):
     ],
 )
 @patch("corppa.utils.filter.save_filtered_corpus")
-def test_main(mock_save_filtered_corpus, cli_args, call_params):
+def test_main(mock_save_filtered_corpus, cli_args, call_params, tmp_path):
+    # change to temp directory, make sure id file exists and is non-zero
+    os.chdir(tmp_path)
+    idfile = tmp_path / cli_args[2]
+    idfile.write_text("id1\nid2")
+
     # patch in test args for argparse to parse
     with patch("sys.argv", cli_args):
         main()
         args, kwargs = call_params
         mock_save_filtered_corpus.assert_called_with(*args, **kwargs)
+
+
+@patch("corppa.utils.filter.save_filtered_corpus")
+@patch("corppa.utils.filter.exit")
+def test_main_idfile_nonexistent(mock_exit, mock_save_filtered_corpus, capsys):
+    with patch("sys.argv", ["f.py", "foo.jsonl", "/not/a/real/id.txt", "out.jsonl"]):
+        main()
+    mock_exit.assert_called_with(-1)
+    captured = capsys.readouterr()
+    assert "does not exist" in captured.out
+
+
+@patch("corppa.utils.filter.save_filtered_corpus")
+@patch("corppa.utils.filter.exit")
+def test_main_idfile_empty(mock_exit, mock_save_filtered_corpus, capsys, tmp_path):
+    idfile = tmp_path / "id.txt"
+    idfile.touch()
+    with patch("sys.argv", ["f.py", "foo.jsonl", str(idfile), "out.jsonl"]):
+        main()
+    mock_exit.assert_called_with(-1)
+    captured = capsys.readouterr()
+    assert "is empty" in captured.out
+
+
+@patch("corppa.utils.filter.save_filtered_corpus")
+@patch("corppa.utils.filter.exit")
+def test_main_outfile_exists(mock_exit, mock_save_filtered_corpus, capsys, tmp_path):
+    idfile = tmp_path / "id.txt"
+    idfile.write_text("id1\nid2")
+    outfile = tmp_path / "subset.jsonl"
+    outfile.touch()
+    with patch("sys.argv", ["f.py", "foo.jsonl", str(idfile), str(outfile)]):
+        main()
+    mock_exit.assert_called_with(-1)
+    captured = capsys.readouterr()
+    assert "already exists" in captured.out
