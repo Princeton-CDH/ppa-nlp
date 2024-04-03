@@ -149,7 +149,7 @@ def test_main_idfile_empty(mock_save_filtered_corpus, capsys, tmp_path):
         with pytest.raises(SystemExit):
             main()
     captured = capsys.readouterr()
-    assert "is empty" in captured.out
+    assert "is zero size" in captured.out
 
 
 @patch("corppa.utils.filter.save_filtered_corpus")

@@ -128,7 +128,7 @@ def main():
         print(f"Error: idfile {args.idfile} does not exist")
         sys.exit(-1)
     elif os.path.getsize(args.idfile) == 0:
-        print(f"Error: idfile {args.idfile} is empty")
+        print(f"Error: idfile {args.idfile} is zero size")
         sys.exit(-1)
 
     # if requested output filename has no extension, add jsonl
