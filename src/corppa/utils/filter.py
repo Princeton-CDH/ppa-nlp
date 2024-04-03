@@ -11,7 +11,7 @@ Filter methods can be run via command-line or python code. Takes jsonl file
 selected source ids.
 
 To use as a command-line script, pass corpus as input, desired output filename,
-and filemae with the list of source ids:
+and filename with the list of source ids:
 
 ```
 corppa-filter-corpus path/to/ppa_pages.jsonl my_ids.txt output/ppa_subset_pages.jsonl
@@ -125,10 +125,10 @@ def main():
 
     if not os.path.exists(args.idfile):
         print(f"Error: idfile {args.idfile} does not exist")
-        exit(-1)
+        sys.exit(-1)
     elif os.path.getsize(args.idfile) == 0:
         print(f"Error: idfile {args.idfile} is empty")
-        exit(-1)
+        sys.exit(-1)
 
     # if requested output filename has no extension, add jsonl
     output_filename = args.output
@@ -139,7 +139,7 @@ def main():
         print(
             f"Error: requested output file {args.output} already exists; not overwriting"
         )
-        exit(-1)
+        sys.exit(-1)
 
     try:
         save_filtered_corpus(
@@ -149,7 +149,7 @@ def main():
         # catch known possible errors and display briefly
         # with the type of error and the brief message
         print(f"{err.__class__.__name__}: {err}")
-        exit(-1)
+        sys.exit(-1)
 
 
 if __name__ == "__main__":
