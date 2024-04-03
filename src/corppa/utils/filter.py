@@ -25,6 +25,7 @@ with or without compression; e.g. `.jsonl`, `.jsonl.gz`, `.jsonl.bz2`, etc.
 import argparse
 import os.path
 from typing import Iterator
+import sys
 
 import orjsonl
 from orjson import JSONDecodeError

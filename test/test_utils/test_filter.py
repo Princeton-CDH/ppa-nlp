@@ -133,36 +133,33 @@ def test_main(mock_save_filtered_corpus, cli_args, call_params, tmp_path):
 
 
 @patch("corppa.utils.filter.save_filtered_corpus")
-@patch("corppa.utils.filter.exit")
-def test_main_idfile_nonexistent(mock_exit, mock_save_filtered_corpus, capsys):
+def test_main_idfile_nonexistent(mock_save_filtered_corpus, capsys):
     with patch("sys.argv", ["f.py", "foo.jsonl", "/not/a/real/id.txt", "out.jsonl"]):
-        main()
-    mock_exit.assert_called_with(-1)
+        with pytest.raises(SystemExit):
+            main()
     captured = capsys.readouterr()
     assert "does not exist" in captured.out
 
 
 @patch("corppa.utils.filter.save_filtered_corpus")
-@patch("corppa.utils.filter.exit")
-def test_main_idfile_empty(mock_exit, mock_save_filtered_corpus, capsys, tmp_path):
+def test_main_idfile_empty(mock_save_filtered_corpus, capsys, tmp_path):
     idfile = tmp_path / "id.txt"
     idfile.touch()
     with patch("sys.argv", ["f.py", "foo.jsonl", str(idfile), "out.jsonl"]):
-        main()
-    mock_exit.assert_called_with(-1)
+        with pytest.raises(SystemExit):
+            main()
     captured = capsys.readouterr()
     assert "is empty" in captured.out
 
 
 @patch("corppa.utils.filter.save_filtered_corpus")
-@patch("corppa.utils.filter.exit")
-def test_main_outfile_exists(mock_exit, mock_save_filtered_corpus, capsys, tmp_path):
+def test_main_outfile_exists(mock_save_filtered_corpus, capsys, tmp_path):
     idfile = tmp_path / "id.txt"
     idfile.write_text("id1\nid2")
     outfile = tmp_path / "subset.jsonl"
     outfile.touch()
     with patch("sys.argv", ["f.py", "foo.jsonl", str(idfile), str(outfile)]):
-        main()
-    mock_exit.assert_called_with(-1)
+        with pytest.raises(SystemExit):
+            main()
     captured = capsys.readouterr()
     assert "already exists" in captured.out
