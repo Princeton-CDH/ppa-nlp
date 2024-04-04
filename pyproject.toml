@@ -23,8 +23,13 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
+	"orjsonl",
+	"tqdm"
 ]
 dynamic = ["version"]
+
+[project.scripts]
+corppa-filter-corpus = "corppa.utils.filter:main"
 
 [tool.hatch.version]
 path = "src/corppa/__init__.py"
@@ -32,5 +37,6 @@ path = "src/corppa/__init__.py"
 [project.optional-dependencies]
 test = [
   "pytest",
+  "pytest-cov"
 ]
 dev = ["pre-commit", "corppa[test]"]
