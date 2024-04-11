@@ -1,0 +1,13 @@
+embeddings {
+  # Path to image embeddings (tsv)
+  tensor_path: "../path/to/image_embeddings.tsv"
+  # Path to image-level metadata (tsv)
+  metadata_path: "../path/to/image_meta.tsv"
+
+  sprite {
+    # Path to sprite image
+    image_path: "../path/to/sprite.png"
+    # Dimensions of each image tile witin the sprite image
+    single_image_dim: [75, 75]
+  }
+}

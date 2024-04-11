@@ -1,21 +1,68 @@
-# `corppa`  PPA full-text corpus utilities
+# PPA - image projection
 
-This repository provides code and other resources associated with the [Princeton Prosody Archive](https://prosody.princeton.edu/) (PPA), with a  particular focus on working with the PPA full-text corpus.
+This branch contains experimental code for visualizing extracted feature
+image embeddings of the pages within the PPA collection.
 
-## Development instructions
 
-This repo uses [git-flow](https://github.com/nvie/gitflow) branching conventions; **main** contains the most recent release, and work in progress will be on the **develop** branch. Pull requests for new features should be made against develop.
+## Development Instructions
+These instructions are for general development, as well as the construction
+of all input needed for viewing the image projection.
 
-### Developer setup and installation
-
-- **Recommended:** create a python virtual environment with your tool of choice (virtualenv, conda, etc); use python 3.10 or higher
-
-- Install the local checked out version of this package in editable mode (`-e`), including all python dependencies  and optional dependencies for development and testing:
-```sh
-pip install -e ".[dev]"
+### Setup conda environment
+Create and activate the conda environment specified in `ppa_images.yml`.
+```
+conda env create -f ppa_images.yml
+conda activate ppa-images
 ```
 
-- This repository uses [pre-commit](https://pre-commit.com/) for python code linting and consistent formatting. Run this command to initialize and install pre-commit hooks:
-```sh
-pre-commit install
+### Gather required data
+The accompanying code relies on two key pieces of data.
+1. Source-level Metadata: A tsv containing source-level metadata. Note that
+there isn't currently support for excerpt-specific metadata from the same work.
+2. Page Images: The page images. Currently, assumes that pages are organized
+into directories by their source.
+
+### Scripts
+Here is the list of the existing python scripts located within
+`src/image-projection`.
+
+- `create_image_meta.py`: Create a page-level metadata file (tsv) from an
+  initial source-level metadata file (tsv).
+- `extract_features.py`: Extract the (full) feature embeddings for each page
+   image. Optionally, save the preprocessed image form for each page.
+- `reduce_features.py`: Reduce the dimensionality of the input embeddings (npy) and
+  save the result in a format better suited for tensorboard (tsv).
+- `create_sprite.py`: Create a sprite image (png) for the tensorboard.
+
+
+## Viewing Image Projections
+This must be run within the `tensorboard` directory.
 ```
+cp template
+```
+
+### Setup and activate conda environment
+Create and activate the conda environment specified in `tensorboard.yml`.
+```
+conda env create -f tensorboard.yml
+conda activate tensorboard
+```
+
+Additionally make sure to move to the `tensorboard` directory
+```
+cd tensorboard
+```
+
+### Create and modify the projector config file
+Copy the template config file `template.pbtxt` as `projector_config.pbtxt`.
+Then update the various fields within the config.
+
+### Running tensorboard
+To launch tensorboard, run the following command.
+```
+tensorboard --logdir .
+```
+
+Then go visit [localhost:6006](https://localhost:6006) to launch tensorboard.
+Then select the "Projector" tab from the drop-down menu on the top right. Note,
+it should be the last item in the drop-down menu.
