@@ -9,4 +9,5 @@ dependencies:
   - pillow
   - transformers
   - scikit-learn
+  - umap-learn
   - htrc::htrc-feature-reader
