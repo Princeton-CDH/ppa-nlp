@@ -19,3 +19,22 @@ pip install -e ".[dev]"
 ```sh
 pre-commit install
 ```
+
+## Experimental Scripts
+Experimenatal scripts are located within the `scripts` directory.
+
+### Setup and installation
+Scripts may require their own specific environment.
+These are specified as conda `.yml` files and are located within `scripts/envs`.
+
+For example, to create and activate the `ppa-ocr` environment, run the following commands:
+```
+conda env create -f scripts/envs/ppa-ocr.yml
+conda activate ppa-ocr
+```
+
+### Script descriptions
+- `get_character_stats.py`: Compiles character-level statistics for a PPA text (sub)corpus
+  - Environment: `ppa-ocr`
+- `evaluate_ocr.py`: Compiles OCR quality statistics for a PPA text (sub)corpus
+  - Environment: `ppa-ocr`

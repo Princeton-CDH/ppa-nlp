@@ -1,0 +1,11 @@
+name: ppa-ocr
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>= 3.10
+  - ftfy
+  - spacy
+  - lingua-language-detector
+  - rapidfuzz
+
