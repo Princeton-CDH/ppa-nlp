@@ -34,8 +34,14 @@ conda activate ppa-ocr
 ```
 
 ### Script descriptions
-- `get_character_stats.py`: Compiles character-level statistics for a PPA text (sub)corpus
-  - Environment: `ppa-ocr`
-  - Download Spacy English language model: `python -m spacy download en_core_web_lg`
-- `evaluate_ocr.py`: Compiles OCR quality statistics for a PPA text (sub)corpus
-  - Environment: `ppa-ocr`
+
+#### get_character_stats.py
+This script compiles character-level statistics for a PPA text (sub)corpus.
+It requires the `ppa-ocr` environment.
+This script has an additional dependency, it requires the [en_core_web_lg](https://spacy.io/models/en#en_core_web_lg) spacy language model, which can be downloaded by running the following command:
+```
+python -m spacy download en_core_web_lg
+````
+#### evaluate_ocr.py
+This script compiles OCR quality statistics for a PPA text (sub)corpus
+It requiers the `ppa-ocr` environment.
