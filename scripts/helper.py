@@ -1,18 +1,26 @@
 """
-Library of auxiliary methods for scripts
-
-env: ppa-ocr
+Library of general-purpose auxiliary methods for stand-alone scripts
 """
 
 import os
 import sys
 import gzip
 import bz2
-import ftfy
 
 
 _char_conversion_map = {"ſ": "s"}
 _char_translation_table = str.maketrans(_char_conversion_map)
+
+
+def clean_htid(htid):
+    """
+    Returns the "clean" version of a HathiTrust volume id
+    """
+    lib_id, vol_id = htid.split(".", 1)
+    vol_id = vol_id.replace(":", "+")
+    vol_id = vol_id.replace("/", "=")
+    vol_id = vol_id.replace(".", ",")
+    return f"{lib_id}.{vol_id}"
 
 
 def open_jsonl(filename, mode="rt"):
@@ -31,18 +39,3 @@ def open_jsonl(filename, mode="rt"):
     else:
         print(f"ERROR: Unsupported extension '{file_ext}'")
         sys.exit(1)
-
-
-def clean_chars(text):
-    """
-    Initial cleaning of text focused on characters.
-    """
-    result = ftfy.fix_text(
-        text,
-        unescape_html=False,
-        fix_encoding=False,
-        normalization="NFC",
-        explain=False,
-    )
-    result = result.translate(_char_translation_table)
-    return result

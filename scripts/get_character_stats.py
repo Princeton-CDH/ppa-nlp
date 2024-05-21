@@ -12,7 +12,8 @@ import unicodedata
 
 from collections import Counter
 from tqdm import tqdm
-from helper import open_jsonl, clean_chars
+from helper import open_jsonl
+from ocr_helper import clean_chars
 
 
 __cc_names = {
