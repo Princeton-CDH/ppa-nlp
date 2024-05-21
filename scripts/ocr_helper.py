@@ -1,6 +1,5 @@
 """
 Library of OCR-related auxiliary methods for stand-alone scripts
-
 """
 
 import ftfy
