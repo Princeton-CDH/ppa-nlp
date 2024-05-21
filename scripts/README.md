@@ -25,7 +25,7 @@ python -m spacy download en_core_web_lg
 This script compiles OCR quality statistics for a PPA text (sub)corpus.
 It requires the `ppa-ocr` environment.
 
-## Helper modules
+## Helper Modules
 These modules contain auxiliary methods that stand-alone scripts may use.
 Check dependencies before using modules elsewhere.
 
