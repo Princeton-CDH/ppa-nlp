@@ -5,7 +5,8 @@ import csv
 import json
 # import syntok.segmenter as segmenter
 
-from helper import open_jsonl, clean_chars
+from helper import open_jsonl
+from ocr_helper import clean_chars
 from tqdm import tqdm
 from lingua import LanguageDetectorBuilder
 
