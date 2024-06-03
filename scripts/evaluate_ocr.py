@@ -2,13 +2,14 @@ import os
 import sys
 import spacy
 import csv
-import json
-# import syntok.segmenter as segmenter
 
-from helper import open_jsonl
-from ocr_helper import clean_chars
+# import syntok.segmenter as segmenter
+import orjsonl
+
+from xopen import xopen
 from tqdm import tqdm
 from lingua import LanguageDetectorBuilder
+from ocr_helper import clean_chars
 
 
 class OCREvaluator:
@@ -128,31 +129,29 @@ if __name__ == "__main__":
     ]
 
     # Get line count for tqdm
-    n_lines = sum([1 for line in open_jsonl(in_jsonl, mode="rb")])
+    n_lines = sum(1 for line in xopen(in_jsonl, mode="rb"))
     with open(out_tsv, mode="w", newline="") as file_handler:
         writer = csv.DictWriter(
             file_handler, dialect="excel-tab", fieldnames=field_names
         )
         writer.writeheader()
 
-        with open_jsonl(in_jsonl) as reader:
-            for line in tqdm(reader, total=n_lines):
-                page = json.loads(line)
-                text = clean_chars(page.get("text", ""))
-                score = evaluator.dict_lookup(text)
-                entry = {
-                    "page_id": page["id"],
-                    "work_id": page["work_id"],
-                    "dict_lookup": f"{score:.4g}" if score > 0 else "N/A",
-                }
+        for page in tqdm(orjsonl.stream(in_jsonl), total=n_lines):
+            text = clean_chars(page.get("text", ""))
+            score = evaluator.dict_lookup(text)
+            entry = {
+                "page_id": page["id"],
+                "work_id": page["work_id"],
+                "dict_lookup": f"{score:.4g}" if score > 0 else "N/A",
+            }
 
-                # English Language Detection
-                conf = evaluator.detect_language(text, "english")
-                entry["is_eng"] = f"{conf:.4g}"
+            # English Language Detection
+            conf = evaluator.detect_language(text, "english")
+            entry["is_eng"] = f"{conf:.4g}"
 
-                # Top-3 Language Detection
-                for i, tup in enumerate(evaluator.detect_top_languages(text)):
-                    lang, conf = tup
-                    entry[f"lang {i+1}"] = lang
-                    entry[f"conf {i+1}"] = f"{conf:.4g}"
-                writer.writerow(entry)
+            # Top-3 Language Detection
+            for i, tup in enumerate(evaluator.detect_top_languages(text)):
+                lang, conf = tup
+                entry[f"lang {i+1}"] = lang
+                entry[f"conf {i+1}"] = f"{conf:.4g}"
+            writer.writerow(entry)
