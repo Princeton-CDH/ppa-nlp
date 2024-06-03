@@ -2,8 +2,6 @@ import os
 import sys
 import spacy
 import csv
-
-# import syntok.segmenter as segmenter
 import orjsonl
 
 from xopen import xopen
@@ -58,7 +56,6 @@ class OCREvaluator:
                 den += 1
         return num / den if den > 0 else -1
 
-    # TODO: Consider combinining the two language detection methods for speed
     def detect_language(self, text, lang):
         """
         Return the confidence value for detecting a language (lang) for the
@@ -71,29 +68,14 @@ class OCREvaluator:
             text, self.languages[lang.upper()]
         )
 
-    def detect_top_languages(self, text, top_k=3):
+    def detect_languages(self, text):
         """
-        Determine the top k (default 3) most detected languages for the input text.
-        Return: list of tuples (language: str, confidence value: float)
+        Perform language detection on the provided input text.
+        Returns: dict mapping languages to confidence values (str -> float)
+        Note: The values of the counter sum to 1
         """
-        if top_k > len(self.languages):
-            print(f"ERROR: 'top-k' is too high (>{len(self.languages)})")
-            raise ValueError
         cvals = self.lang_detector.compute_language_confidence_values(text)
-        result = [("N/A", 0)] * top_k
-        for i in range(top_k):
-            cv = cvals[i]
-
-            # If confidence value equals 0.0, there's nothing further to update
-            if cv.value == 0.0:
-                return result
-
-            result[i] = (cv.language.name, cv.value)
-
-            # Check for unambiguous detection
-            if i == 0 and cv.value == 1.0:
-                return result
-        return result
+        return {cv.language.name: cv.value for cv in cvals}
 
 
 if __name__ == "__main__":
@@ -145,13 +127,30 @@ if __name__ == "__main__":
                 "dict_lookup": f"{score:.4g}" if score > 0 else "N/A",
             }
 
-            # English Language Detection
-            conf = evaluator.detect_language(text, "english")
-            entry["is_eng"] = f"{conf:.4g}"
+            # Language detection
+            ld_results = evaluator.detect_languages(text)
 
-            # Top-3 Language Detection
-            for i, tup in enumerate(evaluator.detect_top_languages(text)):
-                lang, conf = tup
-                entry[f"lang {i+1}"] = lang
-                entry[f"conf {i+1}"] = f"{conf:.4g}"
+            ## English Language Detection
+            eng_conf = ld_results["ENGLISH"]
+            entry["is_eng"] = f"{eng_conf:.4g}"
+
+            ## Top-3 Detect Languages
+            top_langs = sorted(ld_results, key=ld_results.get, reverse=True)
+            single_lang_detected = False
+            for i in range(3):
+                lang = top_langs[i]
+                conf = ld_results[lang]
+
+                # Write entries
+                if conf == 0.0 or i > 0 and single_lang_detected:
+                    # Handling when only a single (or no) language is detected
+                    entry[f"lang {i+1}"] = "N/A"
+                    entry[f"conf {i+1}"] = 0
+                else:
+                    entry[f"lang {i+1}"] = lang
+                    entry[f"conf {i+1}"] = f"{conf:.4g}"
+
+                # Logic to handle single-language detection
+                if i == 0 and conf == 1.0:
+                    single_lang_detected = True
             writer.writerow(entry)
