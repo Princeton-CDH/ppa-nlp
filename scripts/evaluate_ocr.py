@@ -135,13 +135,13 @@ if __name__ == "__main__":
             entry["is_eng"] = f"{eng_conf:.4g}"
 
             ## Top-3 Detect Languages
-            top_langs = sorted(ld_results, key=ld_results.get, reverse=True)
+            k = 3
+            topk_langs = sorted(ld_results, key=ld_results.get, reverse=True)[:k]
             single_lang_detected = False
-            for i in range(3):
-                lang = top_langs[i]
+            for i, lang in enumerate(topk_langs):
                 conf = ld_results[lang]
 
-                # Write entries
+                # Write entries with 1-based numbering
                 if conf == 0.0 or i > 0 and single_lang_detected:
                     # Handling when only a single (or no) language is detected
                     entry[f"lang {i+1}"] = "N/A"
