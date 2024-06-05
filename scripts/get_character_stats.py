@@ -6,13 +6,13 @@ env: ppa-ocr
 
 import sys
 import os.path
-import json
 import csv
 import unicodedata
 
+import orjsonl
 from collections import Counter
+from xopen import xopen
 from tqdm import tqdm
-from helper import open_jsonl
 from ocr_helper import clean_chars
 
 
@@ -68,26 +68,24 @@ if __name__ == "__main__":
     work_chars = {"raw": {}, "clean": {}}
 
     # Get line count for tqdm
-    n_lines = sum([1 for line in open_jsonl(in_jsonl, mode="rb")])
-    with open_jsonl(in_jsonl) as reader:
-        for line in tqdm(reader, total=n_lines):
-            page = json.loads(line)
-            if "text" in page:
-                work = page["work_id"]
-                # Get raw & clean page-level counts
-                counts = {
-                    "raw": Counter(page["text"]),
-                    "clean": Counter(clean_chars(page["text"])),
-                }
-                for tmt in ["raw", "clean"]:
-                    # Update count data
-                    count_data[tmt]["f"] += counts[tmt]
-                    count_data[tmt]["df"].update(counts[tmt].keys())
-                    # Update work-level character sets
-                    if work in work_chars[tmt]:
-                        work_chars[tmt][work] |= counts[tmt].keys()
-                    else:
-                        work_chars[tmt][work] = set(counts[tmt].keys())
+    n_lines = sum(1 for line in xopen(in_jsonl, mode="rb"))
+    for page in tqdm(orjsonl.stream(in_jsonl), total=n_lines):
+        if "text" in page:
+            work = page["work_id"]
+            # Get raw & clean page-level counts
+            counts = {
+                "raw": Counter(page["text"]),
+                "clean": Counter(clean_chars(page["text"])),
+            }
+            for tmt in ["raw", "clean"]:
+                # Update count data
+                count_data[tmt]["f"] += counts[tmt]
+                count_data[tmt]["df"].update(counts[tmt].keys())
+                # Update work-level character sets
+                if work in work_chars[tmt]:
+                    work_chars[tmt][work] |= counts[tmt].keys()
+                else:
+                    work_chars[tmt][work] = set(counts[tmt].keys())
 
     # Build work-level freqs (wf)
     for tmt in ["raw", "clean"]:
