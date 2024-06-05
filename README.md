@@ -19,3 +19,7 @@ pip install -e ".[dev]"
 ```sh
 pre-commit install
 ```
+
+## Experimental Scripts
+Experimental scripts associated with `corppa` are located within the `scripts` directory.
+See this directory's README for more detail.
