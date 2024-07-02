@@ -12,6 +12,13 @@ def get_stub_dir(source, vol_id):
     """
     Returns the stub directory for the specified volume (vol_id) and
     source type (source)
+
+    For Gale, every third number (excluding the leading 0) of the volume
+    identifier is used.
+       Ex. CB0127060085 --> 100
+
+    For HathiTrust, the library portion of the volume identifier is used.
+        Ex. mdp.39015003633594 --> mdp
     """
     if source == "Gale":
         return vol_id[::3][1:]
