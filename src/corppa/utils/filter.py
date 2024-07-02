@@ -34,7 +34,7 @@ from tqdm import tqdm
 
 def filter_pages(
     input_filename: str,
-    source_ids: list[str] | None,
+    source_ids: list[str] | None = None,
     disable_progress: bool = False,
     include_filter: dict | None = None,
     exclude_filter: dict | None = None,
@@ -144,6 +144,8 @@ class MergeKeyValuePairs(argparse.Action):
     """
 
     # adapted from https://stackoverflow.com/a/77148515/9706217
+
+    # NOTE: we may want a multidict here to support multiple values for the same key
 
     def __call__(self, parser, args, values, option_string=None):
         previous = getattr(args, self.dest, None) or dict()

@@ -33,6 +33,47 @@ def test_filter_pages(corpus_file):
     assert set([r["work_id"].split("-")[0] for r in results]) == set(source_ids)
 
 
+def test_filter_include(corpus_file):
+    results = list(
+        filter_pages(
+            str(corpus_file),
+            disable_progress=True,
+            include_filter={"work_id": "bar-p1", "label": "23"},
+        )
+    )
+    assert len(results) == 4
+    assert set([r["work_id"].split("-")[0] for r in results]) == {"bar", "baz"}
+    assert set([r["label"] for r in results]) == {"1", "2", "3", "23"}
+
+
+def test_filter_exclude(corpus_file):
+    results = list(
+        filter_pages(
+            str(corpus_file),
+            disable_progress=True,
+            include_filter={"work_id": "bar-p1", "label": "23"},
+        )
+    )
+    assert len(results) == 4
+    assert set([r["work_id"].split("-")[0] for r in results]) == {"bar", "baz"}
+    assert set([r["label"] for r in results]) == {"1", "2", "3", "23"}
+
+
+def test_filter_id_and_include(corpus_file):
+    # source id and include filter used in combination
+    results = list(
+        filter_pages(
+            str(corpus_file),
+            source_ids=["bar"],
+            disable_progress=True,
+            include_filter={"label": "2", "work_id": "baz"},
+        )
+    )
+    assert len(results) == 1
+    assert results[0]["work_id"] == "bar-p1"
+    assert results[0]["label"] == "2"
+
+
 @patch("corppa.utils.filter.tqdm")
 @patch("corppa.utils.filter.orjsonl")
 def test_filter_pages_progressbar(mock_orjsonl, mock_tqdm, corpus_file):
