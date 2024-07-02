@@ -2,6 +2,10 @@ import prodigy
 from prodigy.components.loaders import JSONL
 import spacy
 
+from pathlib import Path
+
+CURRENT_DIR = Path(__file__).parent.absolute()
+
 
 @prodigy.recipe("annotate_poetry_with_image")
 def annotate_poetry_with_image(dataset: str, source: str, labels: str):
@@ -58,6 +62,7 @@ def annotate_poetry_with_image(dataset: str, source: str, labels: str):
                 },
                 "hide_true_newline_tokens": False,
             },
+            "global_css_dir": CURRENT_DIR,
         },
     }
 

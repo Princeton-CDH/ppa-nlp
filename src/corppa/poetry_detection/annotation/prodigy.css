@@ -1,0 +1,34 @@
+.prodigy-container {
+	display: grid;
+	grid-template-areas: 
+        "header right"
+        "left right";
+	grid-template-rows: 120px auto;  /* 120px = enough for title header on left */
+	grid-template-columns: 1fr 1fr; /* share space evenly */ 
+    column-gap: 5px;
+    align-items: start;
+    max-width: none;
+}
+
+/* labels for first block (image) are in their own div */
+.prodigy-title-wrapper {
+  grid-area: header;
+}
+/* image annotation */
+.prodigy-content {
+	grid-area: left;
+    align-self: start;	
+    position: sticky; /* keep sticky when text scrolls */
+    top: 0;
+}
+
+/* second block (span annotation) doesn't have an obvious class to key on */
+.prodigy-container > div:last-child {
+	grid-area: right;
+}
+
+/* default token spacing is huge; override while still leaving enough space to select */
+span[class^=_Token] {
+	height: 30px !important;
+}
+
