@@ -1,10 +1,12 @@
 .prodigy-container {
 	display: grid;
-	grid-template-areas: 
+	grid-template-areas:
+        "meta meta"
         "header right"
         "left right";
-	grid-template-rows: 120px auto;  /* 120px = enough for title header on left */
-	grid-template-columns: 1fr 1fr; /* share space evenly */ 
+	 /* 30px for metadata, 120px for title header on left */
+	grid-template-rows: 30px 120px auto;
+	grid-template-columns: 1fr 1fr; /* share space evenly */
     column-gap: 5px;
     align-items: start;
     max-width: none;
@@ -14,21 +16,27 @@
 .prodigy-title-wrapper {
   grid-area: header;
 }
+/* display metadata at top */
+.prodigy-meta {
+	grid-area: meta;
+	margin: 0 auto;
+}
+
 /* image annotation */
 .prodigy-content {
 	grid-area: left;
-    align-self: start;	
+    align-self: start;
     position: sticky; /* keep sticky when text scrolls */
     top: 0;
 }
 
 /* second block (span annotation) doesn't have an obvious class to key on */
-.prodigy-container > div:last-child {
+.prodigy-container > div[class^=_a]:not(.prodigy-meta):not(.prodigy-content) {
 	grid-area: right;
 }
 
 /* default token spacing is huge; override while still leaving enough space to select */
-/* FIXME: this breaks highlighting; need to figure out how to adjust both or set in Prodigy config */
+/* FIXME: this breaks highlighting; need to figure out how to adjust both or set in Prodigy config
 span[class^=_Token] {
 	height: 30px !important;
 } */
