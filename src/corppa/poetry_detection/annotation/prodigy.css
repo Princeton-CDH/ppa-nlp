@@ -28,7 +28,8 @@
 }
 
 /* default token spacing is huge; override while still leaving enough space to select */
+/* FIXME: this breaks highlighting; need to figure out how to adjust both or set in Prodigy config */
 span[class^=_Token] {
 	height: 30px !important;
-}
+} */
 
