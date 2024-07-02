@@ -14,7 +14,7 @@ To use as a command-line script, pass corpus as input, desired output filename,
 and filename with the list of source ids:
 
 ```
-corppa-filter-corpus path/to/ppa_pages.jsonl my_ids.txt output/ppa_subset_pages.jsonl
+corppa-filter-corpus path/to/ppa_pages.jsonl output/ppa_subset_pages.jsonl --idfile my_ids.txt
 ```
 
 Input format and output filename can use any extension supported by :mod:`orjsonl`,
@@ -33,7 +33,11 @@ from tqdm import tqdm
 
 
 def filter_pages(
-    input_filename: str, source_ids: list[str], disable_progress: bool = False
+    input_filename: str,
+    source_ids: list[str] | None,
+    disable_progress: bool = False,
+    include_filter: dict | None = None,
+    exclude_filter: dict | None = None,
 ) -> Iterator[dict]:
     """Takes a filename for a PPA full-text corpus in a format orjsonl supports
     and a list of source ids. Returns a generator of filtered pages from the
@@ -47,7 +51,8 @@ def filter_pages(
     :raises: FileNotFoundError, orjson.JSONDecodeError
     """
     # convert list of source ids to set for fast hashmap lookup
-    source_ids = set(source_ids)
+    if source_ids is not None:
+        source_ids = set(source_ids)
     selected_pages = 0
     progress_pages = tqdm(
         orjsonl.stream(input_filename),
@@ -59,22 +64,45 @@ def filter_pages(
         # page data does not include source id, but does include work id
         # which is either source id (for full works) or
         # source id plus first page number (for articles/excerpts)
-        if page["work_id"].split("-p")[0] in source_ids:
+
+        # list of flags for inclusion/exclusion, for combining filters
+        include_page = []
+
+        # if list of source ids is specified, set true or false for inclusion
+        if source_ids:
+            include_page.append(page["work_id"].split("-p")[0] in source_ids)
+
+        # if key-value pairs for inclusion are specified, filter
+        if include_filter:
+            # should multiple inclusions be AND or OR? assuming OR for now
+            # if any include filter applies, this page should be included
+            include_page.append(
+                any(page[key] == val for key, val in include_filter.items())
+            )
+
+        # if key-value pairs for exclusion are specified, filter
+        if exclude_filter:
+            # if any exclusion filter applies, this page should not be included
+            include_page.append(
+                not any(page[key] == val for key, val in exclude_filter.items())
+            )
+
+        # make sure we have at least one True flag and all flags are True
+        if include_page and all(include_page):
             # keep track of how many have been selected for reporting in
             # progress bar
             selected_pages += 1
             progress_pages.set_postfix_str(f"selected {selected_pages:,}")
             yield page
 
-    # NOTE: other filters could be implemented here later, e.g.
-    # based on HathiTrust page tags like UNTYPICAL_PAGE or text content
-
 
 def save_filtered_corpus(
     input_filename: str,
-    idfile: str,
     output_filename: str,
+    idfile: str | None = None,
     disable_progress: bool = False,
+    include_filter: dict | None = None,
+    exclude_filter: dict | None = None,
 ) -> None:
     """Takes a filename for input PPA full-text corpus in a format
     orjsonl supports, filename where filtered corpus should be saved,
@@ -82,19 +110,51 @@ def save_filtered_corpus(
     Calls :meth:`filter_pages`.
 
     :param input_filename: str, filename for corpus input
-    :param idfile: str, filename for list of source ids
     :param output_filename: str, filename for filtered corpus output
+    :param idfile: str, filename for list of source ids (optional)
     :param disable_progress: boolean, disable progress bar (optional, default: False)
     """
-    # read the id file and generate a list of ids
-    with open(idfile) as idfile_content:
-        source_ids = [line.strip() for line in idfile_content]
+
+    source_ids = None
+    # if an id file is specifed, read and generate a list of ids to include
+    if idfile:
+        with open(idfile) as idfile_content:
+            source_ids = [line.strip() for line in idfile_content]
 
     # use orjsonl to stream filtered pages to specified output file
     orjsonl.save(
         output_filename,
-        filter_pages(input_filename, source_ids, disable_progress=disable_progress),
+        filter_pages(
+            input_filename,
+            source_ids,
+            disable_progress=disable_progress,
+            include_filter=include_filter,
+            exclude_filter=exclude_filter,
+        ),
     )
+    # zero size file means no pages were selected; cleanup
+    # (report?)
+    # if os.path.getsize(output_filename) == 0:
+    #     os.remove(output_filename)
+
+
+class MergeKeyValuePairs(argparse.Action):
+    """
+    custom argparse action to split a KEY=VALUE argument and append the pairs to a dictionary.
+    """
+
+    # adapted from https://stackoverflow.com/a/77148515/9706217
+
+    def __call__(self, parser, args, values, option_string=None):
+        previous = getattr(args, self.dest, None) or dict()
+        try:
+            added = dict(map(lambda x: x.split("="), values))
+        except ValueError:
+            raise argparse.ArgumentError(
+                self, f'Could not parse argument "{values}" as k1=v1 k2=v2 ... format'
+            )
+        merged = {**previous, **added}
+        setattr(args, self.dest, merged)
 
 
 def main():
@@ -109,9 +169,30 @@ def main():
         help="PPA full-text corpus to be "
         + "filtered; must be a JSONL file (compressed or not)",
     )
-    parser.add_argument("idfile", help="filename with list of source ids, one per line")
     parser.add_argument(
         "output", help="filename where the filtered corpus should be saved"
+    )
+    parser.add_argument(
+        "-i",
+        "--idfile",
+        help="filename with list of source ids, one per line",
+        required=False,
+    )
+    parser.add_argument(
+        "--include",
+        nargs="*",
+        action=MergeKeyValuePairs,
+        metavar="KEY=VALUE",
+        help='Include pages by attribute: add key-value pairs as key=value or key="another value". '
+        + "(no spaces around =, use quotes for values with spaces)",
+    )
+    parser.add_argument(
+        "--exclude",
+        nargs="*",
+        action=MergeKeyValuePairs,
+        metavar="KEY=VALUE",
+        help='Exclude pages by attribute: add key-value pairs as key=value or key="another value". '
+        + "(no spaces around =, use quotes for values with spaces)",
     )
     parser.add_argument(
         "--progress",
@@ -124,12 +205,16 @@ def main():
     # progress bar is enabled by default; disable if requested
     disable_progress = not args.progress
 
-    if not os.path.exists(args.idfile):
-        print(f"Error: idfile {args.idfile} does not exist")
-        sys.exit(-1)
-    elif os.path.getsize(args.idfile) == 0:
-        print(f"Error: idfile {args.idfile} is zero size")
-        sys.exit(-1)
+    # TODO: check that one of idfile, include, or exclude is specified
+    # TODO: use file or pathlib types?
+
+    if args.idfile:
+        if not os.path.exists(args.idfile):
+            print(f"Error: idfile {args.idfile} does not exist")
+            sys.exit(-1)
+        elif os.path.getsize(args.idfile) == 0:
+            print(f"Error: idfile {args.idfile} is zero size")
+            sys.exit(-1)
 
     # if requested output filename has no extension, add jsonl
     output_filename = args.output
@@ -144,7 +229,12 @@ def main():
 
     try:
         save_filtered_corpus(
-            args.input, args.idfile, output_filename, disable_progress=disable_progress
+            args.input,
+            output_filename,
+            idfile=args.idfile,
+            disable_progress=disable_progress,
+            include_filter=args.include,
+            exclude_filter=args.exclude,
         )
     except (FileNotFoundError, JSONDecodeError) as err:
         # catch known possible errors and display briefly
