@@ -77,9 +77,15 @@ def test_save_filtered_corpus(mock_orjsonl, mock_filter_pages, tmpdir):
     input_filename = "input.jsonl"
     output_filename = "output.jsonl"
 
-    save_filtered_corpus(input_filename, str(idfile), output_filename)
+    save_filtered_corpus(input_filename, output_filename, str(idfile))
     # filter should be called with input file and list of ids from text file
-    mock_filter_pages.assert_called_with(input_filename, ids, disable_progress=False)
+    mock_filter_pages.assert_called_with(
+        input_filename,
+        ids,
+        disable_progress=False,
+        include_filter=None,
+        exclude_filter=None,
+    )
     # should save result to specified output filename
     mock_orjsonl.save.assert_called_with(
         output_filename, mock_filter_pages.return_value
@@ -91,10 +97,15 @@ def test_save_filtered_corpus(mock_orjsonl, mock_filter_pages, tmpdir):
     [
         # all required params, default progressbar behavior
         (
-            ["filter.py", "pages.json", "id.txt", "subset.jsonl"],
+            ["filter.py", "pages.json", "subset.jsonl", "--idfile", "id.txt"],
             (
-                ("pages.json", "id.txt", "subset.jsonl"),
-                {"disable_progress": False},
+                ("pages.json", "subset.jsonl"),
+                {
+                    "idfile": "id.txt",
+                    "disable_progress": False,
+                    "include_filter": None,
+                    "exclude_filter": None,
+                },
             ),
         ),
         # disable progress bar
@@ -102,19 +113,33 @@ def test_save_filtered_corpus(mock_orjsonl, mock_filter_pages, tmpdir):
             [
                 "filter.py",
                 "pages.json.bz2",
-                "id.txt",
                 "subset.jsonl.gz",
+                "--idfile",
+                "id.txt",
                 "--no-progress",
             ],
             (
-                ("pages.json.bz2", "id.txt", "subset.jsonl.gz"),
-                {"disable_progress": True},
+                ("pages.json.bz2", "subset.jsonl.gz"),
+                {
+                    "idfile": "id.txt",
+                    "disable_progress": True,
+                    "include_filter": None,
+                    "exclude_filter": None,
+                },
             ),
         ),
-        # no extension on output file; should add jsonl
+        # # no extension on output file; should add jsonl
         (
-            ["filter.py", "pages.json", "id.txt", "subset"],
-            (("pages.json", "id.txt", "subset.jsonl"), {"disable_progress": False}),
+            ["filter.py", "pages.json", "subset", "--idfile", "id.txt"],
+            (
+                ("pages.json", "subset.jsonl"),
+                {
+                    "idfile": "id.txt",
+                    "disable_progress": False,
+                    "include_filter": None,
+                    "exclude_filter": None,
+                },
+            ),
         ),
     ],
 )
@@ -122,7 +147,8 @@ def test_save_filtered_corpus(mock_orjsonl, mock_filter_pages, tmpdir):
 def test_main(mock_save_filtered_corpus, cli_args, call_params, tmp_path):
     # change to temp directory, make sure id file exists and is non-zero
     os.chdir(tmp_path)
-    idfile = tmp_path / cli_args[2]
+    # create an idfile at expected path; arg comes immediately after --idfile
+    idfile = tmp_path / cli_args[cli_args.index("--idfile") + 1]
     idfile.write_text("id1\nid2")
 
     # patch in test args for argparse to parse
@@ -134,7 +160,9 @@ def test_main(mock_save_filtered_corpus, cli_args, call_params, tmp_path):
 
 @patch("corppa.utils.filter.save_filtered_corpus")
 def test_main_idfile_nonexistent(mock_save_filtered_corpus, capsys):
-    with patch("sys.argv", ["f.py", "foo.jsonl", "/not/a/real/id.txt", "out.jsonl"]):
+    with patch(
+        "sys.argv", ["f.py", "foo.jsonl", "out.jsonl", "--idfile", "/not/a/real/id.txt"]
+    ):
         with pytest.raises(SystemExit):
             main()
     captured = capsys.readouterr()
@@ -145,7 +173,7 @@ def test_main_idfile_nonexistent(mock_save_filtered_corpus, capsys):
 def test_main_idfile_empty(mock_save_filtered_corpus, capsys, tmp_path):
     idfile = tmp_path / "id.txt"
     idfile.touch()
-    with patch("sys.argv", ["f.py", "foo.jsonl", str(idfile), "out.jsonl"]):
+    with patch("sys.argv", ["f.py", "foo.jsonl", "out.jsonl", "--idfile", str(idfile)]):
         with pytest.raises(SystemExit):
             main()
     captured = capsys.readouterr()
@@ -158,7 +186,9 @@ def test_main_outfile_exists(mock_save_filtered_corpus, capsys, tmp_path):
     idfile.write_text("id1\nid2")
     outfile = tmp_path / "subset.jsonl"
     outfile.touch()
-    with patch("sys.argv", ["f.py", "foo.jsonl", str(idfile), str(outfile)]):
+    with patch(
+        "sys.argv", ["f.py", "foo.jsonl", str(outfile), "--idfile", str(idfile)]
+    ):
         with pytest.raises(SystemExit):
             main()
     captured = capsys.readouterr()
