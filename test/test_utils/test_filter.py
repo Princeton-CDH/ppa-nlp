@@ -128,7 +128,7 @@ def test_save_filtered_corpus(mock_orjsonl, mock_filter_pages, tmpdir):
                 },
             ),
         ),
-        # # no extension on output file; should add jsonl
+        # no extension on output file; should add jsonl
         (
             ["filter.py", "pages.json", "subset", "--idfile", "id.txt"],
             (
@@ -141,6 +141,32 @@ def test_save_filtered_corpus(mock_orjsonl, mock_filter_pages, tmpdir):
                 },
             ),
         ),
+        # include filter
+        (
+            ["filter.py", "pages.json", "subset", "--include", "tag=one", "page=2"],
+            (
+                ("pages.json", "subset.jsonl"),
+                {
+                    "idfile": None,
+                    "disable_progress": False,
+                    "include_filter": {"tag": "one", "page": "2"},
+                    "exclude_filter": None,
+                },
+            ),
+        ),
+        # exclude filter
+        (
+            ["filter.py", "pages.json", "subset", "--exclude", "contains_poetry=Yes"],
+            (
+                ("pages.json", "subset.jsonl"),
+                {
+                    "idfile": None,
+                    "disable_progress": False,
+                    "include_filter": None,
+                    "exclude_filter": {"contains_poetry": "Yes"},
+                },
+            ),
+        ),
     ],
 )
 @patch("corppa.utils.filter.save_filtered_corpus")
@@ -148,8 +174,9 @@ def test_main(mock_save_filtered_corpus, cli_args, call_params, tmp_path):
     # change to temp directory, make sure id file exists and is non-zero
     os.chdir(tmp_path)
     # create an idfile at expected path; arg comes immediately after --idfile
-    idfile = tmp_path / cli_args[cli_args.index("--idfile") + 1]
-    idfile.write_text("id1\nid2")
+    if "--idfile" in cli_args:
+        idfile = tmp_path / cli_args[cli_args.index("--idfile") + 1]
+        idfile.write_text("id1\nid2")
 
     # patch in test args for argparse to parse
     with patch("sys.argv", cli_args):
