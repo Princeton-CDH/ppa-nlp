@@ -1,4 +1,4 @@
-import prodigy
+from prodigy.core import Arg, recipe
 from prodigy.components.loaders import JSONL
 import spacy
 
@@ -7,10 +7,22 @@ from pathlib import Path
 CURRENT_DIR = Path(__file__).parent.absolute()
 
 
-@prodigy.recipe("annotate_poetry_with_image")
-def annotate_poetry_with_image(dataset: str, source: str, labels: str):
+@recipe(
+    "annotate_poetry_with_image",
+    dataset=Arg(help="path to input dataset"),
+    labels=Arg("--label", "-l", help="Comma-separated label(s)"),
+    image_prefix=Arg("--image-prefix", "-i", help="Base url for page image URLs for "),
+)
+def annotate_poetry_with_image(
+    dataset: str, source: str, labels: str, image_prefix: str = None
+):
     nlp = spacy.blank("en")  # use blank spaCy model for tokenization
     stream = JSONL(source)  # load jsonlines into stream
+
+    # ensure image prefix does not have a trailing slash
+    if image_prefix is None:
+        image_prefix = ""
+    image_prefix = image_prefix.rstrip("/")
 
     def tokenize_stream(stream):
         for task in stream:
@@ -27,7 +39,7 @@ def annotate_poetry_with_image(dataset: str, source: str, labels: str):
                 ]
             # point to image server
             if "image_path" in task:
-                task["image"] = f"http://localhost:8000/{task['image_path']}"
+                task["image"] = f"{image_prefix}/{task['image_path']}"
             yield task
 
     tokenized_stream = tokenize_stream(stream)
@@ -57,8 +69,9 @@ def annotate_poetry_with_image(dataset: str, source: str, labels: str):
             "honor_token_whitespace": True,  # reflect whitespace accurately (e.g. in case of leading/trailing spaces)
             "custom_theme": {
                 "labels": {
-                    "POETRY": "#FFA500",  # label color for POETRY
-                    # "PROSODY": "#00BFFF"  # label color for PROSODY
+                    # trying to use PPA colors but doesn't quite work; can we customize highlight color?
+                    "POETRY": "#f05b69",  # label color for POETRY
+                    # "PROSODY": "#4661ac"  # label color for PROSODY
                 },
                 "hide_true_newline_tokens": False,
             },
