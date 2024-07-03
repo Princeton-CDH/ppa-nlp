@@ -29,9 +29,10 @@ PRODIGY_COMMON_CONFIG = {
     "honor_token_whitespace": True,  # reflect whitespace accurately (e.g. in case of leading/trailing spaces)
     "custom_theme": {
         "labels": {
-            # trying to use PPA colors but may need to adjust; can we customize highlight color?
-            "POETRY": "#f05b69",  # label color for POETRY
-            # "PROSODY": "#4661ac"  # label color for PROSODY
+            # trying to use options from PPA webapp color scheme,
+            # but may not be so great in Prodigy UI.
+            # azure #0788fc seafoam blue #57c4c4 wisteria #9c93c0 pig pink #ed949c
+            "POETRY": "#57c4c4",  # label color for POETRY
         },
         "hide_true_newline_tokens": False,
     },
@@ -94,7 +95,6 @@ def annotate_text_and_image(
     blocks = [
         {
             "view_id": "image_manual",
-            "image_manual_spans_key": "image_spans",
             "labels": label_list,
         },
         {"view_id": "spans_manual", "labels": label_list},
@@ -107,6 +107,8 @@ def annotate_text_and_image(
             "blocks": blocks,
             "labels": label_list,
             "image_manual_spans_key": "image_spans",
+            # limit image selection to rectangle only, no polygon or freehand
+            "image_manual_modes": ["rect"],
         }
     )
 
