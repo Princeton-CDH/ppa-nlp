@@ -102,7 +102,13 @@ def annotate_text_and_image(
 
     # copy the common config options and add blocks and labels
     config = PRODIGY_COMMON_CONFIG.copy()
-    config.update({"blocks": blocks, "labels": label_list})
+    config.update(
+        {
+            "blocks": blocks,
+            "labels": label_list,
+            "image_manual_spans_key": "image_spans",
+        }
+    )
 
     return {
         "dataset": dataset,
