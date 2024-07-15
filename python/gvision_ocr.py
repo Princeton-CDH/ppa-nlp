@@ -59,6 +59,7 @@ def get_image_ocr():
                 )
             )
 
+        # stop processing after first image until we make decisions & refine
         break
 
 
