@@ -51,7 +51,7 @@ def test_filter_exclude(corpus_file):
         filter_pages(
             str(corpus_file),
             disable_progress=True,
-            include_filter={"work_id": "bar-p1", "label": "23"},
+            exclude_filter={"work_id": "bar-p1", "label": "23"},
         )
     )
     assert len(results) == 4
