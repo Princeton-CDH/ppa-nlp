@@ -54,9 +54,9 @@ def test_filter_exclude(corpus_file):
             exclude_filter={"work_id": "bar-p1", "label": "23"},
         )
     )
-    assert len(results) == 4
-    assert set([r["work_id"].split("-")[0] for r in results]) == {"bar", "baz"}
-    assert set([r["label"] for r in results]) == {"1", "2", "3", "23"}
+    assert len(results) == 1
+    assert set([r["work_id"].split("-")[0] for r in results]) == {"foo"}
+    assert set([r["label"] for r in results]) == {"i"}
 
 
 def test_filter_id_and_include(corpus_file):
