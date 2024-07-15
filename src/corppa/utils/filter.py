@@ -47,9 +47,9 @@ def filter_pages(
     :param input_filename: str, filename for corpus input
     :param source_ids: list of str, source ids to include in filtered pages
     :param include_filter: dict of key-value pairs for pages to include in
-        the filtered page set; equality check against page data attributes
+        the filtered page set; equality check against page data attributes (optional)
     :param exclude_filter: dict of key-value pairs for pages to exclude from
-        the filtered page set; equality check against page data attributes
+        the filtered page set; equality check against page data attributes (optional)
     :param disable_progress: boolean, disable progress bar (optional, default: False)
     :returns: generator of dict with page data
     :raises: FileNotFoundError, orjson.JSONDecodeError
@@ -78,7 +78,7 @@ def filter_pages(
 
         # if key-value pairs for inclusion are specified, filter
         if include_filter:
-            # should multiple inclusions be AND or OR? assuming OR for now
+            # multiple include filters use OR logic:
             # if any include filter applies, this page should be included
             include_page.append(
                 any(page[key] == val for key, val in include_filter.items())
@@ -116,6 +116,10 @@ def save_filtered_corpus(
     :param input_filename: str, filename for corpus input
     :param output_filename: str, filename for filtered corpus output
     :param idfile: str, filename for list of source ids (optional)
+    :param include_filter: dict of key-value pairs for pages to include in
+        the filtered page set; equality check against page data attributes (optional)
+    :param exclude_filter: dict of key-value pairs for pages to exclude from
+        the filtered page set; equality check against page data attributes (optional)
     :param disable_progress: boolean, disable progress bar (optional, default: False)
     """
 
@@ -186,7 +190,10 @@ def main():
     )
     filter_args = parser.add_argument_group(
         "filters",
-        "Options for filtering pages. At least one filter is required",
+        "Options for filtering pages. MUST include at least one. "
+        + "When multiple filters are specified, they are all combined (AND). "
+        + "If multiple include/exclude filters are specified, a page is "
+        + "included/excluded if ANY key=value pairs match.",
     )
     filter_args.add_argument(
         "-i",
