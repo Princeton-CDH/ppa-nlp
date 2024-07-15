@@ -74,6 +74,11 @@ def test_filter_id_and_include(corpus_file):
     assert results[0]["label"] == "2"
 
 
+def test_filter_required_args(corpus_file):
+    with pytest.raises(ValueError, match="At least one filter must be specified"):
+        list(filter_pages(str(corpus_file)))
+
+
 @patch("corppa.utils.filter.tqdm")
 @patch("corppa.utils.filter.orjsonl")
 def test_filter_pages_progressbar(mock_orjsonl, mock_tqdm, corpus_file):
@@ -131,6 +136,11 @@ def test_save_filtered_corpus(mock_orjsonl, mock_filter_pages, tmpdir):
     mock_orjsonl.save.assert_called_with(
         output_filename, mock_filter_pages.return_value
     )
+
+
+def test_save_filtered_corpus_required_args():
+    with pytest.raises(ValueError, match="At least one filter must be specified"):
+        save_filtered_corpus("pages.jsonl", "filtered.jsonl")
 
 
 @pytest.mark.parametrize(
@@ -226,11 +236,14 @@ def test_main(mock_save_filtered_corpus, cli_args, call_params, tmp_path):
         mock_save_filtered_corpus.assert_called_with(*args, **kwargs)
 
 
-def test_main_argparse_error():
+def test_main_argparse_error(capsys):
     # call with required parameters but no filters
     with patch("sys.argv", ["filter.py", "pages.json", "subset"]):
+        # at least one filter is required
         with pytest.raises(SystemExit):
             main()
+        captured = capsys.readouterr()
+        assert "At least one filter option must be specified" in captured.err
 
 
 @patch("corppa.utils.filter.save_filtered_corpus")

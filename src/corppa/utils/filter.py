@@ -40,9 +40,10 @@ def filter_pages(
     exclude_filter: dict | None = None,
 ) -> Iterator[dict]:
     """Takes a filename for a PPA full-text corpus in a format orjsonl supports
-    and a list of source ids. Returns a generator of filtered pages from the
-    full corpus corresponding to the list of ids.  Displays progress
-    with :mod:`tqdm` progress bar unless disabled.
+    and one or more options for filtering that corpus. Returns a generator of
+    filtered pages from the full corpus corresponding to the list of ids.
+    At least one filtering option must be specified.
+    Displays progress with :mod:`tqdm` progress bar unless disabled.
 
     :param input_filename: str, filename for corpus input
     :param source_ids: list of str, source ids to include in filtered pages
@@ -55,6 +56,11 @@ def filter_pages(
     :raises: FileNotFoundError, orjson.JSONDecodeError
     """
     # convert list of source ids to set for fast hashmap lookup
+    if not any([source_ids, include_filter, exclude_filter]):
+        raise ValueError(
+            "At least one filter must be specified (source_ids, include_filter, exclude_filter)"
+        )
+
     if source_ids is not None:
         source_ids = set(source_ids)
     selected_pages = 0
@@ -111,6 +117,7 @@ def save_filtered_corpus(
     """Takes a filename for input PPA full-text corpus in a format
     orjsonl supports, filename where filtered corpus should be saved,
     and a filename with a list of source ids, one id per line.
+    At least one filter must be specified.
     Calls :meth:`filter_pages`.
 
     :param input_filename: str, filename for corpus input
@@ -124,6 +131,13 @@ def save_filtered_corpus(
     """
 
     source_ids = None
+
+    # at least one filter is required
+    if not any([idfile, include_filter, exclude_filter]):
+        raise ValueError(
+            "At least one filter must be specified (idfile, include_filter, exclude_filter)"
+        )
+
     # if an id file is specifed, read and generate a list of ids to include
     if idfile:
         with open(idfile) as idfile_content:
