@@ -179,12 +179,22 @@ def main():
         "output", help="filename where the filtered corpus should be saved"
     )
     parser.add_argument(
+        "--progress",
+        help="Show progress",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    filter_args = parser.add_argument_group(
+        "filters",
+        "Options for filtering pages. At least one filter is required",
+    )
+    filter_args.add_argument(
         "-i",
         "--idfile",
         help="filename with list of source ids, one per line",
         required=False,
     )
-    parser.add_argument(
+    filter_args.add_argument(
         "--include",
         nargs="*",
         action=MergeKeyValuePairs,
@@ -192,7 +202,7 @@ def main():
         help='Include pages by attribute: add key-value pairs as key=value or key="another value". '
         + "(no spaces around =, use quotes for values with spaces)",
     )
-    parser.add_argument(
+    filter_args.add_argument(
         "--exclude",
         nargs="*",
         action=MergeKeyValuePairs,
@@ -200,18 +210,16 @@ def main():
         help='Exclude pages by attribute: add key-value pairs as key=value or key="another value". '
         + "(no spaces around =, use quotes for values with spaces)",
     )
-    parser.add_argument(
-        "--progress",
-        help="Show progress",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-    )
 
     args = parser.parse_args()
     # progress bar is enabled by default; disable if requested
     disable_progress = not args.progress
 
-    # TODO: check that one of idfile, include, or exclude is specified
+    # at least one filter must be specified
+    # check that one of idfile, include, or exclude is specified
+    if not any([args.idfile, args.include, args.exclude]):
+        parser.error("At least one filter option must be specified")
+
     # TODO: use file or pathlib types?
 
     if args.idfile:

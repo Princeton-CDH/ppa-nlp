@@ -226,6 +226,13 @@ def test_main(mock_save_filtered_corpus, cli_args, call_params, tmp_path):
         mock_save_filtered_corpus.assert_called_with(*args, **kwargs)
 
 
+def test_main_argparse_error():
+    # call with required parameters but no filters
+    with patch("sys.argv", ["filter.py", "pages.json", "subset"]):
+        with pytest.raises(SystemExit):
+            main()
+
+
 @patch("corppa.utils.filter.save_filtered_corpus")
 def test_main_idfile_nonexistent(mock_save_filtered_corpus, capsys):
     with patch(
