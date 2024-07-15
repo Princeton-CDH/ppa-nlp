@@ -46,6 +46,10 @@ def filter_pages(
 
     :param input_filename: str, filename for corpus input
     :param source_ids: list of str, source ids to include in filtered pages
+    :param include_filter: dict of key-value pairs for pages to include in
+        the filtered page set; equality check against page data attributes
+    :param exclude_filter: dict of key-value pairs for pages to exclude from
+        the filtered page set; equality check against page data attributes
     :param disable_progress: boolean, disable progress bar (optional, default: False)
     :returns: generator of dict with page data
     :raises: FileNotFoundError, orjson.JSONDecodeError
