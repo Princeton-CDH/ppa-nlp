@@ -122,7 +122,7 @@ def test_save_filtered_corpus(mock_orjsonl, mock_filter_pages, tmpdir):
     # filter should be called with input file and list of ids from text file
     mock_filter_pages.assert_called_with(
         input_filename,
-        ids,
+        source_ids=ids,
         disable_progress=False,
         include_filter=None,
         exclude_filter=None,
