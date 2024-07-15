@@ -126,7 +126,7 @@ def save_filtered_corpus(
         output_filename,
         filter_pages(
             input_filename,
-            source_ids,
+            source_ids=source_ids,
             disable_progress=disable_progress,
             include_filter=include_filter,
             exclude_filter=exclude_filter,
