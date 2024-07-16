@@ -55,7 +55,7 @@ def filter_pages(
     :returns: generator of dict with page data
     :raises: FileNotFoundError, orjson.JSONDecodeError
     """
-    # convert list of source ids to set for fast hashmap lookup
+    # at least one filter is required
     if not any([source_ids, include_filter, exclude_filter]):
         raise ValueError(
             "At least one filter must be specified (source_ids, include_filter, exclude_filter)"
