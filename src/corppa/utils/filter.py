@@ -46,7 +46,7 @@ def filter_pages(
     Displays progress with :mod:`tqdm` progress bar unless disabled.
 
     :param input_filename: str, filename for corpus input
-    :param source_ids: list of str, source ids to include in filtered pages
+    :param source_ids: list of str, source ids to include in filtered pages (optional)
     :param include_filter: dict of key-value pairs for pages to include in
         the filtered page set; equality check against page data attributes (optional)
     :param exclude_filter: dict of key-value pairs for pages to exclude from
@@ -60,7 +60,7 @@ def filter_pages(
         raise ValueError(
             "At least one filter must be specified (source_ids, include_filter, exclude_filter)"
         )
-
+    # convert list of source ids to set for fast hashmap lookup
     if source_ids is not None:
         source_ids = set(source_ids)
     selected_pages = 0
@@ -148,10 +148,6 @@ def save_filtered_corpus(
             exclude_filter=exclude_filter,
         ),
     )
-    # zero size file means no pages were selected; cleanup
-    # (report?)
-    # if os.path.getsize(output_filename) == 0:
-    #     os.remove(output_filename)
 
 
 class MergeKeyValuePairs(argparse.Action):
@@ -161,7 +157,8 @@ class MergeKeyValuePairs(argparse.Action):
 
     # adapted from https://stackoverflow.com/a/77148515/9706217
 
-    # NOTE: we may want a multidict here to support multiple values for the same key
+    # NOTE: in future, we may want an option to store multiple values for
+    # the same key, perhaps using multidict or dict of key -> set(possible values)
 
     def __call__(self, parser, args, values, option_string=None):
         previous = getattr(args, self.dest, None) or dict()
@@ -193,6 +190,12 @@ def main():
     parser.add_argument(
         "--progress",
         help="Show progress",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument(
+        "--cleanup",
+        help="Remove empty output file if no pages are relected",
         action=argparse.BooleanOptionalAction,
         default=True,
     )
@@ -270,6 +273,18 @@ def main():
         # with the type of error and the brief message
         print(f"{err.__class__.__name__}: {err}")
         sys.exit(-1)
+
+    # check if output file exists but is zero size (i.e., no pages selected)
+    if os.path.exists(output_filename) and os.path.getsize(output_filename) == 0:
+        # if claenup is disabled, remove and report
+        if args.cleanup:
+            os.remove(output_filename)
+            print(
+                f"No pages were selected, removing empty output file {output_filename}"
+            )
+        # otherwise just report
+        else:
+            print(f"No pages were selected, output file {output_filename} is empty")
 
 
 if __name__ == "__main__":

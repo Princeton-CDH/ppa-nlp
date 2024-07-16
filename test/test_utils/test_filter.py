@@ -247,6 +247,43 @@ def test_main_argparse_error(capsys):
 
 
 @patch("corppa.utils.filter.save_filtered_corpus")
+def test_main_cleanup(mock_save_filtered_corpus, tmp_path, capsys):
+    input_file = tmp_path / "pages.json"
+    idfile = tmp_path / "id.txt"
+    output_file = tmp_path / "subset.jsonl"
+
+    cli_args = ["filter.py", str(input_file), str(output_file), "--idfile", str(idfile)]
+
+    # change to temp directory, make sure id file exists and is non-zero
+    os.chdir(tmp_path)
+    # create an idfile at expected path
+    idfile = tmp_path / cli_args[cli_args.index("--idfile") + 1]
+    idfile.write_text("id1\nid2")
+
+    # as a mock side effect, create a zero size file to be cleaned up
+    def create_output(*args, **kwargs):
+        output_file.write_text("")
+
+    mock_save_filtered_corpus.side_effect = create_output
+
+    # patch in arguments for arg.parse to load
+    with patch("sys.argv", cli_args):
+        main()
+        assert not output_file.exists()
+        captured = capsys.readouterr()
+        assert "No pages were selected, removing empty output file" in captured.out
+
+    # with cleanup disabled, zero-size file should not be removed
+    cli_args.append("--no-cleanup")
+    with patch("sys.argv", cli_args):
+        main()
+        assert output_file.exists()
+        captured = capsys.readouterr()
+        # should still report on the empty file
+        assert "No pages were selected" in captured.out
+
+
+@patch("corppa.utils.filter.save_filtered_corpus")
 def test_main_idfile_nonexistent(mock_save_filtered_corpus, capsys):
     with patch(
         "sys.argv", ["f.py", "foo.jsonl", "out.jsonl", "--idfile", "/not/a/real/id.txt"]
