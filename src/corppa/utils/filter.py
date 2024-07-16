@@ -75,35 +75,29 @@ def filter_pages(
         # which is either source id (for full works) or
         # source id plus first page number (for articles/excerpts)
 
-        # list of flags for inclusion/exclusion, for combining filters
-        include_page = []
-
-        # if list of source ids is specified, set true or false for inclusion
+        # if list of source ids is specified and id does not match, skip
         if source_ids:
-            include_page.append(page["work_id"].split("-p")[0] in source_ids)
+            if page["work_id"].split("-p")[0] not in source_ids:
+                continue
 
         # if key-value pairs for inclusion are specified, filter
         if include_filter:
             # multiple include filters use OR logic:
-            # if any include filter applies, this page should be included
-            include_page.append(
-                any(page[key] == val for key, val in include_filter.items())
-            )
+            # if include filter does not apply, skip this page
+            if not any(page[key] == val for key, val in include_filter.items()):
+                continue
 
         # if key-value pairs for exclusion are specified, filter
         if exclude_filter:
-            # if any exclusion filter applies, this page should not be included
-            include_page.append(
-                not any(page[key] == val for key, val in exclude_filter.items())
-            )
+            # if exclude filter matches, skip this page
+            if any(page[key] == val for key, val in exclude_filter.items()):
+                continue
 
-        # make sure we have at least one True flag and all flags are True
-        if include_page and all(include_page):
-            # keep track of how many have been selected for reporting in
-            # progress bar
-            selected_pages += 1
-            progress_pages.set_postfix_str(f"selected {selected_pages:,}")
-            yield page
+        # keep track of how many have been selected for reporting in
+        # progress bar
+        selected_pages += 1
+        progress_pages.set_postfix_str(f"selected {selected_pages:,}")
+        yield page
 
 
 def save_filtered_corpus(
