@@ -1,3 +1,16 @@
+"""
+This script is used to prep ppa corpus page jsonl data for use in
+Prodigy annotation. It adds work metadata (title, author, year) in the
+location that Prodigy requires for display, and allows adjusting image
+paths for display from the Prodigy interface.  It assumes the input page
+corpus has already been annotated with image paths with an `image_path`
+attribute, and adds an optional url prefix and converts any .TIF extensions
+to .jpg.
+"""
+
+# NOTE: this script is provisional and should likely be refactored
+# or combined with other page data handling scripts
+
 import argparse
 import csv
 import pathlib
@@ -31,16 +44,14 @@ def combine_data(
     # wrap in tqdm for optional progress bar
     progress_pages = tqdm(
         orjsonl.stream(jsonl_path),
-        # desc="Updating",
-        # bar_format="{desc}: checked {n:,} pages{postfix} | elapsed: {elapsed}",
         disable=disable_progress,
     )
 
     for page in progress_pages:
         # add metadata dictionary for Prodigy
         page["meta"] = metadata[page["work_id"]]
-        # TODO: how do we want to handle image path ?
         # replace .tif with .jpg in image_path (quick fix for the image path issue)
+        # NOTE: this is provisional and should be revisited
         page["image_path"] = page["image_path"].replace(".TIF", ".jpg")
 
         yield page
@@ -48,7 +59,8 @@ def combine_data(
 
 def main():
     """Add work metadata to pages for display in Prodigy"""
-    # Available as `corppa-??` when this package is installed with pip."""
+    # NOTE: if we decide to keep this script, we should add a named entry
+    # for it in the pyproject so it can be run when the package is installed
 
     parser = argparse.ArgumentParser(
         description="Add PPA work-level metadata to pages for context in Prodigy",

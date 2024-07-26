@@ -4,12 +4,13 @@ created with page-level text annotation in mind, and support annotating
 text with a reference image displayed beside the text (`annotate_page_text`),
 or annotating both text and image side by side (`annotate_text_and_image`).
 
-Referenced images must be served out independently for display.
+Referenced images must be served out independently for display; the image url
+prefix for images should be specified when initializing the recipe.
 
 Example use:
 ```
 prodigy annotate_page_text poetry_spans poetry_pages.jsonl --label POETRY,PROSODY -F ../corppa/poetry_detection/annotation/recipe.py --image-prefix http://localhost:8000/
-prodigy annotate_text_and_image poetry_text_image poetry_pages.jsonl --label POETRY,PROSODY -F ../corppa/poetry_detection/annotation/recipe.py --image-prefix http://localhost:8000/
+prodigy annotate_text_and_image poetry_text_image poetry_pages.jsonl --label POETRY -F ../corppa/poetry_detection/annotation/recipe.py --image-prefix http://localhost:8000/
 """
 
 from prodigy.core import Arg, recipe
@@ -42,14 +43,14 @@ PRODIGY_COMMON_CONFIG = {
 
 def tokenize_stream(stream, image_prefix=None):
     """Takes a stream of Prodigy tasks and tokenizes text for span annotation,
-    and optionally adds an image prefix to any image path present.
+    and optionally adds an image prefix URL to any image paths present.
     Stream is expected to contain `text` and may contain image_path` and a `meta`
     dictionary. Returns a generator of the stream.
     """
 
     nlp = spacy.blank("en")  # use blank spaCy model for tokenization
 
-    # ensure image prefix does not have a trailing slash
+    # ensure image prefix URL does not have a trailing slash
     if image_prefix is None:
         image_prefix = ""
     image_prefix = image_prefix.rstrip("/")
@@ -66,7 +67,7 @@ def tokenize_stream(stream, image_prefix=None):
                 }
                 for i, token in enumerate(doc)
             ]
-        # add image prefix for serving out images
+        # add image prefix URL for serving out images
         if "image_path" in task:
             task["image"] = f"{image_prefix}/{task['image_path']}"
         yield task
@@ -158,15 +159,3 @@ def annotate_page_text(
         "view_id": "blocks",
         "config": config,
     }
-
-
-# save this script as annotate_poetry_with_image.py
-# then in the prodigy env, on the command line, run:
-
-# export PRODIGY_ALLOWED_SESSIONS=annotator1,annotator2,annotator3
-
-## prodigy annotate_poetry_with_image poetry_and_image_dataset data/testset-db.jsonl "POETRY,PROSODY" -F annotate_poetry_with_image.py
-
-# then, to get the annotations out, run:
-
-## prodigy db-out poetry_and_image_dataset > annotations.jsonl
