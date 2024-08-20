@@ -34,3 +34,6 @@ This module contains general-purpose auxiliary methods.
 
 #### `ocr_helper.py`
 This module contains OCR-related auxiliary methods.
+
+### `transform-images.sh`
+This bash script will copy and transform images from a PPA (sub)corpus (jsonl).
