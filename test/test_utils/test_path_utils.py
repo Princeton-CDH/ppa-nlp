@@ -1,7 +1,8 @@
 import pathlib
 import pytest
 
-from corppa.utils.path_utils import encode_htid, decode_htid, get_stub_dir
+from corppa.utils.path_utils import encode_htid, decode_htid
+from corppa.utils.path_utils import get_stub_dir, get_vol_dir
 
 
 def test_encode_htid():
@@ -17,7 +18,7 @@ def test_decode_htid():
     assert decode_htid("dul1.ark+=13960=t5w67998k") == "dul1.ark:/13960/t5w67998k"
     assert decode_htid("miun.aaa3406,0001,001") == "miun.aaa3406.0001.001"
     with pytest.raises(ValueError, match="Invalid encoded htid 'xxx0000'"):
-        encode_htid("xxx0000")
+        decode_htid("xxx0000")
 
 
 def test_encode_decode_htid():
@@ -42,16 +43,16 @@ def test_get_stub_dir():
 
 def test_get_vol_dir():
     # Gale
-    assert get_stub_dir("Gale", "CB0127060085") == pathlib.Path(
+    assert get_vol_dir("Gale", "CB0127060085") == pathlib.Path(
         "Gale", "100", "CB0127060085"
     )
     # HathiTrust
-    assert get_stub_dir("HathiTrust", "mdp.39015003633594") == pathlib.Path(
+    assert get_vol_dir("HathiTrust", "mdp.39015003633594") == pathlib.Path(
         "HathiTrust", "mdp", "mdp.39015003633594"
     )
-    assert get_stub_dir("HathiTrust", "dul1.ark:/13960/t5w67998k") == pathlib.Path(
+    assert get_vol_dir("HathiTrust", "dul1.ark:/13960/t5w67998k") == pathlib.Path(
         "HathiTrust", "dul1", "dul1.ark+=13960=t5w67998k"
     )
     # Other
     with pytest.raises(ValueError, match="Unknown source 'invalid src'"):
-        get_stub_dir("invalid src", "xxx0000")
+        get_vol_dir("invalid src", "xxx0000")
