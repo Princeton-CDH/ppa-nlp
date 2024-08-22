@@ -1,10 +1,7 @@
 #!/usr/bin/env python
 
 """
-setup:
- - in google cloud console, enable vision api for desired project
- - install gcloud cli (sdk) and login (this is now preferred to service accounts)
- - install python client: `pip install google-cloud-vision`
+This script OCRs image using the Google Vision API.
 """
 
 import os
@@ -14,6 +11,7 @@ import pathlib
 import argparse
 
 from tqdm import tqdm
+from corppa.utils.path_utils import get_vol_dir
 
 # Attempt to import Google Cloud Vision Python Client
 try:
@@ -25,8 +23,23 @@ except ImportError:
     )
     sys.exit(1)
 
+# Workaround (hopefully temporary) to surpress some logging printed to stderr
+os.environ["GRPC_VERBOSITY"] = "NONE"
+
 
 def image_relpath_generator(image_dir, ext_set, follow_symlinks=True):
+    """
+    This generator method finds all images in image_dir with file extensions
+    in ext_set. For each of these images, the method yields the relative path
+    with respect to image_dir.
+
+    For example, if image_dir = "a/b/c/images" and there are image files at the
+    following paths: "a/b/c/images/alpha.jpg", "a/b/c/images/d/beta.jpg"
+    The generate will produce these two items: "alpha.jpg" and "d/beta.jpg"
+    """
+    # Using pathlib.walk over blob because (1) it allows us to find files with
+    # multiple extensions in a single walk of the directory and (2) lets us
+    # leverage additional functionality of pathlib.
     for dirpath, dirs, files in image_dir.walk(follow_symlinks=follow_symlinks):
         # Check the files in walked directory
         for file in files:
@@ -38,7 +51,13 @@ def image_relpath_generator(image_dir, ext_set, follow_symlinks=True):
         dirs[:] = [d for d in dirs if d[0] != "."]
 
 
-def get_image_ocr(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
+def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
+    """
+    OCR images in in_dir with extension ext_list to out_dir. If ocr_limit > 0,
+    stop after OCRing ocr_limit images.
+
+    Returns the number of images OCR'd.
+    """
     # Instantiate google vision client
     client = vision.ImageAnnotatorClient()
 
@@ -96,12 +115,68 @@ def get_image_ocr(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
 
             # Check if we should stop
             if ocr_limit and ocr_count == ocr_limit:
+                if show_progress:
+                    print("Hit OCR limit.", file=sys.stderr)
                 # TODO: Is there a better structuring to avoid this break
                 break
 
     if show_progress:
         # Close progress bar
         progress_bar.close()
+
+    return ocr_count
+
+
+# Should this live somewhere in corppa.utils?
+def get_ppa_source(vol_id):
+    # Note that this is fairly brittle.
+    if vol_id.startswith("CW0") or vol_id.startswith("CB0"):
+        return "Gale"
+    else:
+        return "HathiTrust"
+
+
+def ocr_volumes(vol_ids, in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
+    current_ocr_limit = ocr_limit
+    total_ocr_count = 0
+    for vol_id in vol_ids:
+        # Get vol dir info
+        sub_dir = get_vol_dir(get_ppa_source(vol_id), vol_id)
+        in_vol_dir = in_dir.joinpath(sub_dir)
+        out_vol_dir = out_dir.joinpath(sub_dir)
+
+        # Check that input vol dir exists
+        if not in_vol_dir.is_dir():
+            print(f"Warning: Volume '{vol_id}' is not in {in_dir}", file=sys.stderr)
+            print(f"Directory {in_vol_dir} does not exist.", file=sys.stderr)
+            continue
+        # Ensure that output vol dir exists
+        out_vol_dir.mkdir(parents=True, exist_ok=True)
+        if show_progress:
+            print(f"OCRing {vol_id}...", file=sys.stderr)
+        # OCR images
+        ocr_count = ocr_images(
+            in_vol_dir,
+            out_vol_dir,
+            ext_list,
+            ocr_limit=current_ocr_limit,
+            show_progress=show_progress,
+        )
+        if show_progress:
+            if ocr_count:
+                print(f"...{ocr_count} images from {vol_id} OCR'd.\n", file=sys.stderr)
+            else:
+                print(f"...{vol_id} skipped. Nothing to OCR.\n", file=sys.stderr)
+
+        # Upkeep
+        total_ocr_count += ocr_count
+        if ocr_limit:
+            current_ocr_limit -= ocr_count
+            # Stop if limit is reached
+            if current_ocr_limit == 0:
+                if show_progress:
+                    print("Hit OCR limit.", file=sys.stderr)
+                break
 
 
 def main():
@@ -137,9 +212,16 @@ def main():
     )
     parser.add_argument(
         "--ext",
-        help="Accepted file extension(s). Defaults: .TIF, .jpg",
+        help="Accepted file extension(s). Can be repeated. Defaults: .TIF, .jpg",
         nargs="*",
         type=str,
+        action="extend",
+    )
+    parser.add_argument(
+        "--vol",
+        help="Only OCR images from the specified PPA volume(s) represented as "
+        "volume ids. Can be repeated.",
+        nargs="*",
         action="extend",
     )
 
@@ -150,24 +232,33 @@ def main():
 
     # Validate arguments
     if not args.input.is_dir():
-        print(f"Error: input directory {args.input} does not exist")
+        print(f"Error: input directory {args.input} does not exist", file=sys.stderr)
         sys.exit(1)
     # TODO: Is this too restrictive / unnecessary?
     if not args.output.is_dir():
-        print(f"Error: output directory {args.output} does not exist")
+        print(f"Error: output directory {args.output} does not exist", file=sys.stderr)
         sys.exit(1)
     if args.ocr_limit < 0:
-        print("Error: ocr limit cannot be negative")
+        print("Error: ocr limit cannot be negative", file=sys.stderr)
         sys.exit(1)
 
-    # TODO: Add try block?
-    get_image_ocr(
-        args.input,
-        args.output,
-        set(args.ext),
-        ocr_limit=args.ocr_limit,
-        show_progress=args.progress,
-    )
+    if args.vol is None:
+        ocr_images(
+            args.input,
+            args.output,
+            set(args.ext),
+            ocr_limit=args.ocr_limit,
+            show_progress=args.progress,
+        )
+    else:
+        ocr_volumes(
+            args.vol,
+            args.input,
+            args.output,
+            set(args.ext),
+            ocr_limit=args.ocr_limit,
+            show_progress=args.progress,
+        )
 
 
 if __name__ == "__main__":
