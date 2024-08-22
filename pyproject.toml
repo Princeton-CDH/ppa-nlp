@@ -5,15 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "corppa"
 description = "Utilities for working with Princeton Prosody Archive full-text corpus"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 readme = "README.md"
 # license TBD
 #license.file = "LICENSE"
 #license = {text = "Apache-2"} 
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -22,21 +20,23 @@ classifiers = [
     "Topic :: Text Processing",    
     "Topic :: Utilities",
 ]
+dynamic = ["version"]
 dependencies = [
 	"orjsonl",
-	"tqdm"
+	"tqdm",
 ]
-dynamic = ["version"]
-
-[project.scripts]
-corppa-filter-corpus = "corppa.utils.filter:main"
-
-[tool.hatch.version]
-path = "src/corppa/__init__.py"
 
 [project.optional-dependencies]
 test = [
   "pytest",
   "pytest-cov"
 ]
-dev = ["pre-commit", "corppa[test]"]
+ocr = ["google-cloud-vision"]
+dev = ["pre-commit", "corppa[test]", "corppa[ocr]"]
+
+[project.scripts]
+corppa-filter-corpus = "corppa.utils.filter:main"
+corppa-ocr = "corppa.ocr.gvision_ocr:main"
+
+[tool.hatch.version]
+path = "src/corppa/__init__.py"
