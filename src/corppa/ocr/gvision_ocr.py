@@ -79,9 +79,13 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
         # Refresh progress bar
         if show_progress:
             progress_bar.refresh()
+        # Get image and ocr output paths
         imagefile = in_dir.joinpath(image_relpath)
         textfile = out_dir.joinpath(image_relpath).with_suffix(".txt")
-        jsonfile = out_dir.joinpath(image_relpath).with_suffix(".json")
+        jsonfile = textfile.with_suffix(".json")
+        # Ensure that all subdirectories exist
+        ocr_dir = textfile.parent
+        ocr_dir.mkdir(parents=True, exist_ok=True)
 
         # Request OCR if file does not exist
         if textfile.is_file():
@@ -100,7 +104,7 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
             with open(textfile, "w") as textfilehandle:
                 textfilehandle.write(response.full_text_annotation.text)
 
-            # Save json responst
+            # Save json response
             json_response = vision.AnnotateImageResponse.to_json(response)
             with open(jsonfile, "w") as jsonfilehandle:
                 jsonfilehandle.write(json_response)
