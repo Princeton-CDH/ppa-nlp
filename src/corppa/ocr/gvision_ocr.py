@@ -122,14 +122,14 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
 
             # Check if we should stop
             if ocr_limit and ocr_count == ocr_limit:
-                if show_progress:
-                    print("Hit OCR limit.", file=sys.stderr)
                 # TODO: Is there a better structuring to avoid this break
                 break
 
     if show_progress:
         # Close progress bar
         progress_bar.close()
+        if ocr_limit and ocr_count == ocr_limit:
+            print("Stopping early, OCR limit reached.", file=sys.stderr)
         print(
             f"{ocr_count:,} images OCR'd & {skip_count:,} images skipped.",
             file=sys.stderr,
