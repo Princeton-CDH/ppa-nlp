@@ -56,7 +56,7 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
     OCR images in in_dir with extension ext_list to out_dir. If ocr_limit > 0,
     stop after OCRing ocr_limit images.
 
-    Returns the number of images OCR'd.
+    Returns a map structure reporting the number of images OCR'd and skipped.
     """
     # Instantiate google vision client
     client = vision.ImageAnnotatorClient()
@@ -74,6 +74,7 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
             )
 
     ocr_count = 0
+    skip_count = 0
     for image_relpath in image_relpath_generator(in_dir, set(ext_list)):
         # Refresh progress bar
         if show_progress:
@@ -83,7 +84,9 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
         jsonfile = out_dir.joinpath(image_relpath).with_suffix(".json")
 
         # Request OCR if file does not exist
-        if not textfile.is_file():
+        if textfile.is_file():
+            skip_count += 1
+        else:
             # Load the image into memory
             with io.open(imagefile, "rb") as image_reader:
                 content = image_reader.read()
@@ -123,8 +126,12 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
     if show_progress:
         # Close progress bar
         progress_bar.close()
+        print(
+            f"{ocr_count:,} images OCR'd & {skip_count:,} images skipped.",
+            file=sys.stderr,
+        )
 
-    return ocr_count
+    return {"ocr_count": ocr_count, "skip_count": skip_count}
 
 
 # Should this live somewhere in corppa.utils?
@@ -137,11 +144,22 @@ def get_ppa_source(vol_id):
 
 
 def ocr_volumes(vol_ids, in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
+    n_vols = len(vol_ids)
     current_ocr_limit = ocr_limit
     total_ocr_count = 0
-    for vol_id in vol_ids:
+    total_skip_count = 0
+    for i, vol_id in enumerate(vol_ids):
+        vol_src = get_ppa_source(vol_id)
+        # Currently, this only supports Gale; skip other (i.e. HathiTrust) sources
+        if vol_src != "Gale":
+            print(
+                f"Warning: Skipping volume, since its source '{vol_src}' "
+                "is not yet supported.",
+                file=sys.stderr,
+            )
+            continue
         # Get vol dir info
-        sub_dir = get_vol_dir(get_ppa_source(vol_id), vol_id)
+        sub_dir = get_vol_dir(vol_src, vol_id)
         in_vol_dir = in_dir.joinpath(sub_dir)
         out_vol_dir = out_dir.joinpath(sub_dir)
 
@@ -153,30 +171,36 @@ def ocr_volumes(vol_ids, in_dir, out_dir, ext_list, ocr_limit=0, show_progress=T
         # Ensure that output vol dir exists
         out_vol_dir.mkdir(parents=True, exist_ok=True)
         if show_progress:
-            print(f"OCRing {vol_id}...", file=sys.stderr)
+            # Add space between volume-level reporting
+            if i:
+                print("", file=sys.stderr)
+            print(f"OCRing {vol_id} ({i+1}/{n_vols})...", file=sys.stderr)
+
         # OCR images
-        ocr_count = ocr_images(
+        report = ocr_images(
             in_vol_dir,
             out_vol_dir,
             ext_list,
             ocr_limit=current_ocr_limit,
             show_progress=show_progress,
         )
-        if show_progress:
-            if ocr_count:
-                print(f"...{ocr_count} images from {vol_id} OCR'd.\n", file=sys.stderr)
-            else:
-                print(f"...{vol_id} skipped. Nothing to OCR.\n", file=sys.stderr)
 
         # Upkeep
-        total_ocr_count += ocr_count
+        total_ocr_count += report["ocr_count"]
+        total_skip_count += report["skip_count"]
         if ocr_limit:
-            current_ocr_limit -= ocr_count
+            current_ocr_limit -= report["ocr_count"]
             # Stop if limit is reached
             if current_ocr_limit == 0:
                 if show_progress:
                     print("Hit OCR limit.", file=sys.stderr)
                 break
+
+    print(
+        f"---\nIn total, {total_ocr_count:,} images OCR'd & {total_skip_count:,} "
+        "images skipped.",
+        file=sys.stderr,
+    )
 
 
 def main():
