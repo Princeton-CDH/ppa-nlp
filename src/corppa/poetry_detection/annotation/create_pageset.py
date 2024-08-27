@@ -6,15 +6,15 @@ env: ppa-data
 """
 
 import csv
-import os.path
 import json
+import os.path
 import re
 import sys
 
 import orjsonl
-from xopen import xopen
-from tqdm import tqdm
 from helper import encode_htid, get_stub_dir
+from tqdm import tqdm
+from xopen import xopen
 
 
 def extract_page_numbers(page_url_list):

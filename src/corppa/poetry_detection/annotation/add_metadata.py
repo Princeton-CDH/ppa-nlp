@@ -17,8 +17,8 @@ import pathlib
 import sys
 from typing import Iterator
 
-from tqdm import tqdm
 import orjsonl
+from tqdm import tqdm
 
 
 def combine_data(

@@ -4,7 +4,6 @@ Library of OCR-related auxiliary methods for stand-alone scripts
 
 import ftfy
 
-
 _char_conversion_map = {"ſ": "s"}
 _char_translation_table = str.maketrans(_char_conversion_map)
 

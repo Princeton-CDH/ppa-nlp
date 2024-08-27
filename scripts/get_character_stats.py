@@ -4,17 +4,16 @@ Script for collectin character-level statistics
 env: ppa-ocr
 """
 
-import sys
-import os.path
 import csv
+import os.path
+import sys
 import unicodedata
+from collections import Counter
 
 import orjsonl
-from collections import Counter
-from xopen import xopen
-from tqdm import tqdm
 from ocr_helper import clean_chars
-
+from tqdm import tqdm
+from xopen import xopen
 
 __cc_names = {
     "\n": "Cc: LINE FEED",

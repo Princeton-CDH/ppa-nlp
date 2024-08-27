@@ -1,10 +1,10 @@
 import pathlib
-import pytest
-
 from unittest.mock import patch
+
+import pytest
 from corppa.utils.path_utils import (
-    encode_htid,
     decode_htid,
+    encode_htid,
     get_ppa_source,
     get_stub_dir,
     get_vol_dir,
