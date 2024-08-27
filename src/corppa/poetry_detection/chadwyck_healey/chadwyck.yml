@@ -1,0 +1,13 @@
+name: chadwyck
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python >= 3.12
+  - tqdm
+  - lxml
+  - beautifulsoup4
+  - ftfy
+  - pip
+  - pip:
+    - orjsonl
