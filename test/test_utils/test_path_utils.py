@@ -55,26 +55,36 @@ def test_get_stub_dir():
         get_stub_dir("invalid src", "xxx0000")
 
 
-@pytest.mark.parametrize("source", ["Gale", "HathiTrust", "Unknown"])
 @patch("corppa.utils.path_utils.get_stub_dir", return_value="stub_name")
 @patch("corppa.utils.path_utils.get_ppa_source")
-def test_get_vol_dir(mock_get_ppa_source, mock_get_stub_dir, source):
-    # Set returned source value
-    mock_get_ppa_source.return_value = source
-    vol_id = f"{source}_id"
-    if source == "Gale":
-        assert get_vol_dir(vol_id) == pathlib.Path(source, "stub_name", vol_id)
-        mock_get_stub_dir.assert_called_with(source, vol_id)
-    elif source == "HathiTrust":
-        # TODO: Update once HathiTrust directory conventions are finalized
-        with pytest.raises(
-            NotImplementedError, match="HathiTrust volume directory conventions TBD"
-        ):
-            get_vol_dir(vol_id)
-        mock_get_stub_dir.assert_not_called()
-    else:
-        with pytest.raises(ValueError, match=f"Unknown source '{source}'"):
-            get_vol_dir(vol_id)
-        mock_get_stub_dir.assert_not_called()
+def test_get_vol_dir_gale(mock_get_ppa_source, mock_get_stub_dir):
+    # Set returned source value to Gale
+    mock_get_ppa_source.return_value = "Gale"
+    assert get_vol_dir("gale_id") == pathlib.Path("Gale", "stub_name", "gale_id")
+    mock_get_ppa_source.assert_called_with("gale_id")
+    mock_get_stub_dir.assert_called_with("Gale", "gale_id")
 
-    mock_get_ppa_source.assert_called_with(vol_id)
+
+@patch("corppa.utils.path_utils.get_stub_dir", return_value="stub_name")
+@patch("corppa.utils.path_utils.get_ppa_source")
+def test_get_vol_dir_hathi(mock_get_ppa_source, mock_get_stub_dir):
+    # Set returned source value to HathiTrust
+    mock_get_ppa_source.return_value = "HathiTrust"
+    # TODO: Update once HathiTrust directory conventions are finalized
+    with pytest.raises(
+        NotImplementedError, match="HathiTrust volume directory conventions TBD"
+    ):
+        get_vol_dir("htid")
+    mock_get_ppa_source.assert_called_with("htid")
+    mock_get_stub_dir.assert_not_called()
+
+
+@patch("corppa.utils.path_utils.get_stub_dir", return_value="stub_name")
+@patch("corppa.utils.path_utils.get_ppa_source")
+def test_get_vol_dir_unk(mock_get_ppa_source, mock_get_stub_dir):
+    # Set returned source value
+    mock_get_ppa_source.return_value = "Unknown"
+    with pytest.raises(ValueError, match="Unknown source 'Unknown'"):
+        get_vol_dir("vol_id")
+    mock_get_ppa_source.assert_called_with("vol_id")
+    mock_get_stub_dir.assert_not_called()
