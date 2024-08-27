@@ -37,7 +37,7 @@ def image_relpath_generator(image_dir, ext_set, follow_symlinks=True):
     following paths: "a/b/c/images/alpha.jpg", "a/b/c/images/d/beta.jpg"
     The generate will produce these two items: "alpha.jpg" and "d/beta.jpg"
     """
-    # Using pathlib.walk over blob because (1) it allows us to find files with
+    # Using pathlib.walk over glob because (1) it allows us to find files with
     # multiple extensions in a single walk of the directory and (2) lets us
     # leverage additional functionality of pathlib.
     for dirpath, dirs, files in image_dir.walk(follow_symlinks=follow_symlinks):
