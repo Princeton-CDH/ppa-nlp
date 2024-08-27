@@ -11,17 +11,13 @@ import pathlib
 import argparse
 
 from tqdm import tqdm
-from corppa.utils.path_utils import get_vol_dir
+from corppa.utils.path_utils import get_vol_dir, get_ppa_source
 
 # Attempt to import Google Cloud Vision Python Client
 try:
     from google.cloud import vision
 except ImportError:
-    print(
-        "Error: Python environment does not contain google-cloud-vision "
-        "package. Switch environments or install package and try again."
-    )
-    sys.exit(1)
+    vision = None
 
 # Workaround (hopefully temporary) to surpress some logging printed to stderr
 os.environ["GRPC_VERBOSITY"] = "NONE"
@@ -118,6 +114,7 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
             # Update counter
             ocr_count += 1
             if show_progress:
+                # Update progress bar since only OCR'd images are tracked
                 progress_bar.update()
 
             # Check if we should stop
@@ -138,32 +135,30 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
     return {"ocr_count": ocr_count, "skip_count": skip_count}
 
 
-# Should this live somewhere in corppa.utils?
-def get_ppa_source(vol_id):
-    # Note that this is fairly brittle.
-    if vol_id.startswith("CW0") or vol_id.startswith("CB0"):
-        return "Gale"
-    else:
-        return "HathiTrust"
-
-
 def ocr_volumes(vol_ids, in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
+    """
+    OCR images for volumes vol_ids with extension ext_list to out_dir. Assumes in_dir
+    follows the PPA directory conventions (see corppa.utils.path_utils for more
+    details). If ocr_limit > 0, stop after OCRing ocr_limit images.
+    """
     n_vols = len(vol_ids)
     current_ocr_limit = ocr_limit
     total_ocr_count = 0
     total_skip_count = 0
     for i, vol_id in enumerate(vol_ids):
-        vol_src = get_ppa_source(vol_id)
-        # Currently, this only supports Gale; skip other (i.e. HathiTrust) sources
-        if vol_src != "Gale":
+        try:
+            sub_dir = get_vol_dir(vol_id)
+        except NotImplementedError:
+            # Skip unsupported source types (i.e. HathiTrust)
+            vol_source = get_ppa_source(vol_id)
             print(
-                f"Warning: Skipping volume, since its source '{vol_src}' "
-                "is not yet supported.",
+                f"Warning: Skipping {vol_id} since its source ({vol_source}) is "
+                "not yet unsupported.",
                 file=sys.stderr,
             )
             continue
+
         # Get vol dir info
-        sub_dir = get_vol_dir(vol_src, vol_id)
         in_vol_dir = in_dir.joinpath(sub_dir)
         out_vol_dir = out_dir.joinpath(sub_dir)
 
@@ -290,4 +285,12 @@ def main():
 
 
 if __name__ == "__main__":
+    # Check that Google Cloud Vision Python Client was successfully imported
+    if vision is None:
+        print(
+            "Error: Python environment does not contain google-cloud-vision "
+            "package. Switch environments or install package and try again."
+        )
+        sys.exit(1)
+
     main()

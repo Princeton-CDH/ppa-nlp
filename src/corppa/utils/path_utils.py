@@ -38,9 +38,25 @@ def decode_htid(encoded_htid):
     return f"{lib_id}.{vol_id}"
 
 
+def get_ppa_source(vol_id):
+    """
+    For a given volume id, return the corresponding source.
+    Assume:
+        * Gale volume ids begin with "CW0" or "CBO"
+        * Hathitrust volume ids contain a "."
+    """
+    # Note that this is fairly brittle.
+    if vol_id.startswith("CW0") or vol_id.startswith("CB0"):
+        return "Gale"
+    elif "." in vol_id:
+        return "HathiTrust"
+    else:
+        raise ValueError(f"Can't identify source for volume '{vol_id}'")
+
+
 def get_stub_dir(source, vol_id):
     """
-    Returns the stub directory for the specified volume (vol_id) and
+    Returns the stub directory name for the specified volume (vol_id) and
     source type (source)
 
     For Gale, every third number (excluding the leading 0) of the volume
@@ -58,10 +74,16 @@ def get_stub_dir(source, vol_id):
         raise ValueError(f"Unknown source '{source}'")
 
 
-def get_vol_dir(source, vol_id):
+def get_vol_dir(vol_id):
+    """
+    Returns the volume directory (pathlib.Path) for the specified volume (vol_id)
+    """
+    source = get_ppa_source(vol_id)
     if source == "Gale":
         return pathlib.Path(source, get_stub_dir(source, vol_id), vol_id)
     elif source == "HathiTrust":
-        return pathlib.Path(source, get_stub_dir(source, vol_id), encode_htid(vol_id))
+        # TODO: This does not match tigerdata
+        # return pathlib.Path(source, get_stub_dir(source, vol_id), encode_htid(vol_id))
+        raise NotImplementedError(f"{source} volume directory conventions TBD")
     else:
         raise ValueError(f"Unknown source '{source}'")

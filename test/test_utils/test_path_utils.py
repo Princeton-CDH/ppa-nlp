@@ -1,8 +1,14 @@
 import pathlib
 import pytest
 
-from corppa.utils.path_utils import encode_htid, decode_htid
-from corppa.utils.path_utils import get_stub_dir, get_vol_dir
+from unittest.mock import patch
+from corppa.utils.path_utils import (
+    encode_htid,
+    decode_htid,
+    get_ppa_source,
+    get_stub_dir,
+    get_vol_dir,
+)
 
 
 def test_encode_htid():
@@ -31,6 +37,14 @@ def test_encode_decode_htid():
     assert decode_htid(encode_htid("miun.aaa3406.0001.001")) == "miun.aaa3406.0001.001"
 
 
+def test_get_ppa_source():
+    assert get_ppa_source("CB0127060085") == "Gale"
+    assert get_ppa_source("CW0116527364") == "Gale"
+    assert get_ppa_source("mdp.39015010540071") == "HathiTrust"
+    with pytest.raises(ValueError, match="Can't identify source for volume 'xxx0000'"):
+        get_ppa_source("xxx0000")
+
+
 def test_get_stub_dir():
     # Gale
     assert get_stub_dir("Gale", "CB0127060085") == "100"
@@ -41,18 +55,26 @@ def test_get_stub_dir():
         get_stub_dir("invalid src", "xxx0000")
 
 
-def test_get_vol_dir():
-    # Gale
-    assert get_vol_dir("Gale", "CB0127060085") == pathlib.Path(
-        "Gale", "100", "CB0127060085"
-    )
-    # HathiTrust
-    assert get_vol_dir("HathiTrust", "mdp.39015003633594") == pathlib.Path(
-        "HathiTrust", "mdp", "mdp.39015003633594"
-    )
-    assert get_vol_dir("HathiTrust", "dul1.ark:/13960/t5w67998k") == pathlib.Path(
-        "HathiTrust", "dul1", "dul1.ark+=13960=t5w67998k"
-    )
-    # Other
-    with pytest.raises(ValueError, match="Unknown source 'invalid src'"):
-        get_vol_dir("invalid src", "xxx0000")
+@pytest.mark.parametrize("source", ["Gale", "HathiTrust", "Unknown"])
+@patch("corppa.utils.path_utils.get_stub_dir", return_value="stub_name")
+@patch("corppa.utils.path_utils.get_ppa_source")
+def test_get_vol_dir(mock_get_ppa_source, mock_get_stub_dir, source):
+    # Set returned source value
+    mock_get_ppa_source.return_value = source
+    vol_id = f"{source}_id"
+    if source == "Gale":
+        assert get_vol_dir(vol_id) == pathlib.Path(source, "stub_name", vol_id)
+        mock_get_stub_dir.assert_called_with(source, vol_id)
+    elif source == "HathiTrust":
+        # TODO: Update once HathiTrust directory conventions are finalized
+        with pytest.raises(
+            NotImplementedError, match="HathiTrust volume directory conventions TBD"
+        ):
+            get_vol_dir(vol_id)
+        mock_get_stub_dir.assert_not_called()
+    else:
+        with pytest.raises(ValueError, match=f"Unknown source '{source}'"):
+            get_vol_dir(vol_id)
+        mock_get_stub_dir.assert_not_called()
+
+    mock_get_ppa_source.assert_called_with(vol_id)
