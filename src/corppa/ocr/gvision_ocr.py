@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 """
-This script OCRs image using the Google Vision API.
+This script OCRs images using the Google Vision API.
 """
 
 import os
