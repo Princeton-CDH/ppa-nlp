@@ -10,8 +10,9 @@ import os
 import pathlib
 import sys
 
-from corppa.utils.path_utils import get_ppa_source, get_vol_dir
 from tqdm import tqdm
+
+from corppa.utils.path_utils import get_ppa_source, get_vol_dir
 
 # Attempt to import Google Cloud Vision Python Client
 try:

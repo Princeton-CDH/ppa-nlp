@@ -3,6 +3,7 @@ import os
 from unittest.mock import patch
 
 import pytest
+
 from corppa.utils.filter import filter_pages, main, save_filtered_corpus
 
 # minimal/mock page data fixture for testing

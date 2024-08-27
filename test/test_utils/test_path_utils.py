@@ -2,6 +2,7 @@ import pathlib
 from unittest.mock import patch
 
 import pytest
+
 from corppa.utils.path_utils import (
     decode_htid,
     encode_htid,
