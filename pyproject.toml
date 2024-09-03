@@ -40,3 +40,7 @@ corppa-ocr = "corppa.ocr.gvision_ocr:main"
 
 [tool.hatch.version]
 path = "src/corppa/__init__.py"
+
+[tool.ruff]
+# configure src path so ruff import fixes can identify local imports
+src = ["src"]

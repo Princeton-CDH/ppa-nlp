@@ -4,14 +4,15 @@
 This script OCRs images using the Google Vision API.
 """
 
-import os
-import sys
-import io
-import pathlib
 import argparse
+import io
+import os
+import pathlib
+import sys
 
 from tqdm import tqdm
-from corppa.utils.path_utils import get_vol_dir, get_ppa_source
+
+from corppa.utils.path_utils import get_ppa_source, get_vol_dir
 
 # Attempt to import Google Cloud Vision Python Client
 try:

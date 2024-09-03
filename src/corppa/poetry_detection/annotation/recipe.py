@@ -13,11 +13,11 @@ prodigy annotate_page_text poetry_spans poetry_pages.jsonl --label POETRY,PROSOD
 prodigy annotate_text_and_image poetry_text_image poetry_pages.jsonl --label POETRY -F ../corppa/poetry_detection/annotation/recipe.py --image-prefix http://localhost:8000/
 """
 
-from prodigy.core import Arg, recipe
-from prodigy.components.loaders import JSONL
-import spacy
-
 from pathlib import Path
+
+import spacy
+from prodigy.components.loaders import JSONL
+from prodigy.core import Arg, recipe
 
 #: reference to current directory, for use as Prodigy CSS directory
 CURRENT_DIR = Path(__file__).parent.absolute()
