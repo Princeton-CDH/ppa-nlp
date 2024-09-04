@@ -2,15 +2,31 @@
 Convert the Chadwyck Healey corpus into a single .jsonl file
 """
 
-import sys
-import re
-import pathlib
 import argparse
-import bs4
-import orjsonl
-import ftfy
+import pathlib
+import re
+import sys
 
+import bs4
+import ftfy
+import orjsonl
 from tqdm import tqdm
+
+_symbol_table = {
+    "&indent;": "\t",
+    "&wblank;": "\u2014\u2014",
+    "&lblank;": "\u2014",
+    "&grwc;": "\u1ff6",
+    "&grst;": "\u03c2",
+}
+
+
+def clean_text(text):
+    new_text = ftfy.fix_text(text)
+    # Complete symbol replacement
+    for symbol_str, out_str in _symbol_table.items():
+        new_text = new_text.replace(symbol_str, out_str)
+    return new_text.rstrip()
 
 
 # Should this be moved to path utils?
@@ -45,7 +61,7 @@ def extract_tag_data(tag_soup):
             tag_info[field_name] = val
         # Handle child's text
         assert child_tag.name not in tag_info
-        tag_info[child_tag.name] = ftfy.fix_text(child_tag.text)
+        tag_info[child_tag.name] = clean_text(child_tag.text)
     return tag_info
 
 
@@ -62,59 +78,71 @@ def extract_metadata(filename):
     return metadata
 
 
+def get_span_text(span_tag):
+    span_text = ""
+    # Get span text
+    for child in span_tag.children:
+        # Children are either NavigableStrings or Tags
+        if isinstance(child, bs4.NavigableString):
+            span_text += child.text
+        elif child.name == "span":
+            span_text += get_span_text(child)
+        else:
+            raise ValueError(f"Unexpected span child tag '{child.name}'")
+    # TODO: Set span styling (if this seems at all valuable)
+    return span_text
+
+
 def get_div_text(div_tag):
     if div_tag.name != "div":
         raise ValueError(f"{div_tag} is not a div tag")
     div_type = div_tag["type"]
     # Handle each div type
     if div_type in ["versepara", "stanza"]:
+        # Case #1: Group of text (should be separated by whitespace)
         text_block = ""
-        # Should containa group of lines
+        # Should contain a group of lines
         for child_div in div_tag.find_all(True, recursive=False):
             assert child_div.name == "div"
             text_block += get_div_text(child_div)
         return text_block + "\n"
-    elif div_type == "firstline":
-        # Assume single child
-        child_tags = div_tag.find_all(True, recursive=False)
-        assert len(child_tags) == 1
-        return get_div_text(child_tags[0])
-    elif div_type == "line":
+    elif div_type in ["line", "firstline", "conclusion", "greek"]:
+        # Case #2: Some text
         # There might be weird leading whitespace if a note was skipped
         line = ""
         for child in div_tag.children:
+            # Children are either NavigableStrings or Tags
             if isinstance(child, bs4.NavigableString):
                 # attempt to remove singleton whitespace
                 if child.text == " ":
                     line += ""
                 else:
                     line += child.text
-            elif isinstance(child, bs4.Tag):
-                if child.name == "div":
-                    line += get_div_text(child)
-                elif child.name == "span":
-                    # Assume: no descending tags
-                    assert not child.find_all(True)
-                    span_class = child["class"]
-                    if span_class == ["italic"]:
-                        # Ignore italics
-                        line += child.text
-                    elif span_class == ["smcap"]:
-                        # TODO: Should casing be modified?
-                        line += child.text.upper()
-                    else:
-                        raise ValueError(f"Unhandled span class '{span_class}'")
+            elif child.name == "div":
+                line += get_div_text(child)
+            elif child.name == "span":
+                line += get_span_text(child)
+            elif child.name == "edit":
+                # Skip editorial tags
+                line += ""
             else:
-                raise ValueError(f"Unexpected child class {type(child)}")
+                raise ValueError(f"Unexpected div child tag '{child.name}'")
         return line + "\n"
-    elif div_type == "caption":
-        assert not div_tag.find_all(True)
-        return div_tag.text
-    elif div_type in ["note", "signed", "epigraph", "caption", "preface"]:
+    elif div_type in [
+        "argument",
+        "caption",
+        "dedication",
+        "epigraph",
+        "note",
+        "preface",
+        "signed",
+        "trailer",
+    ]:
         # Skip these blocks
         return ""
     else:
-        raise NotImplementedError(f"Unexpected div type '{div_type}'")
+        print(f"Skipping unexpected div type '{div_type}'", file=sys.stderr)
+        return ""
 
 
 def extract_text(filename):
@@ -123,9 +151,22 @@ def extract_text(filename):
     # Care about body block
     soup = bs4.BeautifulSoup(raw_text, "lxml").body
     text = ""
+    if soup.find("div", recursive=False) is None:
+        # Attempted workaround for TEI
+        tag_depth = sum(1 for _ in soup.parents) + 1
+        for div in soup.find_all("div"):
+            parent_names = [p.name for p in div.parents][::-tag_depth]
+            # Skip nested divs
+            if "div" in parent_names:
+                continue
+            # Skip divs within edit tags
+            if "edit" in parent_names:
+                continue
+            text += get_div_text(div)
     for div in soup.find_all("div", recursive=False):
+        # Skip nested div tags
         text += get_div_text(div)
-    return ftfy.fix_text(text).rstrip()  # Remove trailing whitespace
+    return clean_text(text)  # Remove trailing whitespace
 
 
 def get_poem_record(poem_fn):
