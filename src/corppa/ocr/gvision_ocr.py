@@ -88,40 +88,47 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
         if textfile.is_file():
             skip_count += 1
         else:
-            # Load the image into memory
-            with io.open(imagefile, "rb") as image_reader:
-                content = image_reader.read()
-            image = vision.Image(content=content)
+            try:
+                # Load the image into memory
+                with io.open(imagefile, "rb") as image_reader:
+                    content = image_reader.read()
+                image = vision.Image(content=content)
 
-            # Performs OCR and handwriting detection on the image file
-            response = client.document_text_detection(image=image)
+                # Performs OCR and handwriting detection on the image file
+                response = client.document_text_detection(image=image)
 
-            # Save plain text output to local file;
-            # even if text is empty, create text file so we don't request again
-            with open(textfile, "w") as textfilehandle:
-                textfilehandle.write(response.full_text_annotation.text)
+                # Save plain text output to local file;
+                # even if text is empty, create text file so we don't request again
+                with open(textfile, "w") as textfilehandle:
+                    textfilehandle.write(response.full_text_annotation.text)
 
-            # Save json response
-            json_response = vision.AnnotateImageResponse.to_json(response)
-            with open(jsonfile, "w") as jsonfilehandle:
-                jsonfilehandle.write(json_response)
+                # Save json response
+                json_response = vision.AnnotateImageResponse.to_json(response)
+                with open(jsonfile, "w") as jsonfilehandle:
+                    jsonfilehandle.write(json_response)
 
-            if response.error.message:
-                raise Exception(
-                    f"{response.error.message}\n for more info on error messages, "
-                    "check: https://cloud.google.com/apis/design/errors"
+                if response.error.message:
+                    raise Exception(
+                        f"{response.error.message}\n for more info on error messages, "
+                        "check: https://cloud.google.com/apis/design/errors"
+                    )
+
+                # Update counter
+                ocr_count += 1
+                if show_progress:
+                    # Update progress bar since only OCR'd images are tracked
+                    progress_bar.update()
+
+                # Check if we should stop
+                if ocr_limit and ocr_count == ocr_limit:
+                    # TODO: Is there a better structuring to avoid this break
+                    break
+            except (Exception, KeyboardInterrupt):
+                print(
+                    f"Error: An error encountered while OCRing {imagefile.stem}",
+                    file=sys.stderr,
                 )
-
-            # Update counter
-            ocr_count += 1
-            if show_progress:
-                # Update progress bar since only OCR'd images are tracked
-                progress_bar.update()
-
-            # Check if we should stop
-            if ocr_limit and ocr_count == ocr_limit:
-                # TODO: Is there a better structuring to avoid this break
-                break
+                raise
 
     if show_progress:
         # Close progress bar
