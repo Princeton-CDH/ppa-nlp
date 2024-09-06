@@ -24,6 +24,7 @@ except ImportError:
 os.environ["GRPC_VERBOSITY"] = "NONE"
 
 
+# TODO: make extensions case insensitive
 def image_relpath_generator(image_dir, ext_set, follow_symlinks=True):
     """
     This generator method finds all images in image_dir with file extensions
@@ -41,7 +42,7 @@ def image_relpath_generator(image_dir, ext_set, follow_symlinks=True):
         # Check the files in walked directory
         for file in files:
             ext = os.path.splitext(file)[1]
-            if ext:
+            if ext in ext_set:
                 filepath = dirpath.joinpath(file)
                 yield filepath.relative_to(image_dir)
         # For future walking, remove hidden directories
@@ -55,6 +56,14 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
 
     Returns a map structure reporting the number of images OCR'd and skipped.
     """
+    # Check that Google Cloud Vision Python Client was successfully imported
+    if vision is None:
+        print(
+            "Error: Python environment does not contain google-cloud-vision "
+            "package. Switch environments or install package and try again."
+        )
+        sys.exit(1)
+
     # Instantiate google vision client
     client = vision.ImageAnnotatorClient()
 
@@ -293,12 +302,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # Check that Google Cloud Vision Python Client was successfully imported
-    if vision is None:
-        print(
-            "Error: Python environment does not contain google-cloud-vision "
-            "package. Switch environments or install package and try again."
-        )
-        sys.exit(1)
-
     main()
