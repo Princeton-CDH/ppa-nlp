@@ -1,5 +1,6 @@
 import json
 import os
+import pathlib
 from unittest.mock import patch
 
 import pytest
@@ -150,9 +151,9 @@ def test_save_filtered_corpus_required_args():
         (
             ["filter.py", "pages.json", "subset.jsonl", "--idfile", "id.txt"],
             (
-                ("pages.json", "subset.jsonl"),
+                (pathlib.Path("pages.json"), pathlib.Path("subset.jsonl")),
                 {
-                    "idfile": "id.txt",
+                    "idfile": pathlib.Path("id.txt"),
                     "disable_progress": False,
                     "include_filter": None,
                     "exclude_filter": None,
@@ -170,9 +171,9 @@ def test_save_filtered_corpus_required_args():
                 "--no-progress",
             ],
             (
-                ("pages.json.bz2", "subset.jsonl.gz"),
+                (pathlib.Path("pages.json.bz2"), pathlib.Path("subset.jsonl.gz")),
                 {
-                    "idfile": "id.txt",
+                    "idfile": pathlib.Path("id.txt"),
                     "disable_progress": True,
                     "include_filter": None,
                     "exclude_filter": None,
@@ -183,9 +184,9 @@ def test_save_filtered_corpus_required_args():
         (
             ["filter.py", "pages.json", "subset", "--idfile", "id.txt"],
             (
-                ("pages.json", "subset.jsonl"),
+                (pathlib.Path("pages.json"), pathlib.Path("subset.jsonl")),
                 {
-                    "idfile": "id.txt",
+                    "idfile": pathlib.Path("id.txt"),
                     "disable_progress": False,
                     "include_filter": None,
                     "exclude_filter": None,
@@ -196,7 +197,7 @@ def test_save_filtered_corpus_required_args():
         (
             ["filter.py", "pages.json", "subset", "--include", "tag=one", "page=2"],
             (
-                ("pages.json", "subset.jsonl"),
+                (pathlib.Path("pages.json"), pathlib.Path("subset.jsonl")),
                 {
                     "idfile": None,
                     "disable_progress": False,
@@ -209,7 +210,7 @@ def test_save_filtered_corpus_required_args():
         (
             ["filter.py", "pages.json", "subset", "--exclude", "contains_poetry=Yes"],
             (
-                ("pages.json", "subset.jsonl"),
+                (pathlib.Path("pages.json"), pathlib.Path("subset.jsonl")),
                 {
                     "idfile": None,
                     "disable_progress": False,

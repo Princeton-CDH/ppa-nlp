@@ -23,7 +23,7 @@ with or without compression; e.g. `.jsonl`, `.jsonl.gz`, `.jsonl.bz2`, etc.
 """
 
 import argparse
-import os.path
+import pathlib
 import sys
 from typing import Iterator
 
@@ -183,9 +183,12 @@ def main():
         "input",
         help="PPA full-text corpus to be "
         + "filtered; must be a JSONL file (compressed or not)",
+        type=pathlib.Path,
     )
     parser.add_argument(
-        "output", help="filename where the filtered corpus should be saved"
+        "output",
+        help="filename where the filtered corpus should be saved",
+        type=pathlib.Path,
     )
     parser.add_argument(
         "--progress",
