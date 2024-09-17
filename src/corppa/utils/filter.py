@@ -210,6 +210,7 @@ def main():
         "-i",
         "--idfile",
         help="filename with list of source ids, one per line",
+        type=pathlib.Path,
         required=False,
     )
     filter_args.add_argument(
@@ -241,19 +242,19 @@ def main():
     # TODO: use file or pathlib types?
 
     if args.idfile:
-        if not os.path.exists(args.idfile):
+        if not args.idfile.is_file():
             print(f"Error: idfile {args.idfile} does not exist")
             sys.exit(-1)
-        elif os.path.getsize(args.idfile) == 0:
+        elif args.idfile.stat().st_size == 0:
             print(f"Error: idfile {args.idfile} is zero size")
             sys.exit(-1)
 
     # if requested output filename has no extension, add jsonl
-    output_filename = args.output
-    if os.path.splitext(output_filename)[1] == "":
-        output_filename = f"{output_filename}.jsonl"
+    output_filepath = args.output
+    if output_filepath.suffix == "":
+        output_filepath = output_filepath.with_suffix(".jsonl")
 
-    if os.path.exists(output_filename):
+    if output_filepath.is_file():
         print(
             f"Error: requested output file {args.output} already exists; not overwriting"
         )
@@ -262,7 +263,7 @@ def main():
     try:
         save_filtered_corpus(
             args.input,
-            output_filename,
+            output_filepath,
             idfile=args.idfile,
             disable_progress=disable_progress,
             include_filter=args.include,
@@ -275,16 +276,16 @@ def main():
         sys.exit(-1)
 
     # check if output file exists but is zero size (i.e., no pages selected)
-    if os.path.exists(output_filename) and os.path.getsize(output_filename) == 0:
+    if output_filepath.is_file() and output_filepath.stat().st_size == 0:
         # if claenup is disabled, remove and report
         if args.cleanup:
-            os.remove(output_filename)
+            output_filepath.unlink()
             print(
-                f"No pages were selected, removing empty output file {output_filename}"
+                f"No pages were selected, removing empty output file {output_filepath}"
             )
         # otherwise just report
         else:
-            print(f"No pages were selected, output file {output_filename} is empty")
+            print(f"No pages were selected, output file {output_filepath} is empty")
 
 
 if __name__ == "__main__":
