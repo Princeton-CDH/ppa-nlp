@@ -23,6 +23,7 @@ with or without compression; e.g. `.jsonl`, `.jsonl.gz`, `.jsonl.bz2`, etc.
 """
 
 import argparse
+import csv
 import pathlib
 import sys
 from typing import Iterator
@@ -33,11 +34,12 @@ from tqdm import tqdm
 
 
 def filter_pages(
-    input_filename: str,
+    input_filename: pathlib.Path,
     source_ids: list[str] | None = None,
-    disable_progress: bool = False,
+    page_index: dict | None = None,
     include_filter: dict | None = None,
     exclude_filter: dict | None = None,
+    disable_progress: bool = False,
 ) -> Iterator[dict]:
     """Takes a filename for a PPA full-text corpus in a format orjsonl supports
     and one or more options for filtering that corpus. Returns a generator of
@@ -45,8 +47,10 @@ def filter_pages(
     At least one filtering option must be specified.
     Displays progress with :mod:`tqdm` progress bar unless disabled.
 
-    :param input_filename: str, filename for corpus input
+    :param input_filename: pathlib.Path, filename for corpus input
     :param source_ids: list of str, source ids to include in filtered pages (optional)
+    :param page_index: dict specifying digital page numbers (set[int]) for volumes
+        (source id) to be filtered to (optional)
     :param include_filter: dict of key-value pairs for pages to include in
         the filtered page set; equality check against page data attributes (optional)
     :param exclude_filter: dict of key-value pairs for pages to exclude from
@@ -56,13 +60,22 @@ def filter_pages(
     :raises: FileNotFoundError, orjson.JSONDecodeError
     """
     # at least one filter is required
-    if not any([source_ids, include_filter, exclude_filter]):
+    if not any([source_ids, page_index, include_filter, exclude_filter]):
         raise ValueError(
-            "At least one filter must be specified (source_ids, include_filter, exclude_filter)"
+            "At least one filter must be specified (source_ids, page_index, include_filter, exclude_filter)"
         )
     # convert list of source ids to set for fast hashmap lookup
     if source_ids is not None:
         source_ids = set(source_ids)
+    # if page_index is provided, update source_ids list
+    # TODO: is this the desired behavior, especially in combination?
+    if page_index is not None:
+        if source_ids is None:
+            source_ids = set(page_index)
+        else:
+            source_ids |= set(page_index)
+
+    # set source
     selected_pages = 0
     progress_pages = tqdm(
         orjsonl.stream(input_filename),
@@ -76,9 +89,15 @@ def filter_pages(
         # source id plus first page number (for articles/excerpts)
 
         # if list of source ids is specified and id does not match, skip
+        source_id = page["work_id"].split("-p")[0]
         if source_ids:
-            if page["work_id"].split("-p")[0] not in source_ids:
+            if source_id not in source_ids:
                 continue
+
+        if page_index:
+            if source_id in page_index:
+                if page["order"] not in page_index[source_id]:
+                    continue
 
         # if key-value pairs for inclusion are specified, filter
         if include_filter:
@@ -101,12 +120,13 @@ def filter_pages(
 
 
 def save_filtered_corpus(
-    input_filename: str,
-    output_filename: str,
-    idfile: str | None = None,
-    disable_progress: bool = False,
+    input_filename: pathlib.Path,
+    output_filename: pathlib.Path,
+    idfile: pathlib.Path | None = None,
+    pgfile: pathlib.Path | None = None,
     include_filter: dict | None = None,
     exclude_filter: dict | None = None,
+    disable_progress: bool = False,
 ) -> None:
     """Takes a filename for input PPA full-text corpus in a format
     orjsonl supports, filename where filtered corpus should be saved,
@@ -114,9 +134,10 @@ def save_filtered_corpus(
     At least one filter must be specified.
     Calls :meth:`filter_pages`.
 
-    :param input_filename: str, filename for corpus input
-    :param output_filename: str, filename for filtered corpus output
-    :param idfile: str, filename for list of source ids (optional)
+    :param input_filename: pathlib.Path, filepath for corpus input
+    :param output_filename: pathlib.Path, filepath for filtered corpus output
+    :param idfile: pathlib.Path, filepath for list of source ids (optional)
+    :param pgfile: pathlib.Path, filepath for list of pages (optional)
     :param include_filter: dict of key-value pairs for pages to include in
         the filtered page set; equality check against page data attributes (optional)
     :param exclude_filter: dict of key-value pairs for pages to exclude from
@@ -125,17 +146,27 @@ def save_filtered_corpus(
     """
 
     source_ids = None
+    page_index = None
 
     # at least one filter is required
-    if not any([idfile, include_filter, exclude_filter]):
+    if not any([idfile, pgfile, include_filter, exclude_filter]):
         raise ValueError(
-            "At least one filter must be specified (idfile, include_filter, exclude_filter)"
+            "At least one filter must be specified (idfile, pgfile, include_filter, exclude_filter)"
         )
 
-    # if an id file is specifed, read and generate a list of ids to include
+    # if an id file is specified, read and generate a list of ids to include
     if idfile:
         with open(idfile) as idfile_content:
             source_ids = [line.strip() for line in idfile_content]
+
+    # if a page file is specified, build page index (source id -> page set) from file
+    if pgfile:
+        with open(pgfile, newline="") as csv_file:
+            reader = csv.DictReader(csv_file, fieldnames=["source_id", "page_num"])
+            for row in reader:
+                if row["source_id"] not in page_index:
+                    page_index[row["source_id"]] = set()
+                page_index[row["source_id"]].add(int(row["page_num"]))
 
     # use orjsonl to stream filtered pages to specified output file
     orjsonl.save(
@@ -143,9 +174,10 @@ def save_filtered_corpus(
         filter_pages(
             input_filename,
             source_ids=source_ids,
-            disable_progress=disable_progress,
+            page_index=page_index,
             include_filter=include_filter,
             exclude_filter=exclude_filter,
+            disable_progress=disable_progress,
         ),
     )
 
@@ -212,9 +244,15 @@ def main():
     filter_args.add_argument(
         "-i",
         "--idfile",
-        help="filename with list of source ids, one per line",
+        help="File containing a list of source ids (one per line) to filter to",
         type=pathlib.Path,
         required=False,
+    )
+    filter_args.add_argument(
+        "--pgfile",
+        help="CSV file containing the list of pages to filter to. File must be headerless with "
+        + "fields (1) source id and (2) digital page number.",
+        type=pathlib.Path,
     )
     filter_args.add_argument(
         "--include",
@@ -239,10 +277,8 @@ def main():
 
     # at least one filter must be specified
     # check that one of idfile, include, or exclude is specified
-    if not any([args.idfile, args.include, args.exclude]):
+    if not any([args.idfile, args.pgfile, args.include, args.exclude]):
         parser.error("At least one filter option must be specified")
-
-    # TODO: use file or pathlib types?
 
     if args.idfile:
         if not args.idfile.is_file():
@@ -250,6 +286,14 @@ def main():
             sys.exit(-1)
         elif args.idfile.stat().st_size == 0:
             print(f"Error: idfile {args.idfile} is zero size")
+            sys.exit(-1)
+
+    if args.pgfile:
+        if not args.pgfile.is_file():
+            print(f"Error: pgfile {args.pgfile} does not exist")
+            sys.exit(1)
+        elif args.pgfile.stat().st_size == 0:
+            print(f"Error: pgfile {args.pgfile} is zero size")
             sys.exit(-1)
 
     # if requested output filename has no extension, add jsonl
@@ -268,9 +312,10 @@ def main():
             args.input,
             output_filepath,
             idfile=args.idfile,
-            disable_progress=disable_progress,
+            pgfile=args.pgfile,
             include_filter=args.include,
             exclude_filter=args.exclude,
+            disable_progress=disable_progress,
         )
     except (FileNotFoundError, JSONDecodeError) as err:
         # catch known possible errors and display briefly
