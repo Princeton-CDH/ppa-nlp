@@ -173,7 +173,7 @@ def save_filtered_corpus(
                 or "page_num" not in reader.fieldnames
             ):
                 raise ValueError(
-                    f'pgfile {pg_file} must include fields "work_id" and "page_num"'
+                    f'pgfile {pgfile} must include fields "work_id" and "page_num"'
                 )
 
             for row in reader:

@@ -179,6 +179,19 @@ def test_save_filtered_corpus_required_args():
         save_filtered_corpus("pages.jsonl", "filtered.jsonl")
 
 
+def test_save_filtered_corpus_pgfile_fieldnames(tmp_path):
+    pgfile = tmp_path.joinpath("pages.csv")
+    pgfile.write_text("work,pg_id\n")
+    pgfile.write_text("foo,1\n")
+    pgfile.write_text("bar,2\n")
+
+    with pytest.raises(
+        ValueError,
+        match=f'pgfile {pgfile} must include fields "work_id" and "page_num"',
+    ):
+        save_filtered_corpus("pages.jsonl", "filtered.jsonl", pgfile=pgfile)
+
+
 @pytest.mark.parametrize(
     "cli_args, call_params",
     [
