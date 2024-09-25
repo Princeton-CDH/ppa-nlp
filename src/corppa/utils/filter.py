@@ -165,6 +165,7 @@ def save_filtered_corpus(
 
     # if a page file is specified, build page index (work id -> page set) from file
     if pgfile:
+        work_pages = {}
         with open(pgfile, newline="") as csv_file:
             reader = csv.DictReader(csv_file)
             # Check header
