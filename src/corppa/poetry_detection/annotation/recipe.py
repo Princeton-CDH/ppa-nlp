@@ -24,6 +24,7 @@ CURRENT_DIR = Path(__file__).parent.absolute()
 
 #: common prodigy configurations for both recipes; copy and add blocks and labels
 PRODIGY_COMMON_CONFIG = {
+    "buttons": ["accept", "reject", "undo"],  # remove ignore button
     "show_flag": True,  # show flag button to mark weird/difficult examples
     "hide_newlines": False,  # ensure newlines are shown \n
     "allow_newline_highlight": True,  # allow highlighting of newlines \n
@@ -38,6 +39,9 @@ PRODIGY_COMMON_CONFIG = {
         "hide_true_newline_tokens": False,
     },
     "global_css_dir": CURRENT_DIR,
+    # Task annotation flags, these should be move elsewhere
+    "feed_overlap": False,
+    "annotations_per_tasks": 2,
 }
 
 
@@ -107,6 +111,7 @@ def annotate_text_and_image(
         {
             "blocks": blocks,
             "labels": label_list,
+            "ner_manual_highlight_chars": True,
             "image_manual_spans_key": "image_spans",
             # limit image selection to rectangle only, no polygon or freehand
             "image_manual_modes": ["rect"],
@@ -151,7 +156,13 @@ def annotate_page_text(
     ]
     # copy the common config options and add blocks and labels
     config = PRODIGY_COMMON_CONFIG.copy()
-    config.update({"blocks": blocks, "labels": label_list})
+    config.update(
+        {
+            "blocks": blocks,
+            "labels": label_list,
+            "ner_manual_highlight_chars": True,
+        }
+    )
 
     return {
         "dataset": dataset,
