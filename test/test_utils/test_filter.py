@@ -26,25 +26,30 @@ def corpus_file(tmp_path):
     return corpusfile
 
 
-def test_filter_ids(corpus_file):
-    source_ids = ["foo", "bar"]
-    # use list to consume the generator
-    results = list(filter_pages(corpus_file, source_ids, disable_progress=True))
+def test_filter_work_ids(corpus_file):
+    # "bar" corresponds to a source_id not a work_id (since bar-p1 is an excerpt)
+    work_ids = ["foo", "bar"]
+    results = list(filter_pages(corpus_file, work_ids=work_ids, disable_progress=True))
+    assert len(results) == 1
+    assert results[0]["work_id"] == "foo"
+
+    work_ids = ["foo", "bar-p1"]
+    results = list(filter_pages(corpus_file, work_ids=work_ids, disable_progress=True))
     assert len(results) == 4
-    assert set([r["work_id"].split("-")[0] for r in results]) == set(source_ids)
+    assert set(r["work_id"] for r in results) == set(work_ids)
 
 
-def test_filter_page_index(corpus_file):
-    page_index = {"foo": {2}, "bar": {3, 5}, "foo": {2}, "baz": {1}}
+def test_filter_work_pages(corpus_file):
+    work_pages = {"foo": {2}, "bar": {1}, "bar-p1": {3, 5}, "foo": {2}, "baz": {1}}
     results = list(
         filter_pages(
             corpus_file,
-            page_index=page_index,
+            work_pages=work_pages,
             disable_progress=True,
         )
     )
     assert len(results) == 2
-    assert set([r["work_id"].split("-")[0] for r in results]) == {"foo", "bar"}
+    assert set([r["work_id"] for r in results]) == {"foo", "bar-p1"}
     assert set([r["order"] for r in results]) == {2, 3}
 
 
@@ -57,7 +62,7 @@ def test_filter_include(corpus_file):
         )
     )
     assert len(results) == 4
-    assert set([r["work_id"].split("-")[0] for r in results]) == {"bar", "baz"}
+    assert set([r["work_id"] for r in results]) == {"bar-p1", "baz"}
     assert set([r["label"] for r in results]) == {"1", "2", "3", "23"}
 
 
@@ -70,16 +75,16 @@ def test_filter_exclude(corpus_file):
         )
     )
     assert len(results) == 1
-    assert set([r["work_id"].split("-")[0] for r in results]) == {"foo"}
+    assert set([r["work_id"] for r in results]) == {"foo"}
     assert set([r["label"] for r in results]) == {"i"}
 
 
 def test_filter_id_and_include(corpus_file):
-    # source id and include filter used in combination
+    # work ids and include filter used in combination
     results = list(
         filter_pages(
             corpus_file,
-            source_ids=["bar"],
+            work_ids=["bar-p1"],
             include_filter={"label": "2", "work_id": "baz"},
             disable_progress=True,
         )
@@ -89,18 +94,18 @@ def test_filter_id_and_include(corpus_file):
     assert results[0]["label"] == "2"
 
 
-def test_filter_id_and_page_index(corpus_file):
-    # provide source id as well as page index
+def test_filter_id_and_work_pages(corpus_file):
+    # provide work ids as well as work pages
     results = list(
         filter_pages(
             corpus_file,
-            source_ids=["foo"],
-            page_index={"bar": {2}},
+            work_ids=["foo"],
+            work_pages={"bar-p1": {2}},
             disable_progress=True,
         )
     )
     assert len(results) == 2
-    assert set([r["work_id"].split("-")[0] for r in results]) == {"foo", "bar"}
+    assert set([r["work_id"] for r in results]) == {"foo", "bar-p1"}
     assert set([r["order"] for r in results]) == {2}
 
 
@@ -157,8 +162,8 @@ def test_save_filtered_corpus(mock_orjsonl, mock_filter_pages, tmp_path):
     # filter should be called with input file and list of ids from text file
     mock_filter_pages.assert_called_with(
         input_filename,
-        source_ids=ids,
-        page_index=None,
+        work_ids=ids,
+        work_pages=None,
         include_filter=None,
         exclude_filter=None,
         disable_progress=False,
