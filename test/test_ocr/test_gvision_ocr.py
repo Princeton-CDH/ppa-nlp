@@ -123,10 +123,12 @@ def test_ocr_images_no_gvision(capsys):
 
 @patch("corppa.ocr.gvision_ocr.image_relpath_generator")
 @patch("corppa.ocr.gvision_ocr.ocr_image_via_gvision")
-@patch("corppa.ocr.gvision_ocr.google_vision.ImageAnnotatorClient", create=True)
+@patch("corppa.ocr.gvision_ocr.google_vision")
 def test_ocr_images(
-    mock_client, mock_ocr_image, mock_image_relpath_generator, tmp_path
+    mock_gvision, mock_ocr_image, mock_image_relpath_generator, tmp_path
 ):
+    # Setup up mock clientp
+    mock_client = mock_gvision.ImageAnnotatorClient
     img_dir = tmp_path.joinpath("images")
     img_dir.mkdir()
     ocr_dir = tmp_path.joinpath("ocr")
@@ -147,7 +149,6 @@ def test_ocr_images(
     assert ocr_dir.joinpath("subdir").is_dir()
     # Check ocr calls
     assert mock_ocr_image.call_count == 2
-    print(mock_ocr_image.call_args_list[0].args)
     calls = [
         call(
             "client_placeholder",
