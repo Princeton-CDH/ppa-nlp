@@ -1,8 +1,9 @@
-# `corppa` PPA corpus software
+# corppa
 
 This repository is research software developed as part of the [Ends of Prosody](https://cdh.princeton.edu/projects/the-ends-of-prosody/), which is associated with the [Princeton Prosody Archive](https://prosody.princeton.edu/) (PPA). This software is particularly focused on research and work related to PPA full-text and page image corpora.
 
-This code is primarily for internal team use. Some portions of it may eventually be useful for participants of the [Ends of Prosody conference](https://cdh.princeton.edu/events/the-ends-of-prosody/) or be adapted or used elsewhere.
+> [!WARNING]
+> This code is primarily for internal team use. Some portions of it may eventually be useful for participants of the [Ends of Prosody conference](https://cdh.princeton.edu/events/the-ends-of-prosody/) or be adapted or used elsewhere.
 
 ## Basic Usage
 
@@ -26,14 +27,14 @@ Installing `corppa` currently provides access to two command line scripts, for f
 
 The PPA page-level text corpus is shared as a json lines (`.jsonl`) file, which may or may not be compressed (e.g., `.jsonl.gz`). It's often useful to filter the full corpus to a subset of pages for a specific task, e.g. to analyze content from specific volumes or select particular pages for annotation.
 
-To create a subset corpus with _all pages_ for a set of specific volumes, create a text file with a list of *PPA work identifiers*, one id per line, and then run the filter script with the input file, desired output file, and path to id file.
+To create a subset corpus with _all pages_ for a set of specific volumes, create a text file with a list of **PPA work identifiers**, one id per line, and then run the filter script with the input file, desired output file, and path to id file.
 
 ```sh
 corppa-filter-corpus ppa_pages.jsonl my_subset.jsonl --idfile my_ids.txt
 ```
 
 > [!NOTE]
-> *PPA work identifiers* are based on source identifiers, i.e., the identifier from the original source (HathiTrust, Gale/ECCO, EEBO-TCP). In most cases the work identifier and the source identifier are the same, but *if you are working with any excerpted content the work id is NOT the same as the source identifier*. Excerpt ids are based on the combination of source identifier and the first original page included in the excerpt. In some cases PPA contains multiple excerpts from the same source, so this provides guaranteed unique work ids.
+> **PPA work identifiers** are based on source identifiers, i.e., the identifier from the original source (HathiTrust, Gale/ECCO, EEBO-TCP). In most cases the work identifier and the source identifier are the same, but _if you are working with any excerpted content the work id is NOT the same as the source identifier_. Excerpt ids are based on the combination of source identifier and the first original page included in the excerpt. In some cases PPA contains multiple excerpts from the same source, so this provides guaranteed unique work ids.
 
 To create a subset of _specific pages_ from specific volumes, create a CSV file that includes `work_id` and `page_num`, and pass that to the filter script with the `--pg-file` option:
 
