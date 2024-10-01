@@ -123,8 +123,8 @@ def test_ocr_images_no_gvision(capsys):
 
 @patch("corppa.ocr.gvision_ocr.image_relpath_generator")
 @patch("corppa.ocr.gvision_ocr.ocr_image_via_gvision")
-@patch("corppa.ocr.gvision_ocr.google_vision.ImageAnnotatorClient")
-def test_ocr_images_skip(
+@patch("corppa.ocr.gvision_ocr.google_vision.ImageAnnotatorClient", create=True)
+def test_ocr_images(
     mock_client, mock_ocr_image, mock_image_relpath_generator, tmp_path
 ):
     img_dir = tmp_path.joinpath("images")
