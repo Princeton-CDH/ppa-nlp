@@ -16,25 +16,27 @@ from corppa.utils.path_utils import get_ppa_source, get_vol_dir
 
 # Attempt to import Google Cloud Vision Python Client
 try:
-    from google.cloud import vision
+    from google.cloud import vision as google_vision
 except ImportError:
-    vision = None
+    google_vision = None
 
 # Workaround (hopefully temporary) to surpress some logging printed to stderr
 os.environ["GRPC_VERBOSITY"] = "NONE"
 
 
-# TODO: make extensions case insensitive
-def image_relpath_generator(image_dir, ext_set, follow_symlinks=True):
+def image_relpath_generator(image_dir, exts, follow_symlinks=True):
     """
     This generator method finds all images in image_dir with file extensions
-    in ext_set. For each of these images, the method yields the relative path
-    with respect to image_dir.
+    in exts (case insensitive). For each of these images, the method yields
+    the relative path with respect to image_dir.
 
     For example, if image_dir = "a/b/c/images" and there are image files at the
     following paths: "a/b/c/images/alpha.jpg", "a/b/c/images/d/beta.jpg"
     The generate will produce these two items: "alpha.jpg" and "d/beta.jpg"
     """
+    # Create lowercase extension set from passed in exts
+    ext_set = {ext.lower() for ext in exts}
+
     # Using pathlib.walk over glob because (1) it allows us to find files with
     # multiple extensions in a single walk of the directory and (2) lets us
     # leverage additional functionality of pathlib.
@@ -42,30 +44,31 @@ def image_relpath_generator(image_dir, ext_set, follow_symlinks=True):
         # Check the files in walked directory
         for file in files:
             ext = os.path.splitext(file)[1]
-            if ext in ext_set:
+            if ext.lower() in ext_set:
                 filepath = dirpath.joinpath(file)
                 yield filepath.relative_to(image_dir)
         # For future walking, remove hidden directories
         dirs[:] = [d for d in dirs if d[0] != "."]
 
 
-def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
+def ocr_images(in_dir, out_dir, exts, ocr_limit=0, show_progress=True):
     """
-    OCR images in in_dir with extension ext_list to out_dir. If ocr_limit > 0,
+    OCR images in in_dir with extension exts to out_dir. If ocr_limit > 0,
     stop after OCRing ocr_limit images.
 
     Returns a map structure reporting the number of images OCR'd and skipped.
     """
     # Check that Google Cloud Vision Python Client was successfully imported
-    if vision is None:
+    if google_vision is None:
         print(
             "Error: Python environment does not contain google-cloud-vision "
-            "package. Switch environments or install package and try again."
+            "package. Switch environments or install package and try again.",
+            file=sys.stderr,
         )
         sys.exit(1)
 
     # Instantiate google vision client
-    client = vision.ImageAnnotatorClient()
+    client = google_vision.ImageAnnotatorClient()
 
     # Setup up progress bar if progress will be shown
     if show_progress:
@@ -81,7 +84,7 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
 
     ocr_count = 0
     skip_count = 0
-    for image_relpath in image_relpath_generator(in_dir, set(ext_list)):
+    for image_relpath in image_relpath_generator(in_dir, exts):
         # Refresh progress bar
         if show_progress:
             progress_bar.refresh()
@@ -101,7 +104,7 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
                 # Load the image into memory
                 with io.open(imagefile, "rb") as image_reader:
                     content = image_reader.read()
-                image = vision.Image(content=content)
+                image = google_vision.Image(content=content)
 
                 # Performs OCR and handwriting detection on the image file
                 response = client.document_text_detection(image=image)
@@ -112,7 +115,7 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
                     textfilehandle.write(response.full_text_annotation.text)
 
                 # Save json response
-                json_response = vision.AnnotateImageResponse.to_json(response)
+                json_response = google_vision.AnnotateImageResponse.to_json(response)
                 with open(jsonfile, "w") as jsonfilehandle:
                     jsonfilehandle.write(json_response)
 
@@ -133,6 +136,8 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
                     # TODO: Is there a better structuring to avoid this break
                     break
             except (Exception, KeyboardInterrupt):
+                # Close progress bar before throwing error
+                progress_bar.close()
                 print(
                     f"Error: An error encountered while OCRing {imagefile.stem}",
                     file=sys.stderr,
@@ -152,9 +157,9 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
     return {"ocr_count": ocr_count, "skip_count": skip_count}
 
 
-def ocr_volumes(vol_ids, in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
+def ocr_volumes(vol_ids, in_dir, out_dir, exts, ocr_limit=0, show_progress=True):
     """
-    OCR images for volumes vol_ids with extension ext_list to out_dir. Assumes in_dir
+    OCR images for volumes vol_ids with extension exts to out_dir. Assumes in_dir
     follows the PPA directory conventions (see corppa.utils.path_utils for more
     details). If ocr_limit > 0, stop after OCRing ocr_limit images.
     """
@@ -196,7 +201,7 @@ def ocr_volumes(vol_ids, in_dir, out_dir, ext_list, ocr_limit=0, show_progress=T
         report = ocr_images(
             in_vol_dir,
             out_vol_dir,
-            ext_list,
+            exts,
             ocr_limit=current_ocr_limit,
             show_progress=show_progress,
         )
@@ -252,7 +257,7 @@ def main():
     )
     parser.add_argument(
         "--ext",
-        help="Accepted file extension(s). Can be repeated. Defaults: .TIF, .jpg",
+        help="Accepted file extension(s), case insensitive. Can be repeated. Defaults: .tif, .jpg",
         nargs="*",
         type=str,
         action="extend",
@@ -268,7 +273,7 @@ def main():
     args = parser.parse_args()
     # Workaround: Set default extensions if none are provided.
     if args.ext is None:
-        args.ext = [".TIF", ".jpg"]
+        args.ext = [".tif", ".jpg"]
 
     # Validate arguments
     if not args.input.is_dir():
@@ -286,7 +291,7 @@ def main():
         ocr_images(
             args.input,
             args.output,
-            set(args.ext),
+            args.ext,
             ocr_limit=args.ocr_limit,
             show_progress=args.progress,
         )
@@ -295,7 +300,7 @@ def main():
             args.vol,
             args.input,
             args.output,
-            set(args.ext),
+            args.ext,
             ocr_limit=args.ocr_limit,
             show_progress=args.progress,
         )
