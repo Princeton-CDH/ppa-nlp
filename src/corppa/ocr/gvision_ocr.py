@@ -51,6 +51,46 @@ def image_relpath_generator(image_dir, exts, follow_symlinks=True):
         dirs[:] = [d for d in dirs if d[0] != "."]
 
 
+def ocr_image_via_gvision(gvision_client, input_image, out_txt, out_json):
+    """
+    Perform OCR for input image using the Google Cloud Vision API via the provided client.
+    The plaintext output and json response of the OCR call are written to out_txt and
+    out_json paths respectively.
+    """
+    # Check that Google Cloud Vision Python Client was successfully imported
+    if google_vision is None:
+        print(
+            "Error: Python environment does not contain google-cloud-vision "
+            "package. Switch environments or install package and try again.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Load the image into memory
+    with io.open(input_image, "rb") as image_reader:
+        content = image_reader.read()
+        image = google_vision.Image(content=content)
+
+        # Performs OCR and handwriting detection on the image file
+        response = gvision_client.document_text_detection(image=image)
+
+        # Save plain text output to local file;
+        # even if text is empty, create text file so we don't request again
+        with open(out_txt, "w") as textfilehandle:
+            textfilehandle.write(response.full_text_annotation.text)
+
+        # Save json response
+        json_response = google_vision.AnnotateImageResponse.to_json(response)
+        with open(out_json, "w") as jsonfilehandle:
+            jsonfilehandle.write(json_response)
+
+        if response.error.message:
+            raise Exception(
+                f"{response.error.message}\n for more info on error messages, "
+                "check: https://cloud.google.com/apis/design/errors"
+            )
+
+
 def ocr_images(in_dir, out_dir, exts, ocr_limit=0, show_progress=True):
     """
     OCR images in in_dir with extension exts to out_dir. If ocr_limit > 0,
@@ -89,41 +129,19 @@ def ocr_images(in_dir, out_dir, exts, ocr_limit=0, show_progress=True):
         if show_progress:
             progress_bar.refresh()
         # Get image and ocr output paths
-        imagefile = in_dir.joinpath(image_relpath)
-        textfile = out_dir.joinpath(image_relpath).with_suffix(".txt")
-        jsonfile = textfile.with_suffix(".json")
+        image_file = in_dir.joinpath(image_relpath)
+        text_file = out_dir.joinpath(image_relpath).with_suffix(".txt")
+        json_file = text_file.with_suffix(".json")
         # Ensure that all subdirectories exist
-        ocr_dir = textfile.parent
+        ocr_dir = text_file.parent
         ocr_dir.mkdir(parents=True, exist_ok=True)
 
         # Request OCR if file does not exist
-        if textfile.is_file():
+        if text_file.is_file():
             skip_count += 1
         else:
             try:
-                # Load the image into memory
-                with io.open(imagefile, "rb") as image_reader:
-                    content = image_reader.read()
-                image = google_vision.Image(content=content)
-
-                # Performs OCR and handwriting detection on the image file
-                response = client.document_text_detection(image=image)
-
-                # Save plain text output to local file;
-                # even if text is empty, create text file so we don't request again
-                with open(textfile, "w") as textfilehandle:
-                    textfilehandle.write(response.full_text_annotation.text)
-
-                # Save json response
-                json_response = google_vision.AnnotateImageResponse.to_json(response)
-                with open(jsonfile, "w") as jsonfilehandle:
-                    jsonfilehandle.write(json_response)
-
-                if response.error.message:
-                    raise Exception(
-                        f"{response.error.message}\n for more info on error messages, "
-                        "check: https://cloud.google.com/apis/design/errors"
-                    )
+                ocr_image_via_gvision(client, image_file, text_file, json_file)
 
                 # Update counter
                 ocr_count += 1
@@ -136,7 +154,7 @@ def ocr_images(in_dir, out_dir, exts, ocr_limit=0, show_progress=True):
                     # TODO: Is there a better structuring to avoid this break
                     break
             except (Exception, KeyboardInterrupt):
-                # Close progress bar before throwing error
+                # Close progress bar before raising error
                 progress_bar.close()
                 print(
                     f"Error: An error encountered while OCRing {imagefile.stem}",
