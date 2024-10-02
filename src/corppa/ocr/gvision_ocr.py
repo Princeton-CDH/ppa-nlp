@@ -16,24 +16,27 @@ from corppa.utils.path_utils import get_ppa_source, get_vol_dir
 
 # Attempt to import Google Cloud Vision Python Client
 try:
-    from google.cloud import vision
+    from google.cloud import vision as google_vision
 except ImportError:
-    vision = None
+    google_vision = None
 
 # Workaround (hopefully temporary) to surpress some logging printed to stderr
 os.environ["GRPC_VERBOSITY"] = "NONE"
 
 
-def image_relpath_generator(image_dir, ext_set, follow_symlinks=True):
+def image_relpath_generator(image_dir, exts, follow_symlinks=True):
     """
     This generator method finds all images in image_dir with file extensions
-    in ext_set. For each of these images, the method yields the relative path
-    with respect to image_dir.
+    in exts (case insensitive). For each of these images, the method yields
+    the relative path with respect to image_dir.
 
     For example, if image_dir = "a/b/c/images" and there are image files at the
     following paths: "a/b/c/images/alpha.jpg", "a/b/c/images/d/beta.jpg"
     The generate will produce these two items: "alpha.jpg" and "d/beta.jpg"
     """
+    # Create lowercase extension set from passed in exts
+    ext_set = {ext.lower() for ext in exts}
+
     # Using pathlib.walk over glob because (1) it allows us to find files with
     # multiple extensions in a single walk of the directory and (2) lets us
     # leverage additional functionality of pathlib.
@@ -41,22 +44,73 @@ def image_relpath_generator(image_dir, ext_set, follow_symlinks=True):
         # Check the files in walked directory
         for file in files:
             ext = os.path.splitext(file)[1]
-            if ext:
+            if ext.lower() in ext_set:
                 filepath = dirpath.joinpath(file)
                 yield filepath.relative_to(image_dir)
         # For future walking, remove hidden directories
         dirs[:] = [d for d in dirs if d[0] != "."]
 
 
-def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
+def ocr_image_via_gvision(gvision_client, input_image, out_txt, out_json):
     """
-    OCR images in in_dir with extension ext_list to out_dir. If ocr_limit > 0,
+    Perform OCR for input image using the Google Cloud Vision API via the provided client.
+    The plaintext output and json response of the OCR call are written to out_txt and
+    out_json paths respectively.
+    """
+    # TODO: Clean up code duplication. This check is needed, since this method relies on
+    #       both an existing client as well as API calls directly.
+    # Check that Google Cloud Vision Python Client library was successfully imported
+    if google_vision is None:
+        print(
+            "Error: Python environment does not contain google-cloud-vision "
+            "package. Switch environments or install package and try again.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Load the image into memory
+    with io.open(input_image, "rb") as image_reader:
+        content = image_reader.read()
+        image = google_vision.Image(content=content)
+
+        # Performs OCR and handwriting detection on the image file
+        response = gvision_client.document_text_detection(image=image)
+
+        # Save plain text output to local file;
+        # even if text is empty, create text file so we don't request again
+        with open(out_txt, "w") as textfilehandle:
+            textfilehandle.write(response.full_text_annotation.text)
+
+        # Save json response
+        json_response = google_vision.AnnotateImageResponse.to_json(response)
+        with open(out_json, "w") as jsonfilehandle:
+            jsonfilehandle.write(json_response)
+
+        if response.error.message:
+            raise Exception(
+                f"{response.error.message}\n for more info on error messages, "
+                "check: https://cloud.google.com/apis/design/errors"
+            )
+
+
+def ocr_images(in_dir, out_dir, exts, ocr_limit=0, show_progress=True):
+    """
+    OCR images in in_dir with extension exts to out_dir. If ocr_limit > 0,
     stop after OCRing ocr_limit images.
 
     Returns a map structure reporting the number of images OCR'd and skipped.
     """
+    # Check that Google Cloud Vision Python Client was successfully imported
+    if google_vision is None:
+        print(
+            "Error: Python environment does not contain google-cloud-vision "
+            "package. Switch environments or install package and try again.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     # Instantiate google vision client
-    client = vision.ImageAnnotatorClient()
+    client = google_vision.ImageAnnotatorClient()
 
     # Setup up progress bar if progress will be shown
     if show_progress:
@@ -72,46 +126,24 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
 
     ocr_count = 0
     skip_count = 0
-    for image_relpath in image_relpath_generator(in_dir, set(ext_list)):
+    for image_relpath in image_relpath_generator(in_dir, exts):
         # Refresh progress bar
         if show_progress:
             progress_bar.refresh()
         # Get image and ocr output paths
-        imagefile = in_dir.joinpath(image_relpath)
-        textfile = out_dir.joinpath(image_relpath).with_suffix(".txt")
-        jsonfile = textfile.with_suffix(".json")
+        image_file = in_dir.joinpath(image_relpath)
+        text_file = out_dir.joinpath(image_relpath).with_suffix(".txt")
+        json_file = text_file.with_suffix(".json")
         # Ensure that all subdirectories exist
-        ocr_dir = textfile.parent
+        ocr_dir = text_file.parent
         ocr_dir.mkdir(parents=True, exist_ok=True)
 
         # Request OCR if file does not exist
-        if textfile.is_file():
+        if text_file.is_file():
             skip_count += 1
         else:
             try:
-                # Load the image into memory
-                with io.open(imagefile, "rb") as image_reader:
-                    content = image_reader.read()
-                image = vision.Image(content=content)
-
-                # Performs OCR and handwriting detection on the image file
-                response = client.document_text_detection(image=image)
-
-                # Save plain text output to local file;
-                # even if text is empty, create text file so we don't request again
-                with open(textfile, "w") as textfilehandle:
-                    textfilehandle.write(response.full_text_annotation.text)
-
-                # Save json response
-                json_response = vision.AnnotateImageResponse.to_json(response)
-                with open(jsonfile, "w") as jsonfilehandle:
-                    jsonfilehandle.write(json_response)
-
-                if response.error.message:
-                    raise Exception(
-                        f"{response.error.message}\n for more info on error messages, "
-                        "check: https://cloud.google.com/apis/design/errors"
-                    )
+                ocr_image_via_gvision(client, image_file, text_file, json_file)
 
                 # Update counter
                 ocr_count += 1
@@ -124,6 +156,8 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
                     # TODO: Is there a better structuring to avoid this break
                     break
             except (Exception, KeyboardInterrupt):
+                # Close progress bar before raising error
+                progress_bar.close()
                 print(
                     f"Error: An error encountered while OCRing {imagefile.stem}",
                     file=sys.stderr,
@@ -143,9 +177,9 @@ def ocr_images(in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
     return {"ocr_count": ocr_count, "skip_count": skip_count}
 
 
-def ocr_volumes(vol_ids, in_dir, out_dir, ext_list, ocr_limit=0, show_progress=True):
+def ocr_volumes(vol_ids, in_dir, out_dir, exts, ocr_limit=0, show_progress=True):
     """
-    OCR images for volumes vol_ids with extension ext_list to out_dir. Assumes in_dir
+    OCR images for volumes vol_ids with extension exts to out_dir. Assumes in_dir
     follows the PPA directory conventions (see corppa.utils.path_utils for more
     details). If ocr_limit > 0, stop after OCRing ocr_limit images.
     """
@@ -187,7 +221,7 @@ def ocr_volumes(vol_ids, in_dir, out_dir, ext_list, ocr_limit=0, show_progress=T
         report = ocr_images(
             in_vol_dir,
             out_vol_dir,
-            ext_list,
+            exts,
             ocr_limit=current_ocr_limit,
             show_progress=show_progress,
         )
@@ -243,7 +277,7 @@ def main():
     )
     parser.add_argument(
         "--ext",
-        help="Accepted file extension(s). Can be repeated. Defaults: .TIF, .jpg",
+        help="Accepted file extension(s), case insensitive. Can be repeated. Defaults: .tif, .jpg",
         nargs="*",
         type=str,
         action="extend",
@@ -259,7 +293,7 @@ def main():
     args = parser.parse_args()
     # Workaround: Set default extensions if none are provided.
     if args.ext is None:
-        args.ext = [".TIF", ".jpg"]
+        args.ext = [".tif", ".jpg"]
 
     # Validate arguments
     if not args.input.is_dir():
@@ -277,7 +311,7 @@ def main():
         ocr_images(
             args.input,
             args.output,
-            set(args.ext),
+            args.ext,
             ocr_limit=args.ocr_limit,
             show_progress=args.progress,
         )
@@ -286,19 +320,11 @@ def main():
             args.vol,
             args.input,
             args.output,
-            set(args.ext),
+            args.ext,
             ocr_limit=args.ocr_limit,
             show_progress=args.progress,
         )
 
 
 if __name__ == "__main__":
-    # Check that Google Cloud Vision Python Client was successfully imported
-    if vision is None:
-        print(
-            "Error: Python environment does not contain google-cloud-vision "
-            "package. Switch environments or install package and try again."
-        )
-        sys.exit(1)
-
     main()
