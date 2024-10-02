@@ -57,7 +57,9 @@ def ocr_image_via_gvision(gvision_client, input_image, out_txt, out_json):
     The plaintext output and json response of the OCR call are written to out_txt and
     out_json paths respectively.
     """
-    # Check that Google Cloud Vision Python Client was successfully imported
+    # TODO: Clean up code duplication. This check is needed, since this method relies on
+    #       both an existing client as well as API calls directly.
+    # Check that Google Cloud Vision Python Client library was successfully imported
     if google_vision is None:
         print(
             "Error: Python environment does not contain google-cloud-vision "
