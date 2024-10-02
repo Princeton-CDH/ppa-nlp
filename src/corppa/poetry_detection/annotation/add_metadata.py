@@ -50,9 +50,6 @@ def combine_data(
     for page in progress_pages:
         # add metadata dictionary for Prodigy
         page["meta"] = metadata[page["work_id"]]
-        # replace .tif with .jpg in image_path (quick fix for the image path issue)
-        # NOTE: this is provisional and should be revisited
-        page["image_path"] = page["image_path"].replace(".TIF", ".jpg")
 
         yield page
 
