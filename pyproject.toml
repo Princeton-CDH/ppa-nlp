@@ -35,7 +35,7 @@ ocr = ["google-cloud-vision"]
 dev = ["pre-commit", "corppa[test]", "corppa[ocr]"]
 
 [project.scripts]
-corppa-filter-corpus = "corppa.utils.filter:main"
+corppa-filter = "corppa.utils.filter:main"
 corppa-ocr = "corppa.ocr.gvision_ocr:main"
 
 [tool.hatch.version]

@@ -20,11 +20,11 @@ by :mod:`orjsonl`, with or without compression; e.g. `.jsonl`, `.jsonl.gz`, `.js
 
 Example command line usages:
 ```
-corppa-filter-corpus path/to/ppa_pages.jsonl output/ppa_subset_pages.jsonl --idfile my_ids.txt
+corppa-filter path/to/ppa_pages.jsonl output/ppa_subset_pages.jsonl --idfile my_ids.txt
 ```
 
 ```
-corppa-filter-corpus path/to/ppa_pages.jsonl output/ppa_subset_pages.jsonl --pg-file pages.csv --include key=value
+corppa-filter path/to/ppa_pages.jsonl output/ppa_subset_pages.jsonl --pg-file pages.csv --include key=value
 ```
 """
 
@@ -220,7 +220,7 @@ class MergeKeyValuePairs(argparse.Action):
 
 def main():
     """Command-line access to filtering the corpus. Available as
-    `corppa-filter-corpus` when this package is installed with pip."""
+    `corppa-filter` when this package is installed with pip."""
 
     parser = argparse.ArgumentParser(
         description="Filters PPA full-text corpus",
