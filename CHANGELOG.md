@@ -1,8 +1,23 @@
 # CHANGELOG
 
+## 0.2.0
+### Corppa Utilities
+- Basic readme documentation for filter script
+- New script for OCR with google vision
+- Updated filter script:
+  - Uses PPA work ids instead of source ids
+  - Additional filtering by volume and page
+  - Additional filtering by include or exclude key-pair values
+- New utilities function for working with PPA corpus file paths
+- New script for generating PPA page subset to be used in conjunction with the filter script
+- New script for adding image relative paths to a PPA text corpus
+### Poetry Detection
+- New Prodigy recipes and custom CSS for image and text annotation
+- Script to add PPA work-level metadata for display in Prodigy
+
+
 ## 0.1.0
 - Utility to filter the full text corpus by source ID
 - Experimental Scripts
   - OCR evaluation
   - Character-level statistics
-
