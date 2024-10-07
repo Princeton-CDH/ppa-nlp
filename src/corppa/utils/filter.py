@@ -296,19 +296,19 @@ def main():
 
     if args.idfile:
         if not args.idfile.is_file():
-            print(f"Error: idfile {args.idfile} does not exist")
-            sys.exit(-1)
+            print(f"Error: idfile {args.idfile} does not exist", file=sys.stderr)
+            sys.exit(1)
         elif args.idfile.stat().st_size == 0:
-            print(f"Error: idfile {args.idfile} is zero size")
-            sys.exit(-1)
+            print(f"Error: idfile {args.idfile} is zero size", file=sys.stderr)
+            sys.exit(1)
 
     if args.pgfile:
         if not args.pgfile.is_file():
-            print(f"Error: pgfile {args.pgfile} does not exist")
+            print(f"Error: pgfile {args.pgfile} does not exist", file=sys.stderr)
             sys.exit(1)
         elif args.pgfile.stat().st_size == 0:
-            print(f"Error: pgfile {args.pgfile} is zero size")
-            sys.exit(-1)
+            print(f"Error: pgfile {args.pgfile} is zero size", file=sys.stderr)
+            sys.exit(1)
 
     # if requested output filename has no extension, add jsonl
     output_filepath = args.output
@@ -317,9 +317,10 @@ def main():
 
     if output_filepath.is_file():
         print(
-            f"Error: requested output file {args.output} already exists; not overwriting"
+            f"Error: requested output file {args.output} already exists; not overwriting",
+            file=sys.stderr,
         )
-        sys.exit(-1)
+        sys.exit(1)
 
     try:
         save_filtered_corpus(
@@ -334,12 +335,12 @@ def main():
     except (FileNotFoundError, JSONDecodeError) as err:
         # catch known possible errors and display briefly
         # with the type of error and the brief message
-        print(f"{err.__class__.__name__}: {err}")
-        sys.exit(-1)
+        print(f"{err.__class__.__name__}: {err}", file=sys.stderr)
+        sys.exit(1)
 
     # check if output file exists but is zero size (i.e., no pages selected)
     if output_filepath.is_file() and output_filepath.stat().st_size == 0:
-        # if claenup is disabled, remove and report
+        # if cleanup is disabled, remove and report
         if args.cleanup:
             output_filepath.unlink()
             print(
