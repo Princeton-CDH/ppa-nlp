@@ -36,7 +36,7 @@ corppa-filter-corpus ppa_pages.jsonl my_subset.jsonl --idfile my_ids.txt
 > [!NOTE]
 > **PPA work identifiers** are based on source identifiers, i.e., the identifier from the original source (HathiTrust, Gale/ECCO, EEBO-TCP). In most cases the work identifier and the source identifier are the same, but _if you are working with any excerpted content the work id is NOT the same as the source identifier_. Excerpt ids are based on the combination of source identifier and the first original page included in the excerpt. In some cases PPA contains multiple excerpts from the same source, so this provides guaranteed unique work ids.
 
-To create a subset of _specific pages_ from specific volumes, create a CSV file that includes `work_id` and `page_num`, and pass that to the filter script with the `--pg-file` option:
+To create a subset of _specific pages_ from specific volumes, create a CSV file that includes fields `work_id` and `page_num`, and pass that to the filter script with the `--pg-file` option:
 
 ```sh
 corppa-filter-corpus ppa_pages.jsonl my_subset.jsonl --pg_file my_work_pages.csv
