@@ -1,13 +1,13 @@
+import csv
 import os
 import sys
-import spacy
-import csv
-import orjsonl
 
-from xopen import xopen
-from tqdm import tqdm
+import orjsonl
+import spacy
 from lingua import LanguageDetectorBuilder
 from ocr_helper import clean_chars
+from tqdm import tqdm
+from xopen import xopen
 
 
 class OCREvaluator:
