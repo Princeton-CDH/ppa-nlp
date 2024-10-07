@@ -1,6 +1,7 @@
 # CHANGELOG
 
 ## 0.2.0
+- Now requires Python 3.12
 ### Corppa Utilities
 - Basic readme documentation for filter script
 - New script for OCR with google vision
@@ -14,6 +15,8 @@
 ### Poetry Detection
 - New Prodigy recipes and custom CSS for image and text annotation
 - Script to add PPA work-level metadata for display in Prodigy
+### Misc
+- Ruff precommit hook now configured to autofix import order
 
 
 ## 0.1.0
