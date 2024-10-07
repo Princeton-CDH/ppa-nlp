@@ -32,7 +32,9 @@ def get_pages(in_csv, k):
     with poetry are included and the remaining pages are selected randomly from
     the remaining pages under consideration.
 
-    Note: In some cases the generated page set may not match k.
+    Notes:
+        * In some cases the generated page set may not match k.
+        * This is not compatible with PPA works with non-sequential page ranges.
     """
     # Load page data
     page_pool = {}
@@ -62,6 +64,7 @@ def get_pages(in_csv, k):
         )
 
     # Select remaining pages randomly
+    # TODO: Revisit to simply page selcection logic
     while page_counter < k:
         # Select work
         work_id = random.choice(list(page_pool.keys()))
