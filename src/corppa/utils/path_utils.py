@@ -87,3 +87,30 @@ def get_vol_dir(vol_id):
         raise NotImplementedError(f"{source} volume directory conventions TBD")
     else:
         raise ValueError(f"Unknown source '{source}'")
+
+
+def get_volume_id(work_id):
+    """
+    Extract volume id from PPA work id
+
+    * For full works, volume ids and work ids are the same.
+    * For excerpts, the work id is composed of the prefix followed by "-p" and
+      the starting page of the excerpt.
+    """
+    return work_id.rsplit("-p", 1)[0]
+
+
+def get_image_relpath(work_id, page_num):
+    """
+    Get the (relative) image path for specified PPA work page
+    """
+    vol_id = get_volume_id(work_id)
+    vol_dir = get_vol_dir(vol_id)
+    source = get_ppa_source(vol_id)
+    if source == "Gale":
+        image_name = f"{vol_id}_{page_num:04d}0.TIF"
+        return vol_dir.joinpath(image_name)
+    elif source == "HathiTrust":
+        raise NotImplementedError
+    else:
+        raise ValueError(f"Unsupported source '{source}'")

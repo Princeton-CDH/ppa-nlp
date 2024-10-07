@@ -6,9 +6,11 @@ import pytest
 from corppa.utils.path_utils import (
     decode_htid,
     encode_htid,
+    get_image_relpath,
     get_ppa_source,
     get_stub_dir,
     get_vol_dir,
+    get_volume_id,
 )
 
 
@@ -89,3 +91,37 @@ def test_get_vol_dir_unk(mock_get_ppa_source, mock_get_stub_dir):
         get_vol_dir("vol_id")
     mock_get_ppa_source.assert_called_with("vol_id")
     mock_get_stub_dir.assert_not_called()
+
+
+def test_get_volume_id():
+    # Full works
+    for work_id in ["CB0131351206", "dul1.ark:/13960/t5w67998k"]:
+        assert get_volume_id(work_id) == work_id
+
+    # Excerpts
+    assert get_volume_id("CW0102294490-pxvi") == "CW0102294490"
+    assert get_volume_id("coo1.ark:/13960/t4bp0n867-p3") == "coo1.ark:/13960/t4bp0n867"
+
+
+@patch("corppa.utils.path_utils.get_volume_id", return_value="vol_id")
+@patch("corppa.utils.path_utils.get_vol_dir", return_value=pathlib.Path("vol_dir"))
+@patch("corppa.utils.path_utils.get_ppa_source")
+def test_get_image_relpath(mock_get_ppa_source, mock_get_vol_dir, mock_get_volume_id):
+    # Gale
+    mock_get_ppa_source.return_value = "Gale"
+    assert get_image_relpath("test_id", 4) == pathlib.Path(
+        "vol_dir", "vol_id_00040.TIF"
+    )
+    assert get_image_relpath("test_id", 100) == pathlib.Path(
+        "vol_dir", "vol_id_01000.TIF"
+    )
+
+    # HathiTrust
+    mock_get_ppa_source.return_value = "HathiTrust"
+    with pytest.raises(NotImplementedError):
+        get_image_relpath("test_id", 4)
+
+    # Other sources
+    mock_get_ppa_source.return_value = "EEBO"
+    with pytest.raises(ValueError, match="Unsupported source 'EEBO'"):
+        get_image_relpath("test_id", 4)

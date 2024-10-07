@@ -39,9 +39,6 @@ PRODIGY_COMMON_CONFIG = {
         "hide_true_newline_tokens": False,
     },
     "global_css_dir": CURRENT_DIR,
-    # Task annotation flags, these should be move elsewhere
-    "feed_overlap": False,
-    "annotations_per_task": 2,
 }
 
 
