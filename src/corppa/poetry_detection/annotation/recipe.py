@@ -18,7 +18,7 @@ from pathlib import Path
 import spacy
 from prodigy.components.loaders import JSONL
 from prodigy.core import Arg, recipe
-from prodigy.util import log
+from prodigy.util import get_labels, log
 
 #: reference to current directory, for use as Prodigy CSS directory
 CURRENT_DIR = Path(__file__).parent.absolute()
@@ -78,7 +78,11 @@ def tokenize_stream(stream, image_prefix=None):
 @recipe(
     "annotate_text_and_image",
     dataset=Arg(help="path to input dataset"),
-    labels=Arg("--label", "-l", help="Comma-separated label(s)"),
+    label=Arg(
+        "--label",
+        "-l",
+        help="Comma-separated label(s) to annotate or text file with one label per line",
+    ),
     image_prefix=Arg("--image-prefix", "-i", help="Base URL for images"),
 )
 def annotate_text_and_image(
@@ -93,7 +97,7 @@ def annotate_text_and_image(
     tokenized_stream = tokenize_stream(stream, image_prefix)
 
     # split labels by commas and strip any whitespace
-    label_list = [label.strip() for label in labels.split(",")]
+    label_list = get_labels(label)
 
     blocks = [
         {
@@ -127,7 +131,11 @@ def annotate_text_and_image(
 @recipe(
     "annotate_page_text",
     dataset=Arg(help="path to input dataset"),
-    labels=Arg("--label", "-l", help="Comma-separated label(s)"),
+    label=Arg(
+        "--label",
+        "-l",
+        help="Comma-separated label(s) to annotate or text file with one label per line",
+    ),
     image_prefix=Arg("--image-prefix", "-i", help="Base URL for images"),
 )
 def annotate_page_text(
@@ -143,7 +151,7 @@ def annotate_page_text(
     tokenized_stream = tokenize_stream(stream, image_prefix)
 
     # split labels by commas and strip any whitespace
-    label_list = [label.strip() for label in labels.split(",")]
+    label_list = get_label(label)
 
     blocks = [
         {
