@@ -1,8 +1,12 @@
 """
-This module provides custom recipes for Prodigy annotation. They were
-created with page-level text annotation in mind, and support annotating
-text with a reference image displayed beside the text (`annotate_page_text`),
-or annotating both text and image side by side (`annotate_text_and_image`).
+This module provides custom recipes for Prodigy annotation. These were
+created with page-level annotation in mind, and assume a page is associated
+with both an image and text.
+
+Recipes:
+    * `annotate_page_text`: Annotate a page's text with the page's image
+      displayed side-by-side for reference.
+    * `annotate_text_and_image`: Annotate both a page's text and image side-by-side.
 
 Referenced images must be served out independently for display; the image url
 prefix for images should be specified when initializing the recipe.
@@ -10,7 +14,7 @@ prefix for images should be specified when initializing the recipe.
 Example use:
 ```
 prodigy annotate_page_text poetry_spans poetry_pages.jsonl --label POETRY,PROSODY -F ../corppa/poetry_detection/annotation/recipe.py --image-prefix http://localhost:8000/
-prodigy annotate_text_and_image poetry_text_image poetry_pages.jsonl --label POETRY -F ../corppa/poetry_detection/annotation/recipe.py --image-prefix http://localhost:8000/
+prodigy annotate_text_and_image poetry_text_image poetry_pages.jsonl -l POETRY -F ../corppa/poetry_detection/annotation/recipe.py --image-prefix http://localhost:8000/
 """
 
 from pathlib import Path
