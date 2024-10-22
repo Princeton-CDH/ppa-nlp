@@ -101,7 +101,7 @@ def annotate_text_and_image(
     tokenized_stream = tokenize_stream(stream, image_prefix)
 
     # split labels by commas and strip any whitespace
-    label_list = get_labels(label)
+    label_list = get_labels(labels)
 
     blocks = [
         {
@@ -155,7 +155,7 @@ def annotate_page_text(
     tokenized_stream = tokenize_stream(stream, image_prefix)
 
     # split labels by commas and strip any whitespace
-    label_list = get_label(label)
+    label_list = get_labels(labels)
 
     blocks = [
         {
