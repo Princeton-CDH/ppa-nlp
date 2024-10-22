@@ -18,6 +18,7 @@ from pathlib import Path
 import spacy
 from prodigy.components.loaders import JSONL
 from prodigy.core import Arg, recipe
+from prodigy.util import log
 
 #: reference to current directory, for use as Prodigy CSS directory
 CURRENT_DIR = Path(__file__).parent.absolute()
@@ -86,7 +87,7 @@ def annotate_text_and_image(
     """Annotate text and image side by side: allows adding manual spans
     to both image and text. Intended for page-level annotation.
     """
-
+    log("RECIPE: Starting recipe annotate_text_and_image", locals())
     stream = JSONL(source)  # load jsonlines into stream
     # tokenize for span annotation and add image prefix
     tokenized_stream = tokenize_stream(stream, image_prefix)
@@ -136,7 +137,7 @@ def annotate_page_text(
     with text for reference only (image cannot be annotated).
     Intended for page-level annotation.
     """
-
+    log("RECIPE: Starting recipe annotate_page_text", locals())
     stream = JSONL(source)  # load jsonlines into stream
     # tokenize for span annotation and add image prefix
     tokenized_stream = tokenize_stream(stream, image_prefix)
