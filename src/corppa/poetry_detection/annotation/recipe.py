@@ -20,9 +20,10 @@ prodigy annotate_text_and_image poetry_text_image poetry_pages.jsonl -l POETRY -
 from pathlib import Path
 
 import spacy
-from prodigy.components.loaders import JSONL
+from prodigy import log
+from prodigy.components.stream import get_stream
 from prodigy.core import Arg, recipe
-from prodigy.util import get_labels, log
+from prodigy.util import get_labels
 
 #: reference to current directory, for use as Prodigy CSS directory
 CURRENT_DIR = Path(__file__).parent.absolute()
@@ -82,7 +83,7 @@ def tokenize_stream(stream, image_prefix=None):
 @recipe(
     "annotate_text_and_image",
     dataset=Arg(help="path to input dataset"),
-    label=Arg(
+    labels=Arg(
         "--label",
         "-l",
         help="Comma-separated label(s) to annotate or text file with one label per line",
@@ -96,7 +97,7 @@ def annotate_text_and_image(
     to both image and text. Intended for page-level annotation.
     """
     log("RECIPE: Starting recipe annotate_text_and_image", locals())
-    stream = JSONL(source)  # load jsonlines into stream
+    stream = get_stream(source)
     # tokenize for span annotation and add image prefix
     tokenized_stream = tokenize_stream(stream, image_prefix)
 
@@ -135,7 +136,7 @@ def annotate_text_and_image(
 @recipe(
     "annotate_page_text",
     dataset=Arg(help="path to input dataset"),
-    label=Arg(
+    labels=Arg(
         "--label",
         "-l",
         help="Comma-separated label(s) to annotate or text file with one label per line",
@@ -150,7 +151,7 @@ def annotate_page_text(
     Intended for page-level annotation.
     """
     log("RECIPE: Starting recipe annotate_page_text", locals())
-    stream = JSONL(source)  # load jsonlines into stream
+    stream = get_stream(source)
     # tokenize for span annotation and add image prefix
     tokenized_stream = tokenize_stream(stream, image_prefix)
 
