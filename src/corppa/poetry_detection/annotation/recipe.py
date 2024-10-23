@@ -21,6 +21,8 @@ from pathlib import Path
 
 import spacy
 from prodigy import log
+from prodigy.components.preprocess import add_tokens
+from prodigy.components.preprocess import fetch_media as fetch_media_preprocessor
 from prodigy.components.stream import get_stream
 from prodigy.core import Arg, recipe
 from prodigy.util import get_labels
@@ -48,36 +50,28 @@ PRODIGY_COMMON_CONFIG = {
 }
 
 
-def tokenize_stream(stream, image_prefix=None):
-    """Takes a stream of Prodigy tasks and tokenizes text for span annotation,
-    and optionally adds an image prefix URL to any image paths present.
-    Stream is expected to contain `text` and may contain image_path` and a `meta`
-    dictionary. Returns a generator of the stream.
-    """
-
-    nlp = spacy.blank("en")  # use blank spaCy model for tokenization
-
-    # ensure image prefix URL does not have a trailing slash
+def add_image(task, image_prefix=None):
     if image_prefix is None:
-        image_prefix = ""
-    image_prefix = image_prefix.rstrip("/")
+        task["image"] = task["image_path"]
+    else:
+        path_pfx = image_prefix.rstrip("/")
+        task["image"] = f"{path_pfx}/{task['image_path']}"
+    return task
 
-    for task in stream:
-        if task.get("text"):
-            doc = nlp(task["text"])
-            task["tokens"] = [
-                {
-                    "text": token.text,
-                    "start": token.idx,
-                    "end": token.idx + len(token.text),
-                    "id": i,
-                }
-                for i, token in enumerate(doc)
-            ]
-        # add image prefix URL for serving out images
-        if "image_path" in task:
-            task["image"] = f"{image_prefix}/{task['image_path']}"
-        yield task
+
+def add_images(examples, image_prefix=None):
+    for task in examples:
+        yield add_image(task, image_prefix=image_prefix)
+
+
+def remove_images(examples, image_prefix=None):
+    for task in examples:
+        # If "image" is a base64 string and "image_path" is present in the task,
+        # remove the image data
+        if task["image"].startswith("data:") and "image_path" in task:
+            # Replace image with full image path
+            add_image(task, image_prefix=image_prefix)
+    return examples
 
 
 @recipe(
@@ -89,17 +83,29 @@ def tokenize_stream(stream, image_prefix=None):
         help="Comma-separated label(s) to annotate or text file with one label per line",
     ),
     image_prefix=Arg("--image-prefix", "-i", help="Base URL for images"),
+    fetch_media=Arg(
+        "--fetch-media", "-FM", help="Load images from local paths or URLs"
+    ),
 )
 def annotate_text_and_image(
-    dataset: str, source: str, labels: str, image_prefix: str = None
+    dataset: str,
+    source: str,
+    labels: str,
+    image_prefix: str = None,
+    fetch_media: bool = False,
 ):
     """Annotate text and image side by side: allows adding manual spans
     to both image and text. Intended for page-level annotation.
     """
     log("RECIPE: Starting recipe annotate_text_and_image", locals())
     stream = get_stream(source)
-    # tokenize for span annotation and add image prefix
-    tokenized_stream = tokenize_stream(stream, image_prefix)
+    # add tokens tokenize
+    stream.apply(add_tokens, nlp=spacy.blank("en"), stream=stream)
+    # add image prefix
+    stream.apply(add_images, image_prefix=image_prefix)
+    # optionally fetch media
+    if fetch_media:
+        stream.apply(fetch_media_preprocessor, ["image"], skip=True)
 
     # split labels by commas and strip any whitespace
     label_list = get_labels(labels)
@@ -125,12 +131,17 @@ def annotate_text_and_image(
         }
     )
 
-    return {
+    components = {
         "dataset": dataset,
-        "stream": tokenized_stream,
+        "stream": stream,
         "view_id": "blocks",
         "config": config,
     }
+
+    if fetch_media:
+        components["before_db"] = lambda x: remove_images(x, image_prefix=image_prefix)
+
+    return components
 
 
 @recipe(
@@ -142,9 +153,16 @@ def annotate_text_and_image(
         help="Comma-separated label(s) to annotate or text file with one label per line",
     ),
     image_prefix=Arg("--image-prefix", "-i", help="Base URL for images"),
+    fetch_media=Arg(
+        "--fetch-media", "-FM", help="Load images from local paths or URLs"
+    ),
 )
 def annotate_page_text(
-    dataset: str, source: str, labels: str, image_prefix: str = None
+    dataset: str,
+    source: str,
+    labels: str,
+    image_prefix: str = None,
+    fetch_media: bool = False,
 ):
     """Annotate text with manual spans; displays an image side by side
     with text for reference only (image cannot be annotated).
@@ -152,8 +170,13 @@ def annotate_page_text(
     """
     log("RECIPE: Starting recipe annotate_page_text", locals())
     stream = get_stream(source)
-    # tokenize for span annotation and add image prefix
-    tokenized_stream = tokenize_stream(stream, image_prefix)
+    # add tokens tokenize
+    stream.apply(add_tokens, nlp=spacy.blank("en"), stream=stream)
+    # add image prefix
+    stream.apply(add_images, stream, image_prefix=image_prefix)
+    # optionally fetch media
+    if fetch_media:
+        stream.apply(fetch_media_preprocessor, ["image"], skip=True)
 
     # split labels by commas and strip any whitespace
     label_list = get_labels(labels)
@@ -175,9 +198,14 @@ def annotate_page_text(
         }
     )
 
-    return {
+    components = {
         "dataset": dataset,
-        "stream": tokenized_stream,
+        "stream": stream,
         "view_id": "blocks",
         "config": config,
     }
+
+    if fetch_media:
+        components["before_db"] = lambda x: remove_images(x, image_prefix=image_prefix)
+
+    return components
