@@ -283,6 +283,7 @@ class ReviewStream:
         for version in versions:
             session_id = version[SESSION_ID_ATTR]
             # Assume: session name does not contain -
+            # full session name includes the dataset id; split to get the session name without dataset id
             session_name = session_id.rsplit("-", maxsplit=1)[1]
             if session_id not in session_counts:
                 session_counts[session_id] = 1
