@@ -94,7 +94,7 @@ def add_images(examples: StreamType, image_prefix: Optional[str] = None) -> Stre
         yield add_image(example, image_prefix=image_prefix)
 
 
-def remove_images(
+def remove_image_data(
     examples: Iterable[TaskType], image_prefix: Optional[str] = None
 ) -> List[TaskType]:
     """
@@ -172,7 +172,9 @@ def annotate_text_and_image(
     }
 
     if fetch_media:
-        components["before_db"] = lambda x: remove_images(x, image_prefix=image_prefix)
+        components["before_db"] = lambda x: remove_image_data(
+            x, image_prefix=image_prefix
+        )
 
     return components
 
@@ -235,7 +237,9 @@ def annotate_page_text(
     }
 
     if fetch_media:
-        components["before_db"] = lambda x: remove_images(x, image_prefix=image_prefix)
+        components["before_db"] = lambda x: remove_image_data(
+            x, image_prefix=image_prefix
+        )
 
     return components
 
