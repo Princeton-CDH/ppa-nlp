@@ -125,9 +125,10 @@ def find_relative_paths(
     This method finds files anywhere under the specified base directory
     that match any of the specified file extensions (case insensitive),
     and returns a generator of path objects with a path relative to the
-    base directory.
+    base directory. File extensions should include the leading period,
+    i.e. `[".jpg", ".tiff"]` rather than `["jpg", "tiff"]`.
 
-    For example, given a base directory `a/b/c/images`, an extension list of `*.jpg`,
+    For example, given a base directory `a/b/c/images`, an extension list of `.jpg`,
     and files nested at different levels in the hierarchy
     `a/b/c/images/alpha.jpg`, `a/b/c/images/d/beta.jpg`:
     ```
