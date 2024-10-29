@@ -12,7 +12,7 @@ import sys
 
 from tqdm import tqdm
 
-from corppa.utils.path_utils import get_ppa_source, get_vol_dir
+from corppa.utils.path_utils import find_relative_paths, get_ppa_source, get_vol_dir
 
 # Attempt to import Google Cloud Vision Python Client
 try:
@@ -22,33 +22,6 @@ except ImportError:
 
 # Workaround (hopefully temporary) to surpress some logging printed to stderr
 os.environ["GRPC_VERBOSITY"] = "NONE"
-
-
-def image_relpath_generator(image_dir, exts, follow_symlinks=True):
-    """
-    This generator method finds all images in image_dir with file extensions
-    in exts (case insensitive). For each of these images, the method yields
-    the relative path with respect to image_dir.
-
-    For example, if image_dir = "a/b/c/images" and there are image files at the
-    following paths: "a/b/c/images/alpha.jpg", "a/b/c/images/d/beta.jpg"
-    The generate will produce these two items: "alpha.jpg" and "d/beta.jpg"
-    """
-    # Create lowercase extension set from passed in exts
-    ext_set = {ext.lower() for ext in exts}
-
-    # Using pathlib.walk over glob because (1) it allows us to find files with
-    # multiple extensions in a single walk of the directory and (2) lets us
-    # leverage additional functionality of pathlib.
-    for dirpath, dirs, files in image_dir.walk(follow_symlinks=follow_symlinks):
-        # Check the files in walked directory
-        for file in files:
-            ext = os.path.splitext(file)[1]
-            if ext.lower() in ext_set:
-                filepath = dirpath.joinpath(file)
-                yield filepath.relative_to(image_dir)
-        # For future walking, remove hidden directories
-        dirs[:] = [d for d in dirs if d[0] != "."]
 
 
 def ocr_image_via_gvision(gvision_client, input_image, out_txt, out_json):
@@ -126,7 +99,7 @@ def ocr_images(in_dir, out_dir, exts, ocr_limit=0, show_progress=True):
 
     ocr_count = 0
     skip_count = 0
-    for image_relpath in image_relpath_generator(in_dir, exts):
+    for image_relpath in find_relative_paths(in_dir, exts):
         # Refresh progress bar
         if show_progress:
             progress_bar.refresh()

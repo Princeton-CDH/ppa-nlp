@@ -1,8 +1,10 @@
 """
-Library of general-purpose auxiliary methods for stand-alone scripts
+General-purpose methods for working with paths, PPA identifiers, and directories
 """
 
+import os
 import pathlib
+from typing import Iterator
 
 _htid_encode_map = {":": "+", "/": "=", ".": ","}
 _htid_encode_table = str.maketrans(_htid_encode_map)
@@ -114,3 +116,38 @@ def get_image_relpath(work_id, page_num):
         raise NotImplementedError
     else:
         raise ValueError(f"Unsupported source '{source}'")
+
+
+def find_relative_paths(base_dir, exts, follow_symlinks=True) -> Iterator[pathlib.Path]:
+    """
+    This method finds files anywhere under the specified base directory
+    that match any of the specified file extensions (case insensitive),
+    and returns a generator of path objects with a path relative to the
+    base directory.
+
+    For example, given a base directory `a/b/c/images`, an extension list of `*.jpg`,
+    and files nested at different levels in the hierarchy
+    `a/b/c/images/alpha.jpg`, `a/b/c/images/d/beta.jpg`:
+    ```
+    a/b/c/images
+      |-- alpha.jpg
+      +-- d
+          |-- beta.jpg
+    ```
+    The result will include the two items: `alpha.jpg and `d/beta.jpg`
+    """
+    # Create lowercase extension set from passed in exts
+    ext_set = {ext.lower() for ext in exts}
+
+    # Using pathlib.walk over glob because (1) it allows us to find files with
+    # multiple extensions in a single walk of the directory and (2) lets us
+    # leverage additional functionality of pathlib.
+    for dirpath, dirs, files in base_dir.walk(follow_symlinks=follow_symlinks):
+        # Check the files in walked directory
+        for file in files:
+            ext = os.path.splitext(file)[1]
+            if ext.lower() in ext_set:
+                filepath = dirpath.joinpath(file)
+                yield filepath.relative_to(base_dir)
+        # For future walking, remove hidden directories
+        dirs[:] = [d for d in dirs if d[0] != "."]
