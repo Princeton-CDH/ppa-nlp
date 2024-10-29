@@ -56,7 +56,7 @@ def collate_txt(input_dir: pathlib.Path, output_dir: pathlib.Path):
 
         # ensure the parent directory exists
         output_file.parent.mkdir(exist_ok=True)
-        # save out text content as json (currently overwrites if anything exists)
+        # save out text content as json
         with output_file.open("w") as outfile:
             json.dump(txt_data, outfile)
 
