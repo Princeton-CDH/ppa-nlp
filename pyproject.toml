@@ -37,6 +37,7 @@ dev = ["pre-commit", "corppa[test]", "corppa[ocr]"]
 [project.scripts]
 corppa-filter = "corppa.utils.filter:main"
 corppa-ocr = "corppa.ocr.gvision_ocr:main"
+collate-txt = "corppa.ocr.collate_txt:main"
 
 [tool.hatch.version]
 path = "src/corppa/__init__.py"
