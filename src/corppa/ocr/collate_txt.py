@@ -27,6 +27,7 @@ def page_number(filename: pathlib.Path) -> str:
 def collate_txt(input_dir: pathlib.Path, output_dir: pathlib.Path):
     directories = 0
     txt_files = 0
+    skipped = 0
 
     # stack tqdm bars so we can briefly show status
     status = tqdm(desc="Collating", bar_format="{desc}{postfix}")
@@ -35,6 +36,14 @@ def collate_txt(input_dir: pathlib.Path, output_dir: pathlib.Path):
         find_relative_paths(input_dir, [".txt"], group_by_dir=True),
         desc="Directories with text files",
     ):
+        # output will be a json file based on name of the directory containing text files,
+        # with parallel directory structure to the source
+        output_file = (output_dir / ocr_dir.parent / ocr_dir.name).with_suffix(".json")
+        # if output exists from a previous run, skip
+        if output_file.exists():
+            skipped += 1
+            continue
+
         directories += 1
         txt_files += len(files)
         status.set_postfix_str(f" {ocr_dir.stem}: {len(files)} txt files")
@@ -45,9 +54,6 @@ def collate_txt(input_dir: pathlib.Path, output_dir: pathlib.Path):
             with (input_dir / filename).open() as txtfile:
                 txt_data[page_number(filename)] = txtfile.read()
 
-        # create a json file based on name of the directory containing text files,
-        # with parallel directory structure to the source
-        output_file = (output_dir / ocr_dir.parent / ocr_dir.name).with_suffix(".json")
         # ensure the parent directory exists
         output_file.parent.mkdir(exist_ok=True)
         # save out text content as json (currently overwrites if anything exists)
@@ -59,7 +65,9 @@ def collate_txt(input_dir: pathlib.Path, output_dir: pathlib.Path):
 
     # report a summary of what was done
     print(
-        f"\nCreated JSON file{'' if directories == 1 else 's'} for {directories:,} director{'y' if directories == 1 else 'ies'} with {txt_files:,} total text files."
+        f"\nCreated JSON file{'' if directories == 1 else 's'} for "
+        + f"{directories:,} director{'y' if directories == 1 else 'ies'} "
+        + f"with {txt_files:,} total text files; skipped {skipped:,}."
     )
 
 

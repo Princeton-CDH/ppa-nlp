@@ -30,7 +30,10 @@ def test_collate_txt(tmp_path, capsys):
     collate_txt(input_dir, output_dir)
     captured = capsys.readouterr()
     # check summary output
-    assert "Created JSON file for 1 directory with 3 total text files." in captured.out
+    assert (
+        "Created JSON file for 1 directory with 3 total text files; skipped 0."
+        in captured.out
+    )
     # check expected directory and file exists
     assert (output_dir / "001").exists()
     expected_jsonfile = (output_dir / "001" / vol_id).with_suffix(".json")
@@ -42,3 +45,8 @@ def test_collate_txt(tmp_path, capsys):
         assert page_num in data
         # text content should be present, accessible by page number
         assert data[page_num] == text_contents[f"{vol_id}_{page_num}0.txt"]
+
+    # running it again should skip, since json file exists
+    collate_txt(input_dir, output_dir)
+    captured = capsys.readouterr()
+    assert "skipped 1" in captured.out
