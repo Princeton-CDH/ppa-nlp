@@ -24,17 +24,24 @@ def page_number(filename: pathlib.Path) -> str:
     return pagenum[:-1]  # strip trailing zero
 
 
-def collate_txt(input_dir: pathlib.Path, output_dir: pathlib.Path):
+def collate_txt(
+    input_dir: pathlib.Path, output_dir: pathlib.Path, show_progress: bool = True
+):
     directories = 0
     txt_files = 0
     skipped = 0
 
     # stack tqdm bars so we can briefly show status
-    status = tqdm(desc="Collating", bar_format="{desc}{postfix}")
+    status = tqdm(
+        desc="Collating",
+        bar_format="{desc}{postfix}",
+        disable=not show_progress,
+    )
 
     for ocr_dir, files in tqdm(
         find_relative_paths(input_dir, [".txt"], group_by_dir=True),
         desc="Directories with text files",
+        disable=not show_progress,
     ):
         # output will be a json file based on name of the directory containing text files,
         # with parallel directory structure to the source
@@ -86,6 +93,13 @@ def main():
         help="Top-level output directory for OCR consolidated into JSON files.",
         type=pathlib.Path,
     )
+    # Optional arguments
+    parser.add_argument(
+        "--progress",
+        help="Show progress",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
 
     args = parser.parse_args()
     # Validate arguments
@@ -97,7 +111,7 @@ def main():
         args.output_dir.mkdir()
         print(f"Error: creating output directory {args.output_dir}")
 
-    collate_txt(args.input_dir, args.output_dir)
+    collate_txt(args.input_dir, args.output_dir, show_progress=args.progress)
 
 
 if __name__ == "__main__":
