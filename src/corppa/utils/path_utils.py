@@ -118,7 +118,9 @@ def get_image_relpath(work_id, page_num):
         raise ValueError(f"Unsupported source '{source}'")
 
 
-def find_relative_paths(base_dir, exts, follow_symlinks=True) -> Iterator[pathlib.Path]:
+def find_relative_paths(
+    base_dir, exts, follow_symlinks=True, group_by_dir=False
+) -> Iterator[pathlib.Path] | Iterator[tuple[pathlib.Path, list]]:
     """
     This method finds files anywhere under the specified base directory
     that match any of the specified file extensions (case insensitive),
@@ -142,12 +144,22 @@ def find_relative_paths(base_dir, exts, follow_symlinks=True) -> Iterator[pathli
     # Using pathlib.walk over glob because (1) it allows us to find files with
     # multiple extensions in a single walk of the directory and (2) lets us
     # leverage additional functionality of pathlib.
-    for dirpath, dirs, files in base_dir.walk(follow_symlinks=follow_symlinks):
-        # Check the files in walked directory
-        for file in files:
-            ext = os.path.splitext(file)[1]
-            if ext.lower() in ext_set:
-                filepath = dirpath.joinpath(file)
-                yield filepath.relative_to(base_dir)
-        # For future walking, remove hidden directories
-        dirs[:] = [d for d in dirs if d[0] != "."]
+    for dirpath, dirnames, filenames in base_dir.walk(follow_symlinks=follow_symlinks):
+        # Create a generator of relevant files in the current directory
+        include_files = (
+            dirpath.joinpath(file).relative_to(base_dir)
+            for file in filenames
+            if os.path.splitext(file)[1].lower() in ext_set
+        )
+        # if group by dir is specified, yield dirpath and list of files,
+        # but only if at least one relevant file is found
+        if group_by_dir:
+            include_files = list(include_files)
+            if include_files:
+                yield (dirpath.relative_to(base_dir), include_files)
+        else:
+            # otherwise yield just the files
+            yield from include_files
+
+        # modify dirnames in place to skip hidden directories
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]

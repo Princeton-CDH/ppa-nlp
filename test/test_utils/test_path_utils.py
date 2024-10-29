@@ -221,3 +221,47 @@ def test_find_relative_paths_symbolic_links(tmp_path):
     # Do not follow symbolic links
     paths = list(find_relative_paths(dir_a, [".jpg"], follow_symlinks=False))
     assert {jpg_a, jpg_b} == set(paths)
+
+
+def test_find_relative_paths_group_by_dir(tmp_path):
+    ocr_dir = tmp_path / "ocr"
+    ocr_dir.mkdir()
+    vol1_dir = ocr_dir / "vol1"
+    vol2_dir = ocr_dir / "vol1"
+    for vol_dir in [vol1_dir, vol2_dir]:
+        vol_dir.mkdir(exist_ok=True)
+        for i in range(4):
+            # a text file to include
+            (vol_dir / f"{i}.txt").touch()
+            # an image file to ignore
+            (vol_dir / f"{i}.jpg").touch()
+    other_dir = ocr_dir / "no-text-files"
+    other_dir.mkdir()
+
+    dir_paths = find_relative_paths(ocr_dir, [".txt"], group_by_dir=True)
+    assert isinstance(dir_paths, GeneratorType)
+    # cast generator of dir path, files as  dictionary for inspection
+    dir_paths = dict(dir_paths)
+
+    # first yielded item (or dictionary key) should be dir as path
+    included_dirs = list(dir_paths.keys())
+    assert all(isinstance(dirpath, pathlib.Path) for dirpath in included_dirs)
+    # should include relative path versions of directories with text files
+    relative_vol1 = vol1_dir.relative_to(ocr_dir)
+    assert relative_vol1 in included_dirs
+    relative_vol2 = vol2_dir.relative_to(ocr_dir)
+    assert relative_vol2 in included_dirs
+    # should not include directories without text files
+    assert other_dir.relative_to(ocr_dir) not in included_dirs
+
+    # for each volume dir, yielded items should be a list of relative paths
+    assert isinstance(dir_paths[relative_vol1], list)
+    assert all(isinstance(file, pathlib.Path) for file in dir_paths[relative_vol1])
+    # we expect four files in both groups
+    assert len(dir_paths[relative_vol1]) == 4
+    assert len(dir_paths[relative_vol2]) == 4
+    # spot-check relative path expected to be included
+    assert relative_vol1 / "0.txt" in dir_paths[relative_vol1]
+    assert relative_vol1 / "3.txt" in dir_paths[relative_vol1]
+    assert relative_vol2 / "1.txt" in dir_paths[relative_vol2]
+    assert relative_vol2 / "2.txt" in dir_paths[relative_vol2]
