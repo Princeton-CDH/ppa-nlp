@@ -333,12 +333,16 @@ def has_span_overlap(example: TaskType, strip_label_pfx: bool = True) -> bool:
 
 def validate_review_answer(example: TaskType):
     """
-    Validate review answer:
-    * Example not flagged (i.e. flagged field not set)
-    * Text spans (by label) must not overlap
+    Validate the annotated example by checking that the following hold:
+    * The example is not flagged (i.e. flagged field is not set)
+    * Its text spans with the same label do not overlap
+
+    This is a meant as `validate_answer` callback that is executed each
+    time a user (i.e. the adjudicater) submits an annotation
     """
     if example.get("flagged") is True:
         raise ValueError("Currently flagged, unflag to submit.")
+    # Note that the session prefix is ignored
     if has_span_overlap(example):
         raise ValueError("Overlapping spans with the same label detected!")
 
