@@ -6,6 +6,7 @@ on text filenames. (Page number logic is currently Gale-specific).
 """
 
 import argparse
+import csv
 import json
 import pathlib
 
@@ -37,6 +38,7 @@ def collate_txt(
         bar_format="{desc}{postfix}",
         disable=not show_progress,
     )
+    csv_fieldnames = ["page_number", "text"]
 
     for ocr_dir, files in tqdm(
         find_relative_paths(input_dir, [".txt"], group_by_dir=True),
@@ -45,7 +47,7 @@ def collate_txt(
     ):
         # output will be a json file based on name of the directory containing text files,
         # with parallel directory structure to the source
-        output_file = (output_dir / ocr_dir.parent / ocr_dir.name).with_suffix(".json")
+        output_file = (output_dir / ocr_dir.parent / ocr_dir.name).with_suffix(".csv")
         # if output exists from a previous run, skip
         if output_file.exists():
             skipped += 1
@@ -63,9 +65,15 @@ def collate_txt(
 
         # ensure the parent directory exists
         output_file.parent.mkdir(exist_ok=True)
+
+        with output_file.open("w") as csvfile:
+            csvwriter = csv.DictWriter(csvfile, csv_fieldnames)
+            for pagenum in sorted(txt_data.keys()):
+                csvwriter.writerow({"page_number": pagenum, "text": txt_data[pagenum]})
+
         # save out text content as json
-        with output_file.open("w") as outfile:
-            json.dump(txt_data, outfile)
+        # with output_file.open("w") as outfile:
+        #     json.dump(txt_data, outfile)
 
     status.set_postfix_str("")
     status.close()
