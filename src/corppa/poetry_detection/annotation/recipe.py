@@ -526,7 +526,6 @@ def review_page_spans(
             "buttons": ["accept", "undo"],  # remove reject & ignore buttons
             "blocks": blocks,
             "ner_manual_highlight_chars": True,
-            "global_css_dir": CURRENT_DIR,
             "custom_theme": {"labels": label_colors},
             "total_examples_target": len(stream),
         }
