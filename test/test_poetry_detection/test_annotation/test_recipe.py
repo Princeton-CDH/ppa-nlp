@@ -4,16 +4,19 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-# Skip spacy dependency
-sys.modules["spacy"] = MagicMock()
-
-# Skip or mock prodigy dependencies
-sys.modules["prodigy.components.db"] = MagicMock()
-sys.modules["prodigy.components.stream"] = MagicMock()
-sys.modules["prodigy.core"] = MagicMock()
-sys.modules["prodigy.errors"] = MagicMock()
-sys.modules["prodigy.types"] = MagicMock()
-sys.modules["prodigy.util"] = MagicMock()
+# Skip spacy & prodigy dependencies not needed for testing
+skip_deps = [
+    "spacy",
+    "prodigy.components.db",
+    "prodigy.components.stream",
+    "prodigy.core",
+    "prodigy.errors",
+    "prodigy.types",
+    "prodigy.util",
+]
+for dep in skip_deps:
+    sys.modules[dep] = MagicMock()
+# Mock prodigy dependencies used in testing
 ## Mock for set_hashes
 mock_prodigy = MagicMock()
 sys.modules["prodigy"] = mock_prodigy
