@@ -146,7 +146,7 @@ def annotate_text_and_image(
     stream.apply(add_tokens, nlp=spacy.blank("en"), stream=stream)
     # add image prefix
     stream.apply(add_images, image_prefix=image_prefix)
-    # optionally fetch media
+    # optionally fetch image data
     if fetch_media:
         stream.apply(fetch_media_preprocessor, ["image"])
 
@@ -177,6 +177,7 @@ def annotate_text_and_image(
         "config": config,
     }
 
+    # remove fetched image data before saving to the database
     if fetch_media:
         components["before_db"] = lambda x: remove_image_data(
             x, image_prefix=image_prefix
@@ -215,7 +216,7 @@ def annotate_page_text(
     stream.apply(add_tokens, nlp=spacy.blank("en"), stream=stream)
     # add image prefix
     stream.apply(add_images, stream, image_prefix=image_prefix)
-    # optionally fetch media
+    # optionally fetch image data
     if fetch_media:
         stream.apply(fetch_media_preprocessor, ["image"])
 
@@ -242,6 +243,7 @@ def annotate_page_text(
         "config": config,
     }
 
+    # remove fetched image data before saving to the database
     if fetch_media:
         components["before_db"] = lambda x: remove_image_data(
             x, image_prefix=image_prefix
@@ -358,7 +360,7 @@ class ReviewStream:
 
         data: Merged data, with examples grouped by input hash.
         image_prefix: Image prefix for creating image (full) paths
-        fetch_media: Whether to fetch task images.
+        fetch_media: Whether to fetch image data.
         """
         self.data = self.get_data(data, image_prefix, fetch_media)
 
