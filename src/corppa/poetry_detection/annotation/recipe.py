@@ -491,14 +491,12 @@ def review_page_spans(
     def before_db(examples):
         """
         Modifies annotated examples before saving to the database:
-            * Remove image spans & tokens (unneeded fields)
+            * Remove image spans (unneeded fields)
             * Reset image to (full) image path if image fetched
         """
         for example in examples:
             # remove image spans (if present)
             example.pop("image_spans", None)
-            # remove tokens (if present)
-            example.pop("tokens", None)
             if fetch_media:
                 # reset image to path
                 example = add_image(example, image_prefix=image_prefix)
