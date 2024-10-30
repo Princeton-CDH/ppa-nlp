@@ -26,14 +26,16 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 import spacy
+from intspan import intspan
 from prodigy import log, set_hashes
 from prodigy.components.db import connect
 from prodigy.components.preprocess import add_tokens
 from prodigy.components.preprocess import fetch_media as fetch_media_preprocessor
 from prodigy.components.stream import get_stream
 from prodigy.core import Arg, recipe
+from prodigy.errors import RecipeError
 from prodigy.types import LabelsType, RecipeSettingsType, StreamType, TaskType
-from prodigy.util import INPUT_HASH_ATTR, SESSION_ID_ATTR, get_labels
+from prodigy.util import INPUT_HASH_ATTR, SESSION_ID_ATTR
 
 #: reference to current directory, for use as Prodigy CSS directory
 CURRENT_DIR = Path(__file__).parent.absolute()
@@ -76,6 +78,8 @@ def add_image(example: TaskType, image_prefix: Optional[str] = None):
 
     Note: Assumes filepaths use forward slash
     """
+    if "image_path" not in example:
+        raise ValueError("Cannot add image, image_path missing")
     if image_prefix is None:
         example["image"] = example["image_path"]
     else:
@@ -103,10 +107,12 @@ def remove_image_data(
     Calls: `add_image`
     """
     for task in examples:
-        # If "image" is a base64 string and "image_path" is present in the task,
-        # remove the image data
-        if task["image"].startswith("data:") and "image_path" in task:
-            # Replace image with full image path
+        if "image" not in task or "image_path" not in task:
+            # Skip tasks without images or image_paths
+            continue
+        # If the task's image is a base64 string and image_path is present,
+        # replace its image with its image path (with optional prefix)
+        if task["image"].startswith("data:"):
             add_image(task, image_prefix=image_prefix)
     return examples
 
@@ -244,6 +250,97 @@ def annotate_page_text(
     return components
 
 
+def get_session_name(example: TaskType, suffix: Optional[str] = None) -> str:
+    """
+    Extract session name from task examplke. Session ids have the following form:
+        [session id] = [db id]-[session name]
+    Assumes that session names do not contain dashes.
+    """
+    session_id = example[SESSION_ID_ATTR]
+    session_name = session_id.rsplit("-", maxsplit=1)[-1]
+    if suffix is not None:
+        session_name = f"{session_name}-{suffix}"
+    return session_name
+
+
+def add_label_prefix(label: str, prefix: str) -> str:
+    return f"{prefix}: {label}"
+
+
+def remove_label_prefix(label: str) -> str:
+    return label.rsplit(": ", maxsplit=1)[-1]
+
+
+def add_session_prefix(
+    example: TaskType, session_sfx: Optional[str] = None
+) -> TaskType:
+    """
+    Add session name as prefix to text span labels
+
+    label --> "[session]: label"
+    ex. "POETRY" --> "alice: POETRY"
+
+    Calls: `get_sesssion_name` and `add_label_prefix`
+    """
+    session_name = get_session_name(example, suffix=session_sfx)
+    for span in example.get("spans", []):
+        span["label"] = add_label_prefix(span["label"], session_name)
+    return example
+
+
+def remove_session_prefix(example: TaskType) -> TaskType:
+    """
+    Remove added session prefix from text span labels
+
+    Calls: `remove_label_prefix`
+    """
+    for span in example.get("spans", []):
+        span["label"] = remove_label_prefix(span["label"])
+    return example
+
+
+def has_span_overlap(example: TaskType, strip_label_pfx: bool = True) -> bool:
+    """
+    Check if example has overlapping (text) span annotations
+
+    Calls: `remove_label_prefix` (optionally)
+    """
+    if "spans" not in example:
+        return False
+    label_coverage = {}  # label (str) --> coverage (intspan)
+    for span in example["spans"]:
+        # Get label
+        label = span["label"]
+        if strip_label_pfx:
+            label = remove_label_prefix(label)
+        # Represent span's coverage as an intspan
+        # Note: intspans are closed intervals, while span character ranges are half-open
+        span_coverage = intspan.from_range(span["start"], span["end"] - 1)
+        # Check if label's intspan is disjoint from
+        if label not in label_coverage:
+            label_coverage[label] = span_coverage
+        else:
+            if span_coverage.isdisjoint(label_coverage[label]):
+                # No overlap, accumulate into label's coverage
+                label_coverage[label] |= span_coverage
+            else:
+                # Overlap found
+                return True
+    return False
+
+
+def validate_review_answer(example: TaskType):
+    """
+    Validate review answer:
+    * Example not flagged (i.e. flagged field not set)
+    * Text spans (by label) must not overlap
+    """
+    if example.get("flagged") is True:
+        raise ValueError("Currently flagged, unflag to submit.")
+    if has_span_overlap(example):
+        raise ValueError("Overlapping spans with the same label detected!")
+
+
 class ReviewStream:
     """
     Stream of review examples. This mostly exists to expose a __len__ to show
@@ -263,48 +360,52 @@ class ReviewStream:
         image_prefix: Image prefix for creating image (full) paths
         fetch_media: Whether to fetch task images.
         """
-        self.n_examples = len(data)
         self.data = self.get_data(data, image_prefix, fetch_media)
 
     def __len__(self) -> int:
-        return self.n_examples
+        return len(self.data)
 
     def __iter__(self) -> StreamType:
         for example in self.data:
             yield example
 
-    def create_review_example(self, versions: List[TaskType]) -> TaskType:
+    @staticmethod
+    def create_review_example(versions: List[TaskType]) -> TaskType:
         """
         Create review example from several annotated versions.
         """
-        # TODO: Make sure that no unmerged version content is preserved.
+        # Input validation: versions must be non-empty
+        if not versions:
+            raise ValueError(
+                "Cannot create review example without one or more annotated versions"
+            )
+
+        # Initialize new, review example
         review_example = deepcopy(versions[-1])
-        # Merge spans
-        merged_spans = []
-        session_counts = {}
-        sessions = []
+        review_example["spans"] = []  # reset span annotations
+        session_counts = {}  # for duplicate session tracking
 
         for version in versions:
-            session_id = version[SESSION_ID_ATTR]
-            # Assume: session name does not contain -
-            # full session name includes the dataset id; split to get the session name without dataset id
-            session_name = session_id.rsplit("-", maxsplit=1)[1]
-            if session_id not in session_counts:
-                session_counts[session_id] = 1
+            # Add session prefix to test span labels
+            session_name = get_session_name(version)
+            if session_name not in session_counts:
+                add_session_prefix(version)
+                session_counts[session_name] = 1
             else:
-                session_name += f"-{session_counts[session_id]}"
-                session_counts[session_id] += 1
-            sessions.append(session_name)
-            if "spans" not in version:
-                # Not sure when an annotated example would be missing a spans field
-                continue
-            for span in version["spans"]:
-                new_span = span.copy()
-                span_label = span["label"]
-                new_span["label"] = f"{session_name}: {span_label}"
-                merged_spans.append(new_span)
-        review_example["spans"] = merged_spans
-        review_example["sessions"] = sessions
+                # To differentiate duplicate session, add numerical suffix
+                numeric_suffix = session_counts[session_name]
+                add_session_prefix(version, session_sfx=numeric_suffix)
+                session_counts[session_name] += 1
+
+            # Accumulate spans into review example
+            review_example["spans"].extend(version.get("spans", []))
+
+            # If flagged, set flag for review example
+            if version.get("flagged") is True:
+                review_example["flagged"] = True
+
+        # Add field for tracking original annotators (ignoring duplication)
+        review_example["sessions"] = sorted(session_counts.keys())
         return review_example
 
     def get_data(
@@ -394,13 +495,15 @@ def review_page_spans(
             * Reset image to (full) image path if image fetched
         """
         for example in examples:
-            # remove image spans
-            del example["image_spans"]
-            # remove tokens
-            del example["tokens"]
+            # remove image spans (if present)
+            example.pop("image_spans", None)
+            # remove tokens (if present)
+            example.pop("tokens", None)
             if fetch_media:
                 # reset image to path
                 example = add_image(example, image_prefix=image_prefix)
+            # normalize span labels
+            example = remove_session_prefix(example)
         return examples
 
     # Set label colors
@@ -412,23 +515,28 @@ def review_page_spans(
             for label in labels:
                 label_colors[f"{session}: {label}"] = session_color
 
+    stream = get_review_stream(
+        annotations, image_prefix=image_prefix, fetch_media=fetch_media
+    )
+
     # copy the common config options and add blocks and labels
     config = deepcopy(PRODIGY_COMMON_CONFIG)
     config.update(
         {
+            "buttons": ["accept", "undo"],  # remove reject & ignore buttons
             "blocks": blocks,
             "ner_manual_highlight_chars": True,
             "global_css_dir": CURRENT_DIR,
             "custom_theme": {"labels": label_colors},
+            "total_examples_target": len(stream),
         }
     )
 
     return {
         "dataset": dataset,
         "view_id": "blocks",
-        "stream": get_review_stream(
-            annotations, image_prefix=image_prefix, fetch_media=fetch_media
-        ),
+        "stream": stream,
         "before_db": before_db,
+        "validate_answer": validate_review_answer,
         "config": config,
     }
