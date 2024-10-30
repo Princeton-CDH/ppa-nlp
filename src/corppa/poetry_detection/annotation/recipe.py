@@ -254,7 +254,7 @@ def annotate_page_text(
 
 def get_session_name(example: TaskType, suffix: Optional[str] = None) -> str:
     """
-    Extract session name from task examplke. Session ids have the following form:
+    Extract session name from task example. Session ids have the following form:
         [session id] = [db id]-[session name]
     Assumes that session names do not contain dashes.
     """
