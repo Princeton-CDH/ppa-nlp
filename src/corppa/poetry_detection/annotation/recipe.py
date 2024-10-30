@@ -316,8 +316,8 @@ def has_span_overlap(example: TaskType, strip_label_pfx: bool = True) -> bool:
         if strip_label_pfx:
             label = remove_label_prefix(label)
         # Represent span's coverage as an intspan
-        # Note: intspans are closed intervals: [a,b], while
-        #       span character ranges are half-open: [a, b)
+        # Note: intspans include the ending index unlike span character ranges
+        #       which follows Python range behavior
         span_coverage = intspan.from_range(span["start"], span["end"] - 1)
         # Check if span's coverage is disjoint from label's existing coverage.
         if label not in label_coverage:
