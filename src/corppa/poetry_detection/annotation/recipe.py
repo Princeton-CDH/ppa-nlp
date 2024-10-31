@@ -15,9 +15,9 @@ prefix for images should be specified when initializing the recipe.
 
 Example use:
 ```
-prodigy annotate_page_text poetry_spans poetry_pages.jsonl --label POETRY,PROSODY -F ../corppa/poetry_detection/annotation/recipe.py --image-prefix http://localhost:8000/
-prodigy annotate_text_and_image poetry_text_image poetry_pages.jsonl -l POETRY -F ../corppa/poetry_detection/annotation/recipe.py --image-prefix ../ppa-web-images -FM
-prodigy review_page_spans adjudicate poetry_spans -l POETRY -F ../corppa/poetry_detection/annotation/recipe.py --image-prefix ../ppa-web-images -FM --sessions alice,bob
+prodigy annotate_page_text poetry_spans poetry_pages.jsonl --label POETRY,PROSODY -F `corppa-recipe-path` --image-prefix http://localhost:8000/
+prodigy annotate_text_and_image poetry_text_image poetry_pages.jsonl -l POETRY -F `corppa-recipe-path`  --image-prefix ../ppa-web-images -FM
+prodigy review_page_spans adjudicate poetry_spans -l POETRY -F `corppa-recipe-path` --image-prefix ../ppa-web-images -FM --sessions alice,bob
 """
 
 from collections import defaultdict
@@ -39,6 +39,13 @@ from prodigy.util import INPUT_HASH_ATTR, SESSION_ID_ATTR
 
 #: reference to current directory, for use as Prodigy CSS directory
 CURRENT_DIR = Path(__file__).parent.absolute()
+
+
+def recipe_file_path():
+    """Print out the path to this file where it is installed, for convenience
+    when running with Prodigy."""
+    print(Path(__file__).absolute())
+
 
 #: common prodigy configurations for both recipes; copy and add blocks and labels
 PRODIGY_COMMON_CONFIG = {
