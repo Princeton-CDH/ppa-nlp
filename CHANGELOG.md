@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 0.3.0
+- New dependency: intspan
+### Poetry Detection
+- New Prodigy recipe for adjudicating text annotations
+- Extended Prodigy recipes to optionally fetch local images
+
 ## 0.2.0
 - Now requires Python 3.12
 ### Corppa Utilities
