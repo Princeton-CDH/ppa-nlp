@@ -4,7 +4,9 @@
 - New dependency: intspan
 ### Poetry Detection
 - New Prodigy recipe for adjudicating text annotations
-- Extended Prodigy recipes to optionally fetch local images
+- Refactored recipes to use Prodigy API
+- Extended recipes to optionally fetch media (i.e., images)
+- Added unit testing
 
 ## 0.2.0
 - Now requires Python 3.12
