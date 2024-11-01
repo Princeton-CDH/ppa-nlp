@@ -32,8 +32,9 @@ test = [
   "pytest",
   "pytest-cov"
 ]
+doc = ["sphinx"]
 ocr = ["google-cloud-vision"]
-dev = ["pre-commit", "corppa[test]", "corppa[ocr]"]
+dev = ["pre-commit", "ruff", "corppa[test]", "corppa[ocr]", "corppa[doc]"]
 
 [project.scripts]
 corppa-filter = "corppa.utils.filter:main"
