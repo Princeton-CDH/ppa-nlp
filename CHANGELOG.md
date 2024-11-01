@@ -7,6 +7,8 @@
 - Refactored recipes to use Prodigy API
 - Extended recipes to optionally fetch media (i.e., images)
 - Added unit testing
+### Misc
+- Fixed Codecov integration
 
 ## 0.2.0
 - Now requires Python 3.12
