@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 0.3.0
+- New dependency: intspan
+### Poetry Detection
+- New Prodigy recipe for adjudicating text annotations
+- Refactored recipes to use Prodigy API
+- Extended recipes to optionally fetch media (i.e., images)
+- Added unit testing
+### Misc
+- Fixed Codecov integration
+
 ## 0.2.0
 - Now requires Python 3.12
 ### Corppa Utilities
