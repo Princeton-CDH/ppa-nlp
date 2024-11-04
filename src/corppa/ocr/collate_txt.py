@@ -8,6 +8,7 @@ on text filenames. (Page number logic is currently Gale-specific).
 import argparse
 import json
 import pathlib
+import sys
 
 from tqdm import tqdm
 
@@ -113,12 +114,21 @@ def main():
     args = parser.parse_args()
     # Validate arguments
     if not args.input_dir.is_dir():
-        print(f"Error: input directory {args.input} does not exist", file=sys.stderr)
+        print(
+            f"Error: input directory {args.input_dir} does not exist", file=sys.stderr
+        )
         sys.exit(1)
     # create output dir if it doesn't exist
     if not args.output_dir.is_dir():
-        args.output_dir.mkdir()
-        print(f"Error: creating output directory {args.output_dir}")
+        try:
+            args.output_dir.mkdir()
+            print(f"Creating output directory {args.output_dir}")
+        except (FileExistsError, FileNotFoundError) as err:
+            print(
+                f"Error creating output directory {args.output_dir}: {err}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     collate_txt(args.input_dir, args.output_dir, show_progress=args.progress)
 

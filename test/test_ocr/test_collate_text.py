@@ -1,7 +1,10 @@
 import json
 import pathlib
+from unittest.mock import patch
 
-from corppa.ocr.collate_txt import collate_txt, page_number
+import pytest
+
+from corppa.ocr.collate_txt import collate_txt, main, page_number
 
 
 def test_page_number():
@@ -50,3 +53,67 @@ def test_collate_txt(tmp_path, capsys):
     collate_txt(input_dir, output_dir)
     captured = capsys.readouterr()
     assert "skipped 1" in captured.out
+
+
+@patch("corppa.ocr.collate_txt.collate_txt")
+def test_main(mock_collate_txt, capsys, tmp_path):
+    # patch in test args for argparse to parse
+
+    # non-existent input dir
+    with patch(
+        "sys.argv", ["collate_txt", "non-existent-input", "non-existent-output"]
+    ):
+        with pytest.raises(SystemExit) as sysexit:
+            main()
+        assert sysexit.value.code == 1
+        captured = capsys.readouterr()
+        assert (
+            "Error: input directory non-existent-input does not exist" in captured.err
+        )
+        mock_collate_txt.assert_not_called()
+
+    # valid input dir, non-existent output dir
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    # invalid output dir path: exists as a file
+    output_dir = tmp_path / "output"
+    output_dir.touch()
+
+    with patch("sys.argv", ["collate_txt", str(input_dir), str(output_dir)]):
+        with pytest.raises(SystemExit) as sysexit:
+            main()
+        assert sysexit.value.code == 1
+
+        captured = capsys.readouterr()
+        assert f"Error creating output directory {output_dir}" in captured.err
+        assert "exists" in captured.err
+
+    # invalid output dir path: parent directory doesn't exist
+    output_dir.unlink()
+    output_dir = tmp_path / "parent" / "output"
+
+    with patch("sys.argv", ["collate_txt", str(input_dir), str(output_dir)]):
+        with pytest.raises(SystemExit) as sysexit:
+            main()
+        assert sysexit.value.code == 1
+
+        captured = capsys.readouterr()
+        assert f"Error creating output directory {output_dir}" in captured.err
+        assert "No such file or directory" in captured.err
+        mock_collate_txt.assert_not_called()
+
+    # valid output directory; default progress bar (on)
+    output_dir = tmp_path / "output"
+    with patch("sys.argv", ["collate_txt", str(input_dir), str(output_dir)]):
+        main()
+        mock_collate_txt.assert_called_with(input_dir, output_dir, show_progress=True)
+        captured = capsys.readouterr()
+        assert "Creating output directory" in captured.out
+
+    # valid output directory; disable progress bar
+    output_dir = tmp_path / "output"
+    with patch(
+        "sys.argv", ["collate_txt", str(input_dir), str(output_dir), "--no-progress"]
+    ):
+        main()
+        mock_collate_txt.assert_called_with(input_dir, output_dir, show_progress=False)
