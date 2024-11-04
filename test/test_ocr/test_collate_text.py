@@ -4,11 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from corppa.ocr.collate_txt import collate_txt, main, page_number
-
-
-def test_page_number():
-    assert page_number(pathlib.Path("CW0112029406_00180.txt")) == "0018"
+from corppa.ocr.collate_txt import collate_txt, main
 
 
 def test_collate_txt(tmp_path, capsys):

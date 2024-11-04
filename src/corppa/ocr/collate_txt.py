@@ -12,21 +12,7 @@ import sys
 
 from tqdm import tqdm
 
-from corppa.utils.path_utils import find_relative_paths
-
-
-def page_number(filename: pathlib.Path) -> str:
-    """Extract and return the page number from a :class:`pathlib.Path`
-    file for content from a single page (e.g., image or text). Returns the
-    page number as a string with leading zeros. (Note: logic is curently
-    specific to Gale/ECCO file naming conventions.)"""
-    # NOTE: this logic is currently specific to Gale/ECCO files,
-    # which look like CW0112029406_00180.txt
-
-    # split the file base/stem name by _ and take the last part
-    pagenum = filename.stem.split("_")[-1]
-    # return the number as a string; strip extra trailing zero
-    return pagenum[:-1]  # strip trailing zero
+from corppa.utils.path_utils import find_relative_paths, page_number
 
 
 def collate_txt(

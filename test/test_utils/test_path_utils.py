@@ -13,6 +13,7 @@ from corppa.utils.path_utils import (
     get_stub_dir,
     get_vol_dir,
     get_volume_id,
+    page_number,
 )
 
 
@@ -103,6 +104,10 @@ def test_get_volume_id():
     # Excerpts
     assert get_volume_id("CW0102294490-pxvi") == "CW0102294490"
     assert get_volume_id("coo1.ark:/13960/t4bp0n867-p3") == "coo1.ark:/13960/t4bp0n867"
+
+
+def test_page_number():
+    assert page_number(pathlib.Path("CW0112029406_00180.txt")) == "0018"
 
 
 @patch("corppa.utils.path_utils.get_volume_id", return_value="vol_id")
