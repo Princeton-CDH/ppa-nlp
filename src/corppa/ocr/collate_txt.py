@@ -45,7 +45,7 @@ def collate_txt(
     ):
         # output will be a json file based on name of the directory containing text files,
         # with parallel directory structure to the source
-        output_file = (output_dir / ocr_dir.parent / ocr_dir.name).with_suffix(".json")
+        output_file = output_dir / ocr_dir.parent / f"{ocr_dir.name}.json"
         # if output exists from a previous run, skip
         if output_file.exists():
             skipped += 1
