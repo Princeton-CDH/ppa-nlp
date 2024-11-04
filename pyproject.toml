@@ -23,6 +23,7 @@ classifiers = [
 ]
 dynamic = ["version"]
 dependencies = [
+	"intspan",
 	"orjsonl",
 	"tqdm",
 ]

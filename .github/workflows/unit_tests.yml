@@ -21,10 +21,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
 
@@ -32,7 +32,7 @@ jobs:
       # which includes python requirements.
       # if any change, the cache is invalidated.
       - name: Cache pip
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: pip-${{ hashFiles('pyproject.toml') }}
@@ -44,10 +44,12 @@ jobs:
         run: pip install ".[test]"
 
       - name: Run pytest
-        run: pytest --cov=./ --cov-report=xml
+        run: pytest --cov=corppa --cov-report=xml
 
       - name: Upload test coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }} # required
         if: ${{ matrix.python == env.COV_PYTHON_VERSION }}
 
       # Set the color of the slack message used in the next step based on the
