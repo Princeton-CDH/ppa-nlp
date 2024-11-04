@@ -15,6 +15,10 @@ from corppa.utils.path_utils import find_relative_paths
 
 
 def page_number(filename: pathlib.Path) -> str:
+    """Extract and return the page number from a :class:`pathlib.Path`
+    file for content from a single page (e.g., image or text). Returns the
+    page number as a string with leading zeros. (Note: logic is curently
+    specific to Gale/ECCO file naming conventions.)"""
     # NOTE: this logic is currently specific to Gale/ECCO files,
     # which look like CW0112029406_00180.txt
 
@@ -27,6 +31,11 @@ def page_number(filename: pathlib.Path) -> str:
 def collate_txt(
     input_dir: pathlib.Path, output_dir: pathlib.Path, show_progress: bool = True
 ):
+    """Takes a directory that contains text files grouped by directory at any
+    level of nesting under the specified `input_dir` and combines them into
+    one JSON file per directory. JSON files are created in the specified
+    `output_dir` using the same hierarchy found in the `input_dir`.
+    """
     directories = 0
     txt_files = 0
     skipped = 0

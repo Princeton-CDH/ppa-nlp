@@ -138,6 +138,17 @@ def find_relative_paths(
           |-- beta.jpg
     ```
     The result will include the two items: `alpha.jpg and `d/beta.jpg`
+
+    When `group_by_dir` is `True`, resulting files will be returned grouped
+    by the parent directory. The return result is a tuple of a single :class:`pathlib.Path`
+    object for the directory and a list of :class:`pathlib.Path` objects for the files in that
+    directory that match the specified extensions.  Given a hierarchy like this:
+    ```
+    images/vol-a/
+      |-- alpha.jpg
+      |-- beta.jpg
+    ```
+    the method would return `(vol-a, [alpha.jpg, beta.jpg])`.
     """
     # Create lowercase extension set from passed in exts
     ext_set = {ext.lower() for ext in exts}
