@@ -58,7 +58,7 @@ def collate_txt(
         # combine text contents into a dictionary keyed on page number
         txt_data = {}
         for filename in files:
-            with (input_dir / filename).open() as txtfile:
+            with (input_dir / filename).open(encoding="utf-8") as txtfile:
                 txt_data[page_number(filename)] = txtfile.read()
 
         # ensure the parent directory exists
