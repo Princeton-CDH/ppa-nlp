@@ -227,7 +227,7 @@ def test_find_relative_paths_group_by_dir(tmp_path):
     ocr_dir = tmp_path / "ocr"
     ocr_dir.mkdir()
     vol1_dir = ocr_dir / "vol1"
-    vol2_dir = ocr_dir / "vol1"
+    vol2_dir = ocr_dir / "vol2"
     for vol_dir in [vol1_dir, vol2_dir]:
         vol_dir.mkdir(exist_ok=True)
         for i in range(4):
