@@ -64,7 +64,7 @@ def collate_txt(
         # ensure the parent directory exists
         output_file.parent.mkdir(exist_ok=True)
         # save out text content as json
-        with output_file.open("w") as outfile:
+        with output_file.open("w", encoding="utf-8") as outfile:
             json.dump(txt_data, outfile)
 
     status.set_postfix_str("")
