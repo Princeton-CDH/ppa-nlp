@@ -118,16 +118,18 @@ def get_image_relpath(work_id, page_num):
         raise ValueError(f"Unsupported source '{source}'")
 
 
-def page_number(filename: pathlib.Path) -> str:
-    """Extract and return the page number from a :class:`pathlib.Path`
-    file for content from a single page (e.g., image or text). Returns the
-    page number as a string with leading zeros. (Note: logic is curently
+def get_page_number(filename: str) -> str:
+    """Extract and return the page number from the filename for page-level
+    content (e.g., image or text). Returns the page number as a string
+    with leading zeros. (Note: logic is currently
     specific to Gale/ECCO file naming conventions.)"""
     # NOTE: this logic is currently specific to Gale/ECCO files,
     # which look like CW0112029406_00180.txt
 
     # split the file base/stem name by _ and take the last part
-    pagenum = filename.stem.split("_")[-1]
+    source_id, pagenum = os.path.splitext(filename)[0].split("_", 1)
+    if get_ppa_source(source_id) != "Gale":
+        raise NotImplementedError
     # return the number as a string; strip extra trailing zero
     return pagenum[:-1]  # strip trailing zero
 

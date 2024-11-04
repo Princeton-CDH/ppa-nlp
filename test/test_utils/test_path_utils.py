@@ -9,11 +9,11 @@ from corppa.utils.path_utils import (
     encode_htid,
     find_relative_paths,
     get_image_relpath,
+    get_page_number,
     get_ppa_source,
     get_stub_dir,
     get_vol_dir,
     get_volume_id,
-    page_number,
 )
 
 
@@ -107,7 +107,10 @@ def test_get_volume_id():
 
 
 def test_page_number():
-    assert page_number(pathlib.Path("CW0112029406_00180.txt")) == "0018"
+    assert get_page_number("CW0112029406_00180.txt") == "0018"
+    # raise not implemented error if source id is not Gale/ECCO
+    with pytest.raises(NotImplementedError):
+        assert get_page_number("uva.x002075945_00180.txt") == "0018"
 
 
 @patch("corppa.utils.path_utils.get_volume_id", return_value="vol_id")

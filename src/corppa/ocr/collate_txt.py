@@ -12,7 +12,7 @@ import sys
 
 from tqdm import tqdm
 
-from corppa.utils.path_utils import find_relative_paths, page_number
+from corppa.utils.path_utils import find_relative_paths, get_page_number
 
 
 def collate_txt(
@@ -55,7 +55,7 @@ def collate_txt(
         txt_data = {}
         for filename in files:
             with (input_dir / filename).open(encoding="utf-8") as txtfile:
-                txt_data[page_number(filename)] = txtfile.read()
+                txt_data[get_page_number(filename.name)] = txtfile.read()
 
         # ensure the parent directory exists
         output_file.parent.mkdir(exist_ok=True)
