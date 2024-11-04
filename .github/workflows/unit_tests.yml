@@ -50,7 +50,7 @@ jobs:
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }} # required
-        if: ${{ matrix.python == env.COV_PYTHON_VERSION }}
+        # if: ${{ matrix.python == env.COV_PYTHON_VERSION }}
 
       # Set the color of the slack message used in the next step based on the
       # status of the build: "danger" for failure, "good" for success,
