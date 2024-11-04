@@ -29,7 +29,9 @@ def test_ocr_images_no_gvision(capsys):
 @patch("corppa.ocr.gvision_ocr.find_relative_paths")
 @patch("corppa.ocr.gvision_ocr.ocr_image_via_gvision")
 @patch("corppa.ocr.gvision_ocr.google_vision")
-def test_ocr_images(mock_gvision, mock_ocr_image, mock_find_relative_paths, tmp_path):
+def test_ocr_images(
+    mock_gvision, mock_ocr_image, mock_find_relative_paths, tmp_path, capsys
+):
     # Setup up mock clientp
     mock_client = mock_gvision.ImageAnnotatorClient
     img_dir = tmp_path.joinpath("images")
@@ -69,3 +71,6 @@ def test_ocr_images(mock_gvision, mock_ocr_image, mock_find_relative_paths, tmp_
     mock_ocr_image.assert_has_calls(calls)
     # Check output
     assert {"ocr_count": 2, "skip_count": 1} == reporting
+
+    captured = capsys.readouterr()
+    assert "2 images OCR'd & 1 images skipped." in captured.err
