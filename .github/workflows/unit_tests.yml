@@ -4,17 +4,29 @@ on:
   push: # run on every push or PR to any branch
   pull_request:
 
+env:
+  # python version used to calculate and submit code coverage
+  COV_PYTHON_VERSION: "3.12"
+
 jobs:
   python-unit:
     name: Python unit tests
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.12"]
+    defaults:
+      run:
+        working-directory: .
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Setup Python
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python }}
 
       # base the python cache on the hash of all pyproject.toml,
       # which includes python requirements.
@@ -36,6 +48,7 @@ jobs:
 
       - name: Upload test coverage to Codecov
         uses: codecov/codecov-action@v3
+        if: ${{ matrix.python == env.COV_PYTHON_VERSION }}
 
       # Set the color of the slack message used in the next step based on the
       # status of the build: "danger" for failure, "good" for success,
