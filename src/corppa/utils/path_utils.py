@@ -118,7 +118,7 @@ def get_image_relpath(work_id, page_num):
         raise ValueError(f"Unsupported source '{source}'")
 
 
-def get_page_number(filename: str) -> str:
+def get_page_number(pagefile: pathlib.Path) -> str:
     """Extract and return the page number from the filename for page-level
     content (e.g., image or text). Returns the page number as a string
     with leading zeros. (Note: logic is currently
@@ -127,7 +127,7 @@ def get_page_number(filename: str) -> str:
     # which look like CW0112029406_00180.txt
 
     # split the file base/stem name by _ and take the last part
-    source_id, pagenum = os.path.splitext(filename)[0].split("_", 1)
+    source_id, pagenum = pagefile.stem.split("_", 1)
     if get_ppa_source(source_id) != "Gale":
         raise NotImplementedError
     # return the number as a string; strip extra trailing zero

@@ -55,7 +55,7 @@ def collate_txt(
         txt_data = {}
         for filename in files:
             with (input_dir / filename).open(encoding="utf-8") as txtfile:
-                txt_data[get_page_number(filename.name)] = txtfile.read()
+                txt_data[get_page_number(filename)] = txtfile.read()
 
         # ensure the parent directory exists
         output_file.parent.mkdir(exist_ok=True)
