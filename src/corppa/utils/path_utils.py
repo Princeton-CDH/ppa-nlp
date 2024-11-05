@@ -86,9 +86,7 @@ def get_vol_dir(vol_id: str) -> Path:
     if source == "Gale":
         return Path(source, get_stub_dir(source, vol_id), vol_id)
     elif source == "HathiTrust":
-        # TODO: This does not match tigerdata
-        # return pathlib.Path(source, get_stub_dir(source, vol_id), encode_htid(vol_id))
-        raise NotImplementedError(f"{source} volume directory conventions TBD")
+        return Path(source, get_stub_dir(source, vol_id), encode_htid(vol_id))
     else:
         raise ValueError(f"Unknown source '{source}'")
 

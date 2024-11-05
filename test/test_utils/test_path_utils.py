@@ -67,22 +67,20 @@ def test_get_vol_dir_gale(mock_get_ppa_source, mock_get_stub_dir):
     # Set returned source value to Gale
     mock_get_ppa_source.return_value = "Gale"
     assert get_vol_dir("gale_id") == Path("Gale", "stub_name", "gale_id")
-    mock_get_ppa_source.assert_called_with("gale_id")
-    mock_get_stub_dir.assert_called_with("Gale", "gale_id")
+    mock_get_ppa_source.assert_called_once_with("gale_id")
+    mock_get_stub_dir.assert_called_once_with("Gale", "gale_id")
 
 
+@patch("corppa.utils.path_utils.encode_htid", return_value="encoded_htid")
 @patch("corppa.utils.path_utils.get_stub_dir", return_value="stub_name")
 @patch("corppa.utils.path_utils.get_ppa_source")
-def test_get_vol_dir_hathi(mock_get_ppa_source, mock_get_stub_dir):
+def test_get_vol_dir_hathi(mock_get_ppa_source, mock_get_stub_dir, mock_encode_htid):
     # Set returned source value to HathiTrust
     mock_get_ppa_source.return_value = "HathiTrust"
-    # TODO: Update once HathiTrust directory conventions are finalized
-    with pytest.raises(
-        NotImplementedError, match="HathiTrust volume directory conventions TBD"
-    ):
-        get_vol_dir("htid")
-    mock_get_ppa_source.assert_called_with("htid")
-    mock_get_stub_dir.assert_not_called()
+    assert get_vol_dir("htid") == Path("HathiTrust", "stub_name", "encoded_htid")
+    mock_get_ppa_source.assert_called_once_with("htid")
+    mock_get_stub_dir.assert_called_once_with("HathiTrust", "htid")
+    mock_encode_htid.assert_called_once_with("htid")
 
 
 @patch("corppa.utils.path_utils.get_stub_dir", return_value="stub_name")
@@ -92,7 +90,7 @@ def test_get_vol_dir_unk(mock_get_ppa_source, mock_get_stub_dir):
     mock_get_ppa_source.return_value = "Unknown"
     with pytest.raises(ValueError, match="Unknown source 'Unknown'"):
         get_vol_dir("vol_id")
-    mock_get_ppa_source.assert_called_with("vol_id")
+    mock_get_ppa_source.assert_called_once_with("vol_id")
     mock_get_stub_dir.assert_not_called()
 
 
