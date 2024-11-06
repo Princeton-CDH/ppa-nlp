@@ -1,4 +1,4 @@
-import pathlib
+from pathlib import Path
 from types import GeneratorType
 from unittest.mock import patch
 
@@ -53,9 +53,9 @@ def test_get_ppa_source():
 
 def test_get_stub_dir():
     # Gale
-    assert get_stub_dir("Gale", "CB0127060085") == "100"
+    assert get_stub_dir("Gale", "CB0127060085") == Path("100")
     # HathiTrust
-    assert get_stub_dir("HathiTrust", "mdp.39015003633594") == "mdp"
+    assert get_stub_dir("HathiTrust", "mdp.39015003633594") == Path("mdp", "31039")
     # Other
     with pytest.raises(ValueError, match="Unknown source 'invalid src'"):
         get_stub_dir("invalid src", "xxx0000")
@@ -66,23 +66,21 @@ def test_get_stub_dir():
 def test_get_vol_dir_gale(mock_get_ppa_source, mock_get_stub_dir):
     # Set returned source value to Gale
     mock_get_ppa_source.return_value = "Gale"
-    assert get_vol_dir("gale_id") == pathlib.Path("Gale", "stub_name", "gale_id")
-    mock_get_ppa_source.assert_called_with("gale_id")
-    mock_get_stub_dir.assert_called_with("Gale", "gale_id")
+    assert get_vol_dir("gale_id") == Path("Gale", "stub_name", "gale_id")
+    mock_get_ppa_source.assert_called_once_with("gale_id")
+    mock_get_stub_dir.assert_called_once_with("Gale", "gale_id")
 
 
+@patch("corppa.utils.path_utils.encode_htid", return_value="encoded_htid")
 @patch("corppa.utils.path_utils.get_stub_dir", return_value="stub_name")
 @patch("corppa.utils.path_utils.get_ppa_source")
-def test_get_vol_dir_hathi(mock_get_ppa_source, mock_get_stub_dir):
+def test_get_vol_dir_hathi(mock_get_ppa_source, mock_get_stub_dir, mock_encode_htid):
     # Set returned source value to HathiTrust
     mock_get_ppa_source.return_value = "HathiTrust"
-    # TODO: Update once HathiTrust directory conventions are finalized
-    with pytest.raises(
-        NotImplementedError, match="HathiTrust volume directory conventions TBD"
-    ):
-        get_vol_dir("htid")
-    mock_get_ppa_source.assert_called_with("htid")
-    mock_get_stub_dir.assert_not_called()
+    assert get_vol_dir("htid") == Path("HathiTrust", "stub_name", "encoded_htid")
+    mock_get_ppa_source.assert_called_once_with("htid")
+    mock_get_stub_dir.assert_called_once_with("HathiTrust", "htid")
+    mock_encode_htid.assert_called_once_with("htid")
 
 
 @patch("corppa.utils.path_utils.get_stub_dir", return_value="stub_name")
@@ -92,7 +90,7 @@ def test_get_vol_dir_unk(mock_get_ppa_source, mock_get_stub_dir):
     mock_get_ppa_source.return_value = "Unknown"
     with pytest.raises(ValueError, match="Unknown source 'Unknown'"):
         get_vol_dir("vol_id")
-    mock_get_ppa_source.assert_called_with("vol_id")
+    mock_get_ppa_source.assert_called_once_with("vol_id")
     mock_get_stub_dir.assert_not_called()
 
 
@@ -107,24 +105,20 @@ def test_get_volume_id():
 
 
 def test_page_number():
-    assert get_page_number(pathlib.Path("CW0112029406_00180.txt")) == "0018"
+    assert get_page_number(Path("CW0112029406_00180.txt")) == "0018"
     # raise not implemented error if source id is not Gale/ECCO
     with pytest.raises(NotImplementedError):
-        assert get_page_number(pathlib.Path("uva.x002075945_00180.txt")) == "0018"
+        assert get_page_number(Path("uva.x002075945_00180.txt")) == "0018"
 
 
 @patch("corppa.utils.path_utils.get_volume_id", return_value="vol_id")
-@patch("corppa.utils.path_utils.get_vol_dir", return_value=pathlib.Path("vol_dir"))
+@patch("corppa.utils.path_utils.get_vol_dir", return_value=Path("vol_dir"))
 @patch("corppa.utils.path_utils.get_ppa_source")
 def test_get_image_relpath(mock_get_ppa_source, mock_get_vol_dir, mock_get_volume_id):
     # Gale
     mock_get_ppa_source.return_value = "Gale"
-    assert get_image_relpath("test_id", 4) == pathlib.Path(
-        "vol_dir", "vol_id_00040.TIF"
-    )
-    assert get_image_relpath("test_id", 100) == pathlib.Path(
-        "vol_dir", "vol_id_01000.TIF"
-    )
+    assert get_image_relpath("test_id", 4) == Path("vol_dir", "vol_id_00040.TIF")
+    assert get_image_relpath("test_id", 100) == Path("vol_dir", "vol_id_01000.TIF")
 
     # HathiTrust
     mock_get_ppa_source.return_value = "HathiTrust"
@@ -138,9 +132,9 @@ def test_get_image_relpath(mock_get_ppa_source, mock_get_vol_dir, mock_get_volum
 
 
 def test_find_relative_paths(tmp_path):
-    jpg_a = pathlib.Path("a.jpg")
+    jpg_a = Path("a.jpg")
     tmp_path.joinpath(jpg_a).touch()
-    txt_b = pathlib.Path("b.txt")
+    txt_b = Path("b.txt")
     tmp_path.joinpath(txt_b).touch()
 
     # I. Single ext
@@ -149,13 +143,13 @@ def test_find_relative_paths(tmp_path):
     assert [jpg_a] == list(paths)
 
     # II. Multiple extensions
-    tif_c = pathlib.Path("c.tif")
+    tif_c = Path("c.tif")
     tmp_path.joinpath(tif_c).touch()
     paths = list(find_relative_paths(tmp_path, [".jpg", ".tif"]))
     assert {jpg_a, tif_c} == set(paths)
 
     # III. Extension handling is case insensitive
-    jpg_d = pathlib.Path("d.JPG")
+    jpg_d = Path("d.JPG")
     tmp_path.joinpath(jpg_d).touch()
     paths_a = list(find_relative_paths(tmp_path, [".jpg"]))
     paths_b = list(find_relative_paths(tmp_path, [".JPG"]))
@@ -166,24 +160,24 @@ def test_find_relative_paths(tmp_path):
 def test_find_relative_paths_nested(tmp_path):
     img_dir = tmp_path.joinpath(tmp_path, "images")
     img_dir.mkdir()
-    jpg_a = pathlib.Path("a.jpg")
+    jpg_a = Path("a.jpg")
     tmp_path.joinpath(jpg_a).touch()
-    jpg_b = pathlib.Path("b.jpg")
+    jpg_b = Path("b.jpg")
     img_dir.joinpath(jpg_b).touch()
 
     paths = find_relative_paths(img_dir, [".jpg"])
     assert {jpg_b} == set(paths)
 
     paths = find_relative_paths(tmp_path, [".jpg"])
-    assert {jpg_a, pathlib.Path("images", "b.jpg")} == set(paths)
+    assert {jpg_a, Path("images", "b.jpg")} == set(paths)
 
 
 def test_image_relpath_hidden_dirs(tmp_path):
-    jpg_a = pathlib.Path("a.jpg")
+    jpg_a = Path("a.jpg")
     tmp_path.joinpath(jpg_a).touch()
     hidden_dir = tmp_path.joinpath(".hidden")
     hidden_dir.mkdir()
-    jpg_b = pathlib.Path("b.jpg")
+    jpg_b = Path("b.jpg")
     hidden_dir.joinpath(jpg_b).touch()
 
     paths = list(find_relative_paths(tmp_path, [".jpg"]))
@@ -210,11 +204,11 @@ def test_find_relative_paths_symbolic_links(tmp_path):
     dir_c = dir_b.joinpath("dir_c")
     dir_c.mkdir()
     # Create files
-    jpg_a = pathlib.Path("a.jpg")
+    jpg_a = Path("a.jpg")
     dir_a.joinpath(jpg_a).touch()
-    jpg_b = pathlib.Path("b.jpg")
+    jpg_b = Path("b.jpg")
     dir_b.joinpath(jpg_b).touch()
-    jpg_c = pathlib.Path("c.jpg")
+    jpg_c = Path("c.jpg")
     dir_c.joinpath(jpg_c).touch()
     # Create symbolic links
     sym_b = dir_a.joinpath("b.jpg")
@@ -224,7 +218,7 @@ def test_find_relative_paths_symbolic_links(tmp_path):
 
     # Default follows symbolic links
     paths = list(find_relative_paths(dir_a, [".jpg"]))
-    assert {jpg_a, jpg_b, pathlib.Path("c", "c.jpg")} == set(paths)
+    assert {jpg_a, jpg_b, Path("c", "c.jpg")} == set(paths)
 
     # Do not follow symbolic links
     paths = list(find_relative_paths(dir_a, [".jpg"], follow_symlinks=False))
@@ -253,7 +247,7 @@ def test_find_relative_paths_group_by_dir(tmp_path):
 
     # first yielded item (or dictionary key) should be dir as path
     included_dirs = list(dir_paths.keys())
-    assert all(isinstance(dirpath, pathlib.Path) for dirpath in included_dirs)
+    assert all(isinstance(dirpath, Path) for dirpath in included_dirs)
     # should include relative path versions of directories with text files
     relative_vol1 = vol1_dir.relative_to(ocr_dir)
     assert relative_vol1 in included_dirs
@@ -264,7 +258,7 @@ def test_find_relative_paths_group_by_dir(tmp_path):
 
     # for each volume dir, yielded items should be a list of relative paths
     assert isinstance(dir_paths[relative_vol1], list)
-    assert all(isinstance(file, pathlib.Path) for file in dir_paths[relative_vol1])
+    assert all(isinstance(file, Path) for file in dir_paths[relative_vol1])
     # we expect four files in both groups
     assert len(dir_paths[relative_vol1]) == 4
     assert len(dir_paths[relative_vol2]) == 4

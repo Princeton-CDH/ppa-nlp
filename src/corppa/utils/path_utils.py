@@ -3,8 +3,8 @@ General-purpose methods for working with paths, PPA identifiers, and directories
 """
 
 import os
-import pathlib
-from typing import Iterator
+from pathlib import Path
+from typing import Iterator, List
 
 _htid_encode_map = {":": "+", "/": "=", ".": ","}
 _htid_encode_table = str.maketrans(_htid_encode_map)
@@ -12,7 +12,7 @@ _htid_decode_map = {v: k for k, v in _htid_encode_map.items()}
 _htid_decode_table = str.maketrans(_htid_decode_map)
 
 
-def encode_htid(htid):
+def encode_htid(htid: str) -> str:
     """
     Returns the "clean" version of a HathiTrust volume identifier with the form:
         [library id].[volume id]
@@ -26,7 +26,7 @@ def encode_htid(htid):
     return f"{lib_id}.{vol_id}"
 
 
-def decode_htid(encoded_htid):
+def decode_htid(encoded_htid: str) -> str:
     """
     Return original HathiTrust volume identifier from encoded version:
         [library id].[encoded volume id]
@@ -40,7 +40,7 @@ def decode_htid(encoded_htid):
     return f"{lib_id}.{vol_id}"
 
 
-def get_ppa_source(vol_id):
+def get_ppa_source(vol_id: str) -> str:
     """
     For a given volume id, return the corresponding source.
     Assume:
@@ -56,42 +56,42 @@ def get_ppa_source(vol_id):
         raise ValueError(f"Can't identify source for volume '{vol_id}'")
 
 
-def get_stub_dir(source, vol_id):
+def get_stub_dir(source: str, vol_id: str) -> Path:
     """
-    Returns the stub directory name for the specified volume (vol_id) and
-    source type (source)
+    Returns the stub directory path (pathlib.Path) for the specified volume (vol_id)
 
-    For Gale, every third number (excluding the leading 0) of the volume
-    identifier is used.
+    For Gale, the path is formed from every third number (excluding the leading 0)
+    of the volume identifier.
        Ex. CB0127060085 --> 100
 
-    For HathiTrust, the library portion of the volume identifier is used.
-        Ex. mdp.39015003633594 --> mdp
+    For HathiTrust, we use the Stubbytree directory specification created by HTRC.
+    The path is composed of two directories: (1) the library portion of the volume
+    identifier and (2) every third character of the encoded volume identifier.
+        Ex. mdp.39015003633594 --> mdp/31039
     """
     if source == "Gale":
-        return vol_id[::3][1:]
+        return Path(vol_id[::3][1:])
     elif source == "HathiTrust":
-        return vol_id.split(".", maxsplit=1)[0]
+        lib_id, vol_id = encode_htid(vol_id).split(".", 1)
+        return Path(lib_id, vol_id[::3])
     else:
         raise ValueError(f"Unknown source '{source}'")
 
 
-def get_vol_dir(vol_id):
+def get_vol_dir(vol_id: str) -> Path:
     """
     Returns the volume directory (pathlib.Path) for the specified volume (vol_id)
     """
     source = get_ppa_source(vol_id)
     if source == "Gale":
-        return pathlib.Path(source, get_stub_dir(source, vol_id), vol_id)
+        return Path(source, get_stub_dir(source, vol_id), vol_id)
     elif source == "HathiTrust":
-        # TODO: This does not match tigerdata
-        # return pathlib.Path(source, get_stub_dir(source, vol_id), encode_htid(vol_id))
-        raise NotImplementedError(f"{source} volume directory conventions TBD")
+        return Path(source, get_stub_dir(source, vol_id), encode_htid(vol_id))
     else:
         raise ValueError(f"Unknown source '{source}'")
 
 
-def get_volume_id(work_id):
+def get_volume_id(work_id: str) -> str:
     """
     Extract volume id from PPA work id
 
@@ -102,7 +102,7 @@ def get_volume_id(work_id):
     return work_id.rsplit("-p", 1)[0]
 
 
-def get_image_relpath(work_id, page_num):
+def get_image_relpath(work_id: str, page_num: int) -> Path:
     """
     Get the (relative) image path for specified PPA work page
     """
@@ -118,7 +118,7 @@ def get_image_relpath(work_id, page_num):
         raise ValueError(f"Unsupported source '{source}'")
 
 
-def get_page_number(pagefile: pathlib.Path) -> str:
+def get_page_number(pagefile: Path) -> str:
     """Extract and return the page number from the filename for page-level
     content (e.g., image or text). Returns the page number as a string
     with leading zeros. (Note: logic is currently
@@ -135,8 +135,11 @@ def get_page_number(pagefile: pathlib.Path) -> str:
 
 
 def find_relative_paths(
-    base_dir, exts, follow_symlinks=True, group_by_dir=False
-) -> Iterator[pathlib.Path] | Iterator[tuple[pathlib.Path, list]]:
+    base_dir: Path,
+    exts: List[str],
+    follow_symlinks: bool = True,
+    group_by_dir: bool = False,
+) -> Iterator[Path] | Iterator[tuple[Path, list]]:
     """
     This method finds files anywhere under the specified base directory
     that match any of the specified file extensions (case insensitive),
@@ -157,7 +160,7 @@ def find_relative_paths(
 
     When `group_by_dir` is `True`, resulting files will be returned grouped
     by the parent directory. The return result is a tuple of a single :class:`pathlib.Path`
-    object for the directory and a list of :class:`pathlib.Path` objects for the files in that
+    bject for the directory and a list of :class:`pathlib.Path` objects for the files in that
     directory that match the specified extensions.  Given a hierarchy like this:
     ```
     images/vol-a/
@@ -181,7 +184,7 @@ def find_relative_paths(
     for dirpath, dirnames, filenames in walk_generator:
         if isinstance(dirpath, str):
             # Convert str produced by os.walk to Path object
-            dirpath = pathlib.Path(dirpath)
+            dirpath = Path(dirpath)
         # Create a generator of relevant files in the current directory
         include_files = (
             dirpath.joinpath(file).relative_to(base_dir)
