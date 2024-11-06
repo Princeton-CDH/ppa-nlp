@@ -66,7 +66,7 @@ def get_stub_dir(source: str, vol_id: str) -> Path:
 
     For HathiTrust, we use the Stubbytree directory specification created by HTRC.
     The path is composed of two directories: (1) the library portion of the volume
-    identifier and (2) eveyr third character of the encoded volume identifier.
+    identifier and (2) every third character of the encoded volume identifier.
         Ex. mdp.39015003633594 --> mdp/31039
     """
     if source == "Gale":
