@@ -23,7 +23,7 @@ def ppa_stats(dataset: str) -> None:
     examples_by_page = Counter()
     examples_by_session = defaultdict(list)
     for ex in examples:
-        # Skip examples w/ answer or (page) id
+        # Skip examples without answer or (page) id
         if "answer" not in ex and "id" not in ex:
             # Ignore "unanswered" examples
             continue
