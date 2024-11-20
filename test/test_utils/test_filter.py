@@ -1,5 +1,6 @@
 import json
 import os
+import pathlib
 from unittest.mock import patch
 
 import pytest
@@ -8,65 +9,84 @@ from corppa.utils.filter import filter_pages, main, save_filtered_corpus
 
 # minimal/mock page data fixture for testing
 fixture_page_data = [
-    {"work_id": "foo", "label": "i"},
-    {"work_id": "bar-p1", "label": "1"},
-    {"work_id": "bar-p1", "label": "2"},
-    {"work_id": "bar-p1", "label": "3"},
-    {"work_id": "baz", "label": "23"},
+    {"work_id": "foo", "label": "i", "order": 2},
+    {"work_id": "bar-p1", "label": "1", "order": 1},
+    {"work_id": "bar-p1", "label": "2", "order": 2},
+    {"work_id": "bar-p1", "label": "3", "order": 3},
+    {"work_id": "baz", "label": "23", "order": 27},
 ]
 
 
 @pytest.fixture
-def corpus_file(tmpdir):
-    """pytest fixture; creates a jsonl file with fixture_page_data in a tmpdir;
+def corpus_file(tmp_path):
+    """pytest fixture; creates a jsonl file with fixture_page_data in a temp dir;
     returns the path object for the jsonl file."""
-    corpusfile = tmpdir.join("ppa_pages.jsonl")
-    corpusfile.write("\n".join([json.dumps(p) for p in fixture_page_data]))
+    corpusfile = tmp_path.joinpath("ppa_pages.jsonl")
+    corpusfile.write_text("\n".join([json.dumps(p) for p in fixture_page_data]))
     return corpusfile
 
 
-def test_filter_pages(corpus_file):
-    source_ids = ["foo", "bar"]
-    # use list to consume the generator
-    results = list(filter_pages(str(corpus_file), source_ids, disable_progress=True))
+def test_filter_work_ids(corpus_file):
+    # "bar" corresponds to a source_id not a work_id (since bar-p1 is an excerpt)
+    work_ids = ["foo", "bar"]
+    results = list(filter_pages(corpus_file, work_ids=work_ids, disable_progress=True))
+    assert len(results) == 1
+    assert results[0]["work_id"] == "foo"
+
+    work_ids = ["foo", "bar-p1"]
+    results = list(filter_pages(corpus_file, work_ids=work_ids, disable_progress=True))
     assert len(results) == 4
-    assert set([r["work_id"].split("-")[0] for r in results]) == set(source_ids)
+    assert set(r["work_id"] for r in results) == set(work_ids)
+
+
+def test_filter_work_pages(corpus_file):
+    work_pages = {"foo": {2}, "bar": {1}, "bar-p1": {3, 5}, "foo": {2}, "baz": {1}}
+    results = list(
+        filter_pages(
+            corpus_file,
+            work_pages=work_pages,
+            disable_progress=True,
+        )
+    )
+    assert len(results) == 2
+    assert set([r["work_id"] for r in results]) == {"foo", "bar-p1"}
+    assert set([r["order"] for r in results]) == {2, 3}
 
 
 def test_filter_include(corpus_file):
     results = list(
         filter_pages(
-            str(corpus_file),
-            disable_progress=True,
+            corpus_file,
             include_filter={"work_id": "bar-p1", "label": "23"},
+            disable_progress=True,
         )
     )
     assert len(results) == 4
-    assert set([r["work_id"].split("-")[0] for r in results]) == {"bar", "baz"}
+    assert set([r["work_id"] for r in results]) == {"bar-p1", "baz"}
     assert set([r["label"] for r in results]) == {"1", "2", "3", "23"}
 
 
 def test_filter_exclude(corpus_file):
     results = list(
         filter_pages(
-            str(corpus_file),
-            disable_progress=True,
+            corpus_file,
             exclude_filter={"work_id": "bar-p1", "label": "23"},
+            disable_progress=True,
         )
     )
     assert len(results) == 1
-    assert set([r["work_id"].split("-")[0] for r in results]) == {"foo"}
+    assert set([r["work_id"] for r in results]) == {"foo"}
     assert set([r["label"] for r in results]) == {"i"}
 
 
 def test_filter_id_and_include(corpus_file):
-    # source id and include filter used in combination
+    # work ids and include filter used in combination
     results = list(
         filter_pages(
-            str(corpus_file),
-            source_ids=["bar"],
-            disable_progress=True,
+            corpus_file,
+            work_ids=["bar-p1"],
             include_filter={"label": "2", "work_id": "baz"},
+            disable_progress=True,
         )
     )
     assert len(results) == 1
@@ -74,9 +94,24 @@ def test_filter_id_and_include(corpus_file):
     assert results[0]["label"] == "2"
 
 
+def test_filter_id_and_work_pages(corpus_file):
+    # provide work ids as well as work pages
+    results = list(
+        filter_pages(
+            corpus_file,
+            work_ids=["foo"],
+            work_pages={"bar-p1": {2}},
+            disable_progress=True,
+        )
+    )
+    assert len(results) == 2
+    assert set([r["work_id"] for r in results]) == {"foo", "bar-p1"}
+    assert set([r["order"] for r in results]) == {2}
+
+
 def test_filter_required_args(corpus_file):
     with pytest.raises(ValueError, match="At least one filter must be specified"):
-        list(filter_pages(str(corpus_file)))
+        list(filter_pages(corpus_file))
 
 
 @patch("corppa.utils.filter.tqdm")
@@ -86,8 +121,8 @@ def test_filter_pages_progressbar(mock_orjsonl, mock_tqdm, corpus_file):
     # configure mock tqdm iterator to return fixture page data
     mock_tqdm.return_value.__iter__.return_value = fixture_page_data
     # use list to consume the generator
-    list(filter_pages(str(corpus_file), ["foo"]))
-    mock_orjsonl.stream.assert_called_with(str(corpus_file))
+    list(filter_pages(corpus_file, ["foo"]))
+    mock_orjsonl.stream.assert_called_with(corpus_file)
     mock_tqdm.assert_called_with(
         mock_orjsonl.stream.return_value,
         desc="Filtering",
@@ -104,8 +139,8 @@ def test_filter_pages_noprogressbar(mock_orjsonl, mock_tqdm, corpus_file):
     # configure mock tqdm iterator to return fixture page data
     mock_tqdm.return_value.__iter__.return_value = fixture_page_data
     # use list to consume the generator
-    list(filter_pages(str(corpus_file), ["foo"], disable_progress=True))
-    mock_orjsonl.stream.assert_called_with(str(corpus_file))
+    list(filter_pages(corpus_file, ["foo"], disable_progress=True))
+    mock_orjsonl.stream.assert_called_with(corpus_file)
     mock_tqdm.assert_called_with(
         mock_orjsonl.stream.return_value,
         desc="Filtering",
@@ -116,21 +151,22 @@ def test_filter_pages_noprogressbar(mock_orjsonl, mock_tqdm, corpus_file):
 
 @patch("corppa.utils.filter.filter_pages")
 @patch("corppa.utils.filter.orjsonl")
-def test_save_filtered_corpus(mock_orjsonl, mock_filter_pages, tmpdir):
-    idfile = tmpdir.join("ids.txt")
+def test_save_filtered_corpus(mock_orjsonl, mock_filter_pages, tmp_path):
+    idfile = tmp_path.joinpath("ids.txt")
     ids = ["one", "two", "three", "four"]
-    idfile.write("\n".join(ids))
+    idfile.write_text("\n".join(ids))
     input_filename = "input.jsonl"
     output_filename = "output.jsonl"
 
-    save_filtered_corpus(input_filename, output_filename, str(idfile))
+    save_filtered_corpus(input_filename, output_filename, idfile)
     # filter should be called with input file and list of ids from text file
     mock_filter_pages.assert_called_with(
         input_filename,
-        source_ids=ids,
-        disable_progress=False,
+        work_ids=ids,
+        work_pages=None,
         include_filter=None,
         exclude_filter=None,
+        disable_progress=False,
     )
     # should save result to specified output filename
     mock_orjsonl.save.assert_called_with(
@@ -143,6 +179,19 @@ def test_save_filtered_corpus_required_args():
         save_filtered_corpus("pages.jsonl", "filtered.jsonl")
 
 
+def test_save_filtered_corpus_pgfile_fieldnames(tmp_path):
+    pgfile = tmp_path.joinpath("pages.csv")
+    pgfile.write_text("work,pg_id\n")
+    pgfile.write_text("foo,1\n")
+    pgfile.write_text("bar,2\n")
+
+    with pytest.raises(
+        ValueError,
+        match=f'pgfile {pgfile} must include fields "work_id" and "page_num"',
+    ):
+        save_filtered_corpus("pages.jsonl", "filtered.jsonl", pgfile=pgfile)
+
+
 @pytest.mark.parametrize(
     "cli_args, call_params",
     [
@@ -150,12 +199,13 @@ def test_save_filtered_corpus_required_args():
         (
             ["filter.py", "pages.json", "subset.jsonl", "--idfile", "id.txt"],
             (
-                ("pages.json", "subset.jsonl"),
+                (pathlib.Path("pages.json"), pathlib.Path("subset.jsonl")),
                 {
-                    "idfile": "id.txt",
-                    "disable_progress": False,
+                    "idfile": pathlib.Path("id.txt"),
+                    "pgfile": None,
                     "include_filter": None,
                     "exclude_filter": None,
+                    "disable_progress": False,
                 },
             ),
         ),
@@ -170,12 +220,13 @@ def test_save_filtered_corpus_required_args():
                 "--no-progress",
             ],
             (
-                ("pages.json.bz2", "subset.jsonl.gz"),
+                (pathlib.Path("pages.json.bz2"), pathlib.Path("subset.jsonl.gz")),
                 {
-                    "idfile": "id.txt",
-                    "disable_progress": True,
+                    "idfile": pathlib.Path("id.txt"),
+                    "pgfile": None,
                     "include_filter": None,
                     "exclude_filter": None,
+                    "disable_progress": True,
                 },
             ),
         ),
@@ -183,12 +234,13 @@ def test_save_filtered_corpus_required_args():
         (
             ["filter.py", "pages.json", "subset", "--idfile", "id.txt"],
             (
-                ("pages.json", "subset.jsonl"),
+                (pathlib.Path("pages.json"), pathlib.Path("subset.jsonl")),
                 {
-                    "idfile": "id.txt",
-                    "disable_progress": False,
+                    "idfile": pathlib.Path("id.txt"),
+                    "pgfile": None,
                     "include_filter": None,
                     "exclude_filter": None,
+                    "disable_progress": False,
                 },
             ),
         ),
@@ -196,12 +248,13 @@ def test_save_filtered_corpus_required_args():
         (
             ["filter.py", "pages.json", "subset", "--include", "tag=one", "page=2"],
             (
-                ("pages.json", "subset.jsonl"),
+                (pathlib.Path("pages.json"), pathlib.Path("subset.jsonl")),
                 {
                     "idfile": None,
-                    "disable_progress": False,
+                    "pgfile": None,
                     "include_filter": {"tag": "one", "page": "2"},
                     "exclude_filter": None,
+                    "disable_progress": False,
                 },
             ),
         ),
@@ -209,12 +262,27 @@ def test_save_filtered_corpus_required_args():
         (
             ["filter.py", "pages.json", "subset", "--exclude", "contains_poetry=Yes"],
             (
-                ("pages.json", "subset.jsonl"),
+                (pathlib.Path("pages.json"), pathlib.Path("subset.jsonl")),
                 {
                     "idfile": None,
-                    "disable_progress": False,
+                    "pgfile": None,
                     "include_filter": None,
                     "exclude_filter": {"contains_poetry": "Yes"},
+                    "disable_progress": False,
+                },
+            ),
+        ),
+        # pgfile filter
+        (
+            ["filter.py", "pages.json", "subset", "--pgfile", "pages.csv"],
+            (
+                (pathlib.Path("pages.json"), pathlib.Path("subset.jsonl")),
+                {
+                    "idfile": None,
+                    "pgfile": pathlib.Path("pages.csv"),
+                    "include_filter": None,
+                    "exclude_filter": None,
+                    "disable_progress": False,
                 },
             ),
         ),
@@ -228,6 +296,10 @@ def test_main(mock_save_filtered_corpus, cli_args, call_params, tmp_path):
     if "--idfile" in cli_args:
         idfile = tmp_path / cli_args[cli_args.index("--idfile") + 1]
         idfile.write_text("id1\nid2")
+    # cerate a csvfile at expected path; args comes immediately after --pgfile
+    if "--pgfile" in cli_args:
+        pgfile = tmp_path / cli_args[cli_args.index("--pgfile") + 1]
+        pgfile.write_text("src_id1,1\nsrc_id2,2")
 
     # patch in test args for argparse to parse
     with patch("sys.argv", cli_args):
@@ -288,10 +360,11 @@ def test_main_idfile_nonexistent(mock_save_filtered_corpus, capsys):
     with patch(
         "sys.argv", ["f.py", "foo.jsonl", "out.jsonl", "--idfile", "/not/a/real/id.txt"]
     ):
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as execinfo:
             main()
+        assert execinfo.value.code == 1
     captured = capsys.readouterr()
-    assert "does not exist" in captured.out
+    assert "does not exist" in captured.err
 
 
 @patch("corppa.utils.filter.save_filtered_corpus")
@@ -299,10 +372,23 @@ def test_main_idfile_empty(mock_save_filtered_corpus, capsys, tmp_path):
     idfile = tmp_path / "id.txt"
     idfile.touch()
     with patch("sys.argv", ["f.py", "foo.jsonl", "out.jsonl", "--idfile", str(idfile)]):
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as execinfo:
             main()
+        assert execinfo.value.code == 1
     captured = capsys.readouterr()
-    assert "is zero size" in captured.out
+    assert "is zero size" in captured.err
+
+
+@patch("corppa.utils.filter.save_filtered_corpus")
+def test_main_pgfile_empty(mock_save_filtered_corpus, capsys, tmp_path):
+    pgfile = tmp_path / "pages.csv"
+    pgfile.touch()
+    with patch("sys.argv", ["f.py", "foo.jsonl", "out.jsonl", "--pgfile", str(pgfile)]):
+        with pytest.raises(SystemExit) as execinfo:
+            main()
+        assert execinfo.value.code == 1
+    captured = capsys.readouterr()
+    assert "is zero size" in captured.err
 
 
 @patch("corppa.utils.filter.save_filtered_corpus")
@@ -314,7 +400,8 @@ def test_main_outfile_exists(mock_save_filtered_corpus, capsys, tmp_path):
     with patch(
         "sys.argv", ["f.py", "foo.jsonl", str(outfile), "--idfile", str(idfile)]
     ):
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as execinfo:
             main()
+        assert execinfo.value.code == 1
     captured = capsys.readouterr()
-    assert "already exists" in captured.out
+    assert "already exists" in captured.err
