@@ -24,7 +24,7 @@ sys.modules["prodigy"] = mock_prodigy
 mock_prodigy_preprocess = MagicMock()
 sys.modules["prodigy.components.preprocess"] = mock_prodigy_preprocess
 
-from corppa.poetry_detection.annotation.recipe import (
+from corppa.poetry_detection.annotation.annotation_recipes import (
     ReviewStream,
     add_image,
     add_images,
@@ -57,7 +57,7 @@ def test_add_image():
     assert example["image"] == f"prefix/{example['image_path']}"
 
 
-@patch("corppa.poetry_detection.annotation.recipe.add_image")
+@patch("corppa.poetry_detection.annotation.annotation_recipes.add_image")
 def test_add_images(mock_add_image):
     examples = [{"image_path": "a"}, {"image_path": "b"}]
 
@@ -74,7 +74,7 @@ def test_add_images(mock_add_image):
     )
 
 
-@patch("corppa.poetry_detection.annotation.recipe.add_image")
+@patch("corppa.poetry_detection.annotation.annotation_recipes.add_image")
 def test_remove_image_data(mock_add_image):
     # Empty list (i.e. no examples)
     assert remove_image_data([]) == []
@@ -113,7 +113,10 @@ def test_remove_image_data(mock_add_image):
     assert mock_add_image.call_args == call(mixed_examples[-1], image_prefix="prefix")
 
 
-@patch("corppa.poetry_detection.annotation.recipe.SESSION_ID_ATTR", "session_id")
+@patch(
+    "corppa.poetry_detection.annotation.annotation_recipes.SESSION_ID_ATTR",
+    "session_id",
+)
 def test_get_session_name():
     # Typical case: drop db prefix
     example = {"session_id": "db-id-alice"}
@@ -136,8 +139,8 @@ def test_remove_label_prefix():
     assert remove_label_prefix("no_prefix") == "no_prefix"
 
 
-@patch("corppa.poetry_detection.annotation.recipe.get_session_name")
-@patch("corppa.poetry_detection.annotation.recipe.add_label_prefix")
+@patch("corppa.poetry_detection.annotation.annotation_recipes.get_session_name")
+@patch("corppa.poetry_detection.annotation.annotation_recipes.add_label_prefix")
 def test_add_session_prefix(mock_add_label_prefix, mock_get_session_name):
     mock_get_session_name.return_value = "session"
 
@@ -157,7 +160,7 @@ def test_add_session_prefix(mock_add_label_prefix, mock_get_session_name):
     mock_add_label_prefix.assert_has_calls([call("a", "session"), call("b", "session")])
 
 
-@patch("corppa.poetry_detection.annotation.recipe.remove_label_prefix")
+@patch("corppa.poetry_detection.annotation.annotation_recipes.remove_label_prefix")
 def test_remove_session_prefix(mock_remove_label_prefix):
     # example without spans
     example = {"text": "some text..."}
@@ -172,7 +175,7 @@ def test_remove_session_prefix(mock_remove_label_prefix):
     mock_remove_label_prefix.assert_has_calls([call("a"), call("b")])
 
 
-@patch("corppa.poetry_detection.annotation.recipe.remove_label_prefix")
+@patch("corppa.poetry_detection.annotation.annotation_recipes.remove_label_prefix")
 def test_has_span_overlap(mock_remove_label_prefix):
     # example without spans
     ex_no_spans = {}
@@ -226,7 +229,7 @@ def test_has_span_overlap(mock_remove_label_prefix):
     mock_remove_label_prefix.assert_not_called()
 
 
-@patch("corppa.poetry_detection.annotation.recipe.has_span_overlap")
+@patch("corppa.poetry_detection.annotation.annotation_recipes.has_span_overlap")
 def test_validate_review_stream(mock_has_span_overlap):
     mock_has_span_overlap.side_effect = [False, True, False]
 
@@ -263,8 +266,8 @@ class TestReviewStream:
         mock_get_data.assert_called_once()
         assert mock_get_data.call_args == call(data, "pfx", "fetch_media")
 
-    @patch("corppa.poetry_detection.annotation.recipe.add_session_prefix")
-    @patch("corppa.poetry_detection.annotation.recipe.get_session_name")
+    @patch("corppa.poetry_detection.annotation.annotation_recipes.add_session_prefix")
+    @patch("corppa.poetry_detection.annotation.annotation_recipes.get_session_name")
     def test_create_review_example(
         self, mock_get_session_name, mock_add_session_prefix
     ):
@@ -329,7 +332,7 @@ class TestReviewStream:
         }
 
     @patch.object(ReviewStream, "create_review_example")
-    @patch("corppa.poetry_detection.annotation.recipe.add_image")
+    @patch("corppa.poetry_detection.annotation.annotation_recipes.add_image")
     def test_get_data(self, mock_add_image, mock_create_review_example):
         mock_prodigy_preprocess.fetch_media.reset_mock(
             return_value=True, side_effect=True
@@ -371,8 +374,11 @@ class TestReviewStream:
         mock_add_image.assert_has_calls([call("review", None) for _ in range(3)])
 
 
-@patch("corppa.poetry_detection.annotation.recipe.INPUT_HASH_ATTR", "input_hash")
-@patch("corppa.poetry_detection.annotation.recipe.ReviewStream")
+@patch(
+    "corppa.poetry_detection.annotation.annotation_recipes.INPUT_HASH_ATTR",
+    "input_hash",
+)
+@patch("corppa.poetry_detection.annotation.annotation_recipes.ReviewStream")
 def test_get_review_stream(mock_stream):
     mock_prodigy.set_hashes.reset_mock(return_value=True, side_effect=True)
     mock_prodigy.set_hashes.side_effect = lambda x, overwrite, input_keys, task_keys: x
