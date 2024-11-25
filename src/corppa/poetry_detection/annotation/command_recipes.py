@@ -1,3 +1,17 @@
+"""
+This module contains custom command recipes for Prodigy.
+
+Recipes:
+* `ppa-task-progress`: Report the current progress for a PPA annotation task
+  at the page and annotator level.
+
+
+Example use:
+```
+prodigy ppa-stats task_id -F command_recipes.py
+```
+"""
+
 from collections import Counter, defaultdict
 
 from prodigy.components.db import connect
@@ -7,11 +21,18 @@ from prodigy.util import SESSION_ID_ATTR, msg
 
 
 @recipe(
-    "page-stats",
+    "ppa-task-progress",
     dataset=Arg(help="Prodigy dataset ID"),
 )
-def ppa_stats(dataset: str) -> None:
-    # Load examples
+def page_stats(dataset: str) -> None:
+    """
+    This command reports the current progress for a PPA annotation task
+    (specified by its dataset ID) at the page and annotator level. This
+    command prints two tables:
+        1. Reports the number of pages with k annotations
+        2. Reports the number of annotations per session (i.e. annotator)
+    """
+    # Load examples from database
     DB = connect()
     if dataset not in DB:
         raise RecipeError(f"Can't find dataset '{dataset}' in database")
@@ -19,8 +40,10 @@ def ppa_stats(dataset: str) -> None:
     n_examples = len(examples)
     msg.good(f"Loaded {n_examples} annotations from {dataset} dataset")
 
-    # Get stats
+    # Get page and session level statistics
+    ## Tracks the number of examples for each page
     examples_by_page = Counter()
+    ## Tracks the number of examples for each session
     examples_by_session = defaultdict(list)
     for ex in examples:
         # Skip examples without answer or (page) id
@@ -31,12 +54,9 @@ def ppa_stats(dataset: str) -> None:
         examples_by_page[page_id] += 1
         session_id = ex[SESSION_ID_ATTR]
         examples_by_session[session_id].append(page_id)
-    # Get frequencies of page-level annotation counts
-    count_freqs = Counter()
-    total = 0
-    for count in examples_by_page.values():
-        count_freqs[count] += 1
-        total += count
+    ## Tracks the number of pages with k annotations
+    count_freqs = Counter(examples_by_page.values())
+    total = sum(examples_by_page.values())
 
     # Build overall table
     header = ["# Annotations"]
@@ -57,12 +77,15 @@ def ppa_stats(dataset: str) -> None:
 
     # Build session table
     data = []
-    total = 0
-    for session, pages in sorted(examples_by_session.items()):
+    cumulative_total = 0
+    ## Sort sessions by annotation count in decreasing order
+    for session, pages in sorted(
+        examples_by_session.items(), key=lambda x: len(x[1]), reverse=True
+    ):
         count = len(pages)
         unique = len(set(pages))
-        total += count
-        row = [session, count, unique, total]
+        cumulative_total += count
+        row = [session, count, unique, cumulative_total]
         data.append(row)
     header = [
         "Session",
@@ -71,6 +94,10 @@ def ppa_stats(dataset: str) -> None:
         "Total",
     ]
     aligns = ["l", "r", "r", "r"]
+    """
+    If we'd like to have a legend for this table, we can replce the subseqeuent
+    code with the following:
+    
     # info = {
     #    "Session": "Session name",
     #    "Count": "Completed annotations",
@@ -78,6 +105,7 @@ def ppa_stats(dataset: str) -> None:
     #    "Total": "Total annotations collected",
     # }
     # msg.table(info, title="Legend")
+    """
     msg.table(
         data,
         title="Session Annotation Progress",
