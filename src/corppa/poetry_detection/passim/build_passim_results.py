@@ -1,5 +1,6 @@
 """
-Gather passim-identified matches from passim output files.
+Gather passim results (i.e., identified matches) at the page-level from
+passim output files.
 """
 
 import argparse
@@ -15,12 +16,12 @@ def get_span_annotation(alignment_record, include_excerpts=False):
     span_annotation["page_id"] = alignment_record["id2"]
     span_annotation["ref_id"] = alignment_record["id"]
     span_annotation["ref_corpus"] = alignment_record["corpus"]
-    span_annotation["start_idx"] = alignment_record["begin2"]
-    span_annotation["end_idx"] = alignment_record["end2"]
+    span_annotation["page_start"] = alignment_record["begin2"]
+    span_annotation["page_end"] = alignment_record["end2"]
     span_annotation["ref_start"] = alignment_record["begin"]
     span_annotation["ref_end"] = alignment_record["end"]
     if include_excerpts:
-        span_annotation["aligned_excerpt"] = alignment_record["s2"]
+        span_annotation["aligned_page_excerpt"] = alignment_record["s2"]
         span_annotation["aligned_ref_excerpt"] = alignment_record["s1"]
     return span_annotation
 
@@ -59,8 +60,8 @@ def add_original_excerpts(
         poem_spans = page_records[page_id]["poem_spans"]
         # Add (original) page excerpt to each poem span
         for span in poem_spans:
-            start, end = span["start_idx"], span["end_idx"]
-            span["excerpt"] = record["text"][start:end]
+            start, end = span["page_start"], span["page_end"]
+            span["page_excerpt"] = record["text"][start:end]
             if ref_corpora:
                 # Add the page_id to the referenced text (i.e. poem)
                 corpus_id = span["ref_corpus"]
@@ -145,9 +146,9 @@ def build_passim_output(
 
 def main():
     """
-    Command-line access to build a file gathering the passim output.
+    Command-line access to build a JSONL file gathering the page-level passim results.
     """
-    parser = argparse.ArgumentParser(description="Build passim output results.")
+    parser = argparse.ArgumentParser(description="Build page-level passim results.")
 
     # Required arguments
     parser.add_argument(
@@ -160,7 +161,11 @@ def main():
         help="The top-level output directory for a passim run",
         type=pathlib.Path,
     )
-    parser.add_argument("output", help="Output file path", type=pathlib.Path)
+    parser.add_argument(
+        "output",
+        help="Filename for page-level passim output (JSON)",
+        type=pathlib.Path,
+    )
     # Optional arguments
     parser.add_argument(
         "--progress",
@@ -176,8 +181,7 @@ def main():
     parser.add_argument(
         "--ref-corpus",
         help="Reference corpus used in the passim run. Can specify multiple.",
-        action="extend",
-        nargs="+",
+        action="append",
         type=pathlib.Path,
     )
 
