@@ -61,8 +61,8 @@ def process_page_annotation(page_annotation) -> dict[str, Any]:
 
 def get_excerpt_entries(page_data: dict[str, Any]) -> Generator[dict[str, Any]]:
     """
-    Generate excerpt entries for suitable for CSV file from processed page
-    annotation data as produced by `process_page_annotation`.
+    Generate excerpt entries data from the processed page produced by
+    `process_page_annotation`.
     """
     for excerpt in page_data["excerpts"]:
         entry = {
