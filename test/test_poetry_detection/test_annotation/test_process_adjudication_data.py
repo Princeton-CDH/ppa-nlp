@@ -16,18 +16,23 @@ def test_get_excerpts():
     page_annotation = {"text": "some page text"}
 
     # Missing spans field
-    assert get_excerpts(page_annotation) == []
+    with pytest.raises(ValueError, match="Page annotation missing 'spans' field"):
+        get_excerpts(page_annotation)
 
     # Empty spans field
     page_annotation["spans"] = []
     assert get_excerpts(page_annotation) == []
 
-    # Regular case
+    # Regular case (i.e. non-empty spans field)
     page_annotation["spans"].append({"start": 0, "end": 4})
     page_annotation["spans"].append({"start": 10, "end": 14})
     results = get_excerpts(page_annotation)
     assert results[0] == {"start": 0, "end": 4, "text": "some"}
     assert results[1] == {"start": 10, "end": 14, "text": "text"}
+
+    # Missing text field
+    blank_page = {"spans": []}
+    assert get_excerpts(blank_page) == []
 
 
 @patch("corppa.poetry_detection.annotation.process_adjudication_data.get_excerpts")

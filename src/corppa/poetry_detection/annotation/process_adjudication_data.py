@@ -22,10 +22,10 @@ def get_excerpts(page_annotation: dict[str, Any]) -> list[dict[str, int | str]]:
           poetry detection task.
     """
     excerpts = []
-    page_text = page_annotation["text"]
-    # If spans field is missing, return empty list (i.e., no spans)
+    # Blank pages may not have a text field, so in these cases set to empty string
+    page_text = page_annotation.get("text", "")
     if "spans" not in page_annotation:
-        return excerpts
+        raise ValueError("Page annotation missing 'spans' field")
     for span in page_annotation["spans"]:
         excerpt = {
             "start": span["start"],
