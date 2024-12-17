@@ -31,8 +31,6 @@ def transform_record(
     # Validate input record
     if id_field not in record:
         raise ValueError(f"Record missing '{id_field}' field")
-    if "text" not in record:
-        raise ValueError(f"Record missing 'text' field")
 
     out_record = {}
     # Copy over all fields
@@ -43,7 +41,8 @@ def transform_record(
     # Add required output
     out_record["id"] = record[id_field]
     out_record["corpus"] = corpus_name
-    out_record["text"] = record["text"]
+    # If text field is missing, treat as blank page
+    out_record["text"] = record.get("text", "")
     return out_record
 
 
