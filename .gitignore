@@ -3,6 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# project specific
+# - don't check reference poetry data into version control
+poetry-reference-data/
+
 # C extensions
 *.so
 

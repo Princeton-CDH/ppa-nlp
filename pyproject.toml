@@ -34,7 +34,8 @@ test = [
   "pytest-cov"
 ]
 ocr = ["google-cloud-vision"]
-dev = ["pre-commit", "ruff", "corppa[test]", "corppa[ocr]"]
+poem_id = ["pyarrow", "polars"]
+dev = ["pre-commit", "ruff", "corppa[test]", "corppa[ocr]", "corppa[poem_id]"]
 
 [project.scripts]
 corppa-filter = "corppa.utils.filter:main"
