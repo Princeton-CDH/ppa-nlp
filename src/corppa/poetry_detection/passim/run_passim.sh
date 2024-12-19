@@ -3,7 +3,9 @@
 # Script for running passim. Requires Java 8*/11/17 because of Spark dependency.
 #
 # Examples:
-#   env PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH" ./run_passim.sh [input] [output]
+#   ./run_passim.sh corpus.jsonl output-dir-path
+#   ./run_passim.sh "input/*.jsonl" output-dir-path
+#   ./run_passim.sh "{ppa_texts.jsonl,ref_texts.jsonl}" output-dir-path
 #####
 
 # Spark settings
