@@ -128,7 +128,7 @@ def main():
     )
     parser.add_argument(
         "output",
-        help="Filename where the resulting corpus should be saved.",
+        help="Filename where the resulting corpus (JSONL) should be saved.",
         type=pathlib.Path,
     )
     parser.add_argument(
