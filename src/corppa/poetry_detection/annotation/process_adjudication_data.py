@@ -1,3 +1,25 @@
+"""
+This script processes the adjudication data produced by Prodigy for our
+poetry detection task into two outputs:
+
+    1. A JSONL file that compiles the annotation data into page-level records.
+       So, each record contains some page-level metdata and the compiled list
+       of poetry excerpts (if any) determined in the adjudication process.
+
+    2. A CSV file containing excerpt-level data per line.
+
+Note that the first file explicitly include information on the pages where
+no poetry was identified, while the second will only implicitly through
+absence and requires external knowledge of what pages were covered in
+the annotation rounds. So, the former is particularly useful for the evaluation
+process while the latter is better suited for building a final excerpt dataset.
+
+Example command line usage:
+```
+python process_adjudication_data.py prodigy_data.jsonl adj_pages.jsonl adj_excerpts.csv
+```
+"""
+
 import argparse
 import csv
 import pathlib
@@ -118,10 +140,12 @@ def process_adjudication_data(
 
 def main():
     """
-    Extracts poetry excerpts from Prodigy annotation data
+    Extracts page- and excerpt-level data from a Prodigy data file (JSONL)
+    and writes the page-level excerpt data to a JSONL (`output_pages`) and the
+    excerpt-level data to a CSV (`output_excerpts`).
     """
     parser = argparse.ArgumentParser(
-        description="Extract poem excerpt from Prodigy annotation data",
+        description="Extracts & saves page- and excerpt-level data from Prodigy data file",
     )
     parser.add_argument(
         "input",
@@ -135,7 +159,7 @@ def main():
     )
     parser.add_argument(
         "output_excerpts",
-        help="Filenam where extracted excerpt data (CSV file) should be written",
+        help="Filename where extracted excerpt data (CSV file) should be written",
         type=pathlib.Path,
     )
     parser.add_argument(
