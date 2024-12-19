@@ -12,8 +12,11 @@ from tqdm import tqdm
 
 
 def get_span_annotation(alignment_record, include_excerpts=False):
-   """rename passim output fields to fields that make sense for ppa page and reference data"""
-   span_annotation = {
+    """
+    Extract and rename fields from passim alignment record into a new
+    page-level record.
+    """
+    span_annotation = {
         "ref_id": alignment_record["id"],
         "ref_corpus": alignment_record["corpus"],
         "ref_start": alignment_record["begin"],
@@ -23,6 +26,8 @@ def get_span_annotation(alignment_record, include_excerpts=False):
         "page_end": alignment_record["end2"],
     }
     if include_excerpts:
+        # Note: These excerpts are "aligned" versions with "-" characters
+        # indicating where an insertion took place in the alignment algorithm
         span_annotation["aligned_page_excerpt"] = alignment_record["s2"]
         span_annotation["aligned_ref_excerpt"] = alignment_record["s1"]
     return span_annotation
@@ -46,6 +51,9 @@ def extract_passim_matches(passim_dir, include_excerpts=False, disable_progress=
 def add_original_excerpts(
     page_records, input_corpus, ref_corpora=None, disable_progress=False
 ):
+    """
+    Add original excerpts to the page-level records.
+    """
     if ref_corpora:
         # For tracking page reuse by reference text (i.e. poem)
         refs_to_pages = {}
@@ -159,7 +167,7 @@ def main():
         type=pathlib.Path,
     )
     parser.add_argument(
-        "passim_output",
+        "passim_output_dir",
         help="The top-level output directory for a passim run",
         type=pathlib.Path,
     )
@@ -195,9 +203,9 @@ def main():
             f"Error: input corpus {args.input_corpus} does not exist", file=sys.stderr
         )
         sys.exit(1)
-    if not args.passim_output.is_dir():
+    if not args.passim_output_dir.is_dir():
         print(
-            f"Error: passim output directory {args.passim_output} does not exist",
+            f"Error: passim output directory {args.passim_output_dir} does not exist",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -207,7 +215,7 @@ def main():
 
     build_passim_output(
         args.input_corpus,
-        args.passim_output,
+        args.passim_output_dir,
         args.output,
         not args.progress,
         args.include_excerpts,

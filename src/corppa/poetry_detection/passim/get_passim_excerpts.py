@@ -50,13 +50,13 @@ def main():
     Command-line access to build TSV file of passage-level passim matches.
     """
     parser = argparse.ArgumentParser(
-        description="Extract passage-level passim results."
+        description="Extract passage-level passim results (TSV)"
     )
 
     # Required arguments
     parser.add_argument(
         "input",
-        help="Page-level passim results (output of build_passim_results.py)",
+        help="Page-level passim results file (JSONL)",
         type=pathlib.Path,
     )
     parser.add_argument(
