@@ -2,10 +2,10 @@
 This directory contains the various scripts needed for running Passim
 to detect the reuse of poetry on pages from works in PPA.
 
-## Setup
+> [!WARNING]
+> This workflow is quite preliminary and may undergo extensive change.
 
-
-## Pipeline Descrition
+## Preliminary Passim Workflow
 
 ### 1. Create input corpora for `passim`
 The pipeline requires one or more corpus JSONL files formatted for Passim.
