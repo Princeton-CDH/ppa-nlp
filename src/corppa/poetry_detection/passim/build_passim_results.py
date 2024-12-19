@@ -12,14 +12,16 @@ from tqdm import tqdm
 
 
 def get_span_annotation(alignment_record, include_excerpts=False):
-    span_annotation = {}
-    span_annotation["page_id"] = alignment_record["id2"]
-    span_annotation["ref_id"] = alignment_record["id"]
-    span_annotation["ref_corpus"] = alignment_record["corpus"]
-    span_annotation["page_start"] = alignment_record["begin2"]
-    span_annotation["page_end"] = alignment_record["end2"]
-    span_annotation["ref_start"] = alignment_record["begin"]
-    span_annotation["ref_end"] = alignment_record["end"]
+   """rename passim output fields to fields that make sense for ppa page and reference data"""
+   span_annotation = {
+        "ref_id": alignment_record["id"],
+        "ref_corpus": alignment_record["corpus"],
+        "ref_start": alignment_record["begin"],
+        "ref_end": alignment_record["end"],
+        "page_id": alignment_record["id2"],
+        "page_start": alignment_record["begin2"],
+        "page_end": alignment_record["end2"],
+    }
     if include_excerpts:
         span_annotation["aligned_page_excerpt"] = alignment_record["s2"]
         span_annotation["aligned_ref_excerpt"] = alignment_record["s1"]
