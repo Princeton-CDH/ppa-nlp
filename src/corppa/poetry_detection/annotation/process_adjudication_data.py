@@ -154,12 +154,12 @@ def main():
     )
     parser.add_argument(
         "output_pages",
-        help="Filename where extracted page data (JSONL file) should be written",
+        help="Filename where extracted page-level data (JSONL file) should be written",
         type=pathlib.Path,
     )
     parser.add_argument(
         "output_excerpts",
-        help="Filename where extracted excerpt data (CSV file) should be written",
+        help="Filename where extracted excerpt-level data (CSV file) should be written",
         type=pathlib.Path,
     )
     parser.add_argument(
