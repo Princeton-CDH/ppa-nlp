@@ -1,5 +1,14 @@
 """
-Create a passim-friendly version of the input corpus.
+Create a passim-friendly version of the input corpus. In addition to specifying
+the initial input corpus and output corpus files (JSONL), a name for this corpus
+of texts must be provided. This name is will be used by Passim for determining
+which texts should be compared with one another (e.g., PPA texts vs. reference
+poetry texts).
+
+Example command line usage:
+```
+python create_passim_corpus.py poetry.jsonl poetry-passim.jsonl ref_poetry
+```
 """
 
 import argparse
@@ -42,6 +51,9 @@ def transform_record(
     out_record["id"] = record[id_field]
     out_record["corpus"] = corpus_name
     # If text field is missing, treat as blank page
+    # TODO: Revisit whether to preserve blank pages. It should not meaningfully
+    #       impact performance, but ensures a 1-1 line corresponds between the
+    #       input and output JSONL files.
     out_record["text"] = record.get("text", "")
     return out_record
 
@@ -133,7 +145,7 @@ def main():
     )
     parser.add_argument(
         "--id-field",
-        help="Specify name of field to be used as new 'id' field",
+        help="Specify name of field to be used as new 'id' field for the text record",
         default="id",
     )
     parser.add_argument(
