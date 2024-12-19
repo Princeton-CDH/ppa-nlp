@@ -29,12 +29,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+type-checking = [
+  "mypy",
+  "types-tqdm",
+]
 test = [
   "pytest",
   "pytest-cov"
 ]
 ocr = ["google-cloud-vision"]
-dev = ["pre-commit", "ruff", "corppa[test]", "corppa[ocr]"]
+dev = ["pre-commit", "ruff", "corppa[type-checking]", "corppa[test]", "corppa[ocr]"]
 
 [project.scripts]
 corppa-filter = "corppa.utils.filter:main"
