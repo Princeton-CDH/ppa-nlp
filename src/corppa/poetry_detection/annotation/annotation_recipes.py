@@ -15,9 +15,9 @@ prefix for images should be specified when initializing the recipe.
 
 Example use:
 ```
-prodigy annotate_page_text poetry_spans poetry_pages.jsonl --label POETRY,PROSODY -F ../corppa/poetry_detection/annotation/recipe.py --image-prefix http://localhost:8000/
-prodigy annotate_text_and_image poetry_text_image poetry_pages.jsonl -l POETRY -F ../corppa/poetry_detection/annotation/recipe.py --image-prefix ../ppa-web-images -FM
-prodigy review_page_spans adjudicate poetry_spans -l POETRY -F ../corppa/poetry_detection/annotation/recipe.py --image-prefix ../ppa-web-images -FM --sessions alice,bob
+prodigy annotate_page_text poetry_spans poetry_pages.jsonl --label POETRY,PROSODY -F annotation_recipes.py --image-prefix http://localhost:8000/
+prodigy annotate_text_and_image poetry_text_image poetry_pages.jsonl -l POETRY -F annotation_recipes.py --image-prefix ../ppa-web-images -FM
+prodigy review_page_spans adjudicate poetry_spans -l POETRY -F annotation_recipes.py --image-prefix ../ppa-web-images -FM --sessions alice,bob
 """
 
 from collections import defaultdict
