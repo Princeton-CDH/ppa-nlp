@@ -14,10 +14,8 @@ to recompile, rename or remove the parquet files.
 """
 
 import argparse
-import csv
 import logging
 import pathlib
-import re
 from glob import iglob
 from itertools import batched
 from time import perf_counter
@@ -26,7 +24,6 @@ import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
 import rapidfuzz
-from tqdm import tqdm
 from unidecode import unidecode
 
 logger = logging.getLogger(__name__)
@@ -304,9 +301,17 @@ def fuzzy_partial_ratio(series, search_text):
 
 def find_reference_poem(ref_df, input_row, meta_df):
     result = {"poem_id"}
+    previously_searched = []
     for search_field in ["search_text", "search_first_line", "search_last_line"]:
+        search_field_label = search_field.replace("search_", "").replace("_", " ")
         # use unidecode to drop accents (often used to indicate meter)
         search_text = unidecode(input_row[search_field])
+        # skip if the exact same content has already been searched(e.g. for single-line excerpts)
+        # and don't search on empty strings
+        if search_text in previously_searched or search_text.strip() == "":
+            continue
+        previously_searched.append(search_text)
+        logger.info(f"Searching on {search_field_label}: {search_text}")
 
         try:
             # do a case-insensitive search
@@ -332,8 +337,6 @@ def find_reference_poem(ref_df, input_row, meta_df):
             # e.g. Chadwyck Healey poem id we have text for but not in metadata
         )
 
-        search_field_label = search_field.replace("search_", "").replace("_", " ")
-
         # if we get a single match, assume it is authoritative
         if num_matches == 1:
             # match poem includes id, author, title
@@ -355,7 +358,7 @@ def find_reference_poem(ref_df, input_row, meta_df):
     # if no matches were found yet, try a fuzzy search on the full text
     search_text = unidecode(input_row["search_text"])
     # TODO: may want to require some minimum length or uniqueness on the search text
-    logger.debug(f"🔎 Trying fuzzy match on {search_text}")
+    logger.info(f"Trying fuzzy match on: {search_text}")
     start_time = perf_counter()
     result = ref_df.with_columns(
         score=pl.col("search_text").map_batches(
@@ -450,10 +453,10 @@ def main(input_file):
 
     # convert input text to search text using the same rules applied to reference df
     input_df = generate_search_text(input_df)
-    # split out text to isolate first and last lines
+    # split out text to isolate first and last linesfind based on
     input_df = input_df.with_columns(
-        first_line=pl.col("text").str.split("\n").list.first(),
-        last_line=pl.col("text").str.split("\n").list.last(),
+        first_line=pl.col("text").str.strip_chars().str.split("\n").list.first(),
+        last_line=pl.col("text").str.strip_chars().str.split("\n").list.last(),
     )
     # generate searchable versions of first and last lines
     input_df = generate_search_text(input_df, "first_line")
@@ -469,16 +472,13 @@ def main(input_file):
     # number of matches found
     match_found = 0
 
-    # wrap the row iterator in a tqdm progress bar
-    progress_poems = tqdm(
-        # use polars iter_rows with names to get a dictionary for each entry
-        input_df.iter_rows(named=True),
-        desc="Identifying...",
-        bar_format="{desc} processed {n:,} poems{postfix} | elapsed: {elapsed}",
-        # disable=disable_progress,
-    )
+    # NOTE: this is slow... there is almost certainly a more polars-ish way to
+    # approach it
+    # ... is there a way to treat the search as a joins?
+    # join on search text in reference text, first line in ref text
+    # progressively decrease the number of unmatched rows?
 
-    for i, row in enumerate(progress_poems):
+    for row in input_df.iter_rows(named=True):
         match_poem = find_reference_poem(df, row, meta_df)
         if match_poem:
             poem_id.append(match_poem["id"])
@@ -489,10 +489,6 @@ def main(input_file):
 
             # update the tally of rows we found matches for
             match_found += 1
-            # update report in the progress bar
-            progress_poems.set_postfix_str(
-                f"matched {match_found:,} ({match_found / i:.2f}%)"
-            )
 
         else:
             # if no match was found, add empty rows to the columns
