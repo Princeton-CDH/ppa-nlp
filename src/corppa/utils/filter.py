@@ -107,8 +107,13 @@ def filter_pages(
         if include_filter:
             # multiple include filters use OR logic:
             # if include filter does not apply, skip this page
-            if not any(page[key] == val for key, val in include_filter.items()):
-                continue
+            try:
+                if not any(page[key] == val for key, val in include_filter.items()):
+                    continue
+            except KeyError as err:
+                raise Exception(
+                    f"Key not found, choose from {','.join(page.keys())}: {err}"
+                )
 
         # if key-value pairs for exclusion are specified, filter
         if exclude_filter:
@@ -349,7 +354,3 @@ def main():
         # otherwise just report
         else:
             print(f"No pages were selected, output file {output_filepath} is empty")
-
-
-if __name__ == "__main__":
-    main()

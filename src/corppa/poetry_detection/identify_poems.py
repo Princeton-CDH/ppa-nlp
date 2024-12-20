@@ -15,16 +15,21 @@ to recompile, rename or remove the parquet files.
 
 import argparse
 import csv
+import logging
 import pathlib
 import re
 from glob import iglob
 from itertools import batched
+from time import perf_counter
 
 import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
-from polars_fuzzy_match import fuzzy_match_score
+import rapidfuzz
+from tqdm import tqdm
 from unidecode import unidecode
+
+logger = logging.getLogger(__name__)
 
 # for convenience, assume the poetry reference data directory is
 # available relative to wherever this script is called from
@@ -76,19 +81,20 @@ def compile_text(data_dir, output_file):
 
     # poetry foundation text content is included in the csv file
     if POETRY_FOUNDATION_CSV.exists():
-        # TODO: convert this to use polars
-        with POETRY_FOUNDATION_CSV.open() as pf_csvfile:
-            csv_reader = csv.DictReader(pf_csvfile)
-            # process csv file in chunks
-            for chunk in batched(csv_reader, 1000):
-                ids = [row["Poetry Foundation ID"] for row in chunk]
-                texts = [row["Content"] for row in chunk]
-                source = [SOURCE_ID["Poetry Foundation"]] * len(ids)
-
-                record_batch = pa.RecordBatch.from_arrays(
-                    [ids, texts, source], names=["id", "text", "source"]
-                )
-                pqwriter.write_batch(record_batch)
+        # load poetry foundation csv into a polars dataframe
+        # - rename columns for our use
+        # - add source column
+        # - select only the columns we want to include
+        pf_df = (
+            pl.read_csv(POETRY_FOUNDATION_CSV)
+            .rename({"Poetry Foundation ID": "id", "Content": "text"})
+            .with_columns(source=pl.lit(SOURCE_ID["Poetry Foundation"]))
+            .select(["id", "text", "source"])
+        )
+        # convert polars dataframe to arrow table, cast to our schema to
+        # align types (large string vs string), then write out in batches
+        for batch in pf_df.to_arrow().cast(target_schema=schema).to_batches():
+            pqwriter.write_batch(batch)
     else:
         print(
             f"Poetry Foundation csv file not found for text compilation (expected at {POETRY_FOUNDATION_CSV})"
@@ -190,11 +196,6 @@ def compile_metadata(data_dir, output_file):
     pqwriter.close()
 
 
-# for single text value, can do the same
-# pl.select(pl.lit("text';...").str.replace_all("[;,:'.]", "")).item()
-# use this to test the replacement patterns to use
-
-
 def _text_for_search(expr):
     """Takes a polars expression (e.g. column or literal value) and applies
     text pattern replacements to clean up to make it easier to find matches."""
@@ -236,13 +237,16 @@ def multiple_matches(df, search_field):
     # it is the same poem in different sources
     match_count = int(df.height)
 
-    # sometimes punctuation and case differs, so ignore that
+    #  check if both author and title match (ignoring punctuation and case)
+    # TODO: use rapidfuzz here to check author & title are sufficiently similar
+    # e.g. these should be treated as matches but are not currently:
+    #    Walter Scott      ┆ Coronach
+    #    Walter, Sir Scott ┆ CCLXXVIII CORONACH
     df = df.with_columns(
         _author=pl.col("author").str.replace_all("[[:punct:]]", "").str.to_lowercase(),
         _title=pl.col("title").str.replace_all("[[:punct:]]", "").str.to_lowercase(),
     )
 
-    # first check if both author and title match
     dupe_df = df.filter(df.select(["_author", "_title"]).is_duplicated())
 
     match_poem = None
@@ -280,6 +284,22 @@ def multiple_matches(df, search_field):
                 "multiple matches, duplicate author but not title; excluding Poetry Foundation"
             )
             return match_poem
+
+
+def fuzzy_partial_ratio(series, search_text):
+    """Calculate rapidfuzz partial_ratio score across for a single input
+    search text across a whole series of potentially matching texts.
+    Returns a list of scores."""
+    scores = rapidfuzz.process.cdist(
+        [search_text],
+        series,
+        scorer=rapidfuzz.fuzz.partial_ratio,
+        score_cutoff=90,
+        workers=-1,
+    )
+    # generates a list of scores for each input search text, but we only have
+    # one input string, so return the first list of scores
+    return scores[0]
 
 
 def find_reference_poem(ref_df, input_row, meta_df):
@@ -334,12 +354,16 @@ def find_reference_poem(ref_df, input_row, meta_df):
 
     # if no matches were found yet, try a fuzzy search on the full text
     search_text = unidecode(input_row["search_text"])
-    # TODO: may require some minimum length or uniqueness on the search text
-
-    # search text or unfiltered text?
+    # TODO: may want to require some minimum length or uniqueness on the search text
+    logger.debug(f"🔎 Trying fuzzy match on {search_text}")
+    start_time = perf_counter()
     result = ref_df.with_columns(
-        score=fuzzy_match_score(pl.col("search_text"), search_text)
-    ).filter(pl.col("score").is_not_null())
+        score=pl.col("search_text").map_batches(
+            lambda x: fuzzy_partial_ratio(x, search_text)
+        )
+    ).filter(pl.col("score").ne(0))
+    end_time = perf_counter()
+    logger.debug(f"Calculated rapidfuzz partial_ratio in {end_time - start_time:0.2f}s")
 
     result = result.join(
         meta_df,
@@ -347,28 +371,48 @@ def find_reference_poem(ref_df, input_row, meta_df):
         on=pl.concat_str([pl.col("id"), pl.col("source")], separator="|"),
         how="left",
     )
-    result = result.drop("text", "id_right", "source_right")
+    result = result.drop("text", "id_right", "source_right", "search_text")
+    num_matches = result.height
 
     result = result.sort(by="score", descending=True)
     if not result.is_empty():
-        # debug ouptup
-        # print(f"## fuzzy match results")
-        # print(f"🔎 {search_text}")
-        # print(result)
-
-        # return the first for now
-        match_poem = result.to_dicts()[0]
-        match_poem["num_matches"] = result.height
-        match_poem["notes"] = (
-            f"fuzzy match, returning best result (score: {match_poem['score']})"
-        )
-        return match_poem
+        # when we only get a single match, results look pretty good
+        if num_matches == 1:
+            # match poem includes id, author, title
+            match_poem = result.to_dicts()[0]
+            # add note about how the match was determined
+            match_poem["notes"] = f"fuzzy match; score: {result['score'].item():.1f}"
+            # include number of matches found
+            match_poem["num_matches"] = num_matches
+            return match_poem
+        elif num_matches <= 3:
+            # if there's a small number of matches, check for duplicates
+            match_poem = multiple_matches(result, "full text (fuzzy)")
+            # return match if a good enough result was found
+            if match_poem:
+                match_poem["num_matches"] = num_matches
+                match_poem["notes"] += (
+                    f"\nfuzzy match; score: {match_poem['score']:.1f}"
+                )
+                return match_poem
+        else:
+            # sometimes we get many results with 100 scores;
+            # likely an indication that the search text is short and too common
+            # filter to all results with the max score and check for a majority
+            top_matches = result.filter(pl.col("score").eq(pl.col("score").max()))
+            match_poem = multiple_matches(top_matches, "full text (fuzzy)")
+            # return match if a good enough result was found
+            if match_poem:
+                match_poem["num_matches"] = num_matches
+                match_poem["notes"] += f"\nfuzzy match, score {match_poem['score']}"
+                return match_poem
 
     # no good match found
     return None
 
 
 def main(input_file):
+    logging.basicConfig(encoding="utf-8", level=logging.INFO)
     # if the parquet files aren't present, generate them
     # (could add an option to recompile in future)
     if not TEXT_PARQUET_FILE.exists():
@@ -381,12 +425,22 @@ def main(input_file):
     # load for searching
     df = pl.read_parquet(TEXT_PARQUET_FILE)
     meta_df = pl.read_parquet(META_PARQUET_FILE)
+    print(f"Poetry reference text data: {df.height:,} entries")
+    # some texts from poetry foundation and maybe Chadwyck-Healey are truncated
+    # discard them to avoid bad partial/fuzzy matches
+    df = df.with_columns(text_length=pl.col("text").str.len_chars())
+    min_length = 30
+    short_texts = df.filter(pl.col("text_length").lt(min_length))
+    df = df.filter(pl.col("text_length").ge(min_length))
+    print(f"  Omitting {short_texts.height} poems with text length < {min_length}")
+
+    print(f"Poetry reference metadata:  {meta_df.height:,} entries")
 
     # generate a simplified text field for searching
     df = generate_search_text(df)
 
     input_df = pl.read_csv(input_file)  # .drop("start", "end", "laure's links")
-    print(f"input file has {input_df.height} rows")
+    print(f"Input file has {input_df.height:,} entries")
     # testing against Mary's manual identification
     input_df = (
         input_df.filter(pl.col("author") != "").drop("start", "end", "laure's links")
@@ -415,7 +469,16 @@ def main(input_file):
     # number of matches found
     match_found = 0
 
-    for row in input_df.iter_rows(named=True):
+    # wrap the row iterator in a tqdm progress bar
+    progress_poems = tqdm(
+        # use polars iter_rows with names to get a dictionary for each entry
+        input_df.iter_rows(named=True),
+        desc="Identifying...",
+        bar_format="{desc} processed {n:,} poems{postfix} | elapsed: {elapsed}",
+        # disable=disable_progress,
+    )
+
+    for i, row in enumerate(progress_poems):
         match_poem = find_reference_poem(df, row, meta_df)
         if match_poem:
             poem_id.append(match_poem["id"])
@@ -426,6 +489,11 @@ def main(input_file):
 
             # update the tally of rows we found matches for
             match_found += 1
+            # update report in the progress bar
+            progress_poems.set_postfix_str(
+                f"matched {match_found:,} ({match_found / i:.2f}%)"
+            )
+
         else:
             # if no match was found, add empty rows to the columns
             match_count.append(0)  # integer column
@@ -446,11 +514,10 @@ def main(input_file):
         "first_line",
         "last_line",
     )
-    print(output_df)
     output_file = input_file.with_name(f"{input_file.stem}_matched.csv")
     # TODO: figure out how to write byte-order-mark to indicate unicode
     output_df.write_csv(output_file)
-    print(f"matches output to {output_file}")
+    print(f"Poems with match information saved to {output_file}")
     print(
         f"{match_found} excerpts with matches ({match_found / input_df.height * 100:.2f}% of {input_df.height} rows processed)"
     )
@@ -467,4 +534,5 @@ if __name__ == "__main__":
         type=pathlib.Path,
     )
     args = parser.parse_args()
+
     main(args.input)
