@@ -14,6 +14,7 @@ to recompile, rename or remove the parquet files.
 """
 
 import argparse
+import csv
 import logging
 import pathlib
 from glob import iglob
@@ -203,6 +204,8 @@ def _text_for_search(expr):
         .str.replace_all(r"(\w) \| -(\w)", "$1$2")
         # replace other puncutation with spaces
         .str.replace_all("[[:punct:]]", " ")
+        # remove indent entity in CH (probably more of these...)
+        .str.replace_all("&indent;", " ")
         # normalize whitespace
         .str.replace_all("[\t\n\v\f\r ]+", " ")  # could also use [[:space:]]
         # replace curly quotes with straight (both single and double)
@@ -336,6 +339,7 @@ def find_reference_poem(ref_df, input_row, meta_df):
             how="left",  # occasionally ids do not match,
             # e.g. Chadwyck Healey poem id we have text for but not in metadata
         )
+        result = result.drop("text", "id_right", "source_right", "search_text")
 
         # if we get a single match, assume it is authoritative
         if num_matches == 1:
@@ -344,7 +348,7 @@ def find_reference_poem(ref_df, input_row, meta_df):
             # add note about how the match was determined
             match_poem["notes"] = f"single match on {search_field_label}"
             # include number of matches found
-            match_poem["num_matches"] = num_matches
+            match_poem["match_count"] = num_matches
 
             return match_poem
         elif num_matches < 10:
@@ -352,7 +356,7 @@ def find_reference_poem(ref_df, input_row, meta_df):
             match_poem = multiple_matches(result, search_field_label)
             # return match if a good enough result was found
             if match_poem:
-                match_poem["num_matches"] = num_matches
+                match_poem["match_count"] = num_matches
                 return match_poem
 
     # if no matches were found yet, try a fuzzy search on the full text
@@ -393,7 +397,7 @@ def find_reference_poem(ref_df, input_row, meta_df):
             match_poem = multiple_matches(result, "full text (fuzzy)")
             # return match if a good enough result was found
             if match_poem:
-                match_poem["num_matches"] = num_matches
+                match_poem["match_count"] = num_matches
                 match_poem["notes"] += (
                     f"\nfuzzy match; score: {match_poem['score']:.1f}"
                 )
@@ -406,7 +410,7 @@ def find_reference_poem(ref_df, input_row, meta_df):
             match_poem = multiple_matches(top_matches, "full text (fuzzy)")
             # return match if a good enough result was found
             if match_poem:
-                match_poem["num_matches"] = num_matches
+                match_poem["match_count"] = num_matches
                 match_poem["notes"] += f"\nfuzzy match, score {match_poem['score']}"
                 return match_poem
 
@@ -415,7 +419,7 @@ def find_reference_poem(ref_df, input_row, meta_df):
 
 
 def main(input_file):
-    logging.basicConfig(encoding="utf-8", level=logging.INFO)
+    logging.basicConfig(encoding="utf-8", level=logging.DEBUG)
     # if the parquet files aren't present, generate them
     # (could add an option to recompile in future)
     if not TEXT_PARQUET_FILE.exists():
@@ -442,14 +446,9 @@ def main(input_file):
     # generate a simplified text field for searching
     df = generate_search_text(df)
 
-    input_df = pl.read_csv(input_file)  # .drop("start", "end", "laure's links")
+    input_df = pl.read_csv(input_file)
     print(f"Input file has {input_df.height:,} entries")
-    # testing against Mary's manual identification
-    input_df = (
-        input_df.filter(pl.col("author") != "").drop("start", "end", "laure's links")
-        # .limit(n=5000)  # limit for now, for testing/review
-    )
-    print(f"limiting to {input_df.height} rows with metadata to compare")
+    input_columns = input_df.columns  # store original columns for output
 
     # convert input text to search text using the same rules applied to reference df
     input_df = generate_search_text(input_df)
@@ -462,13 +461,6 @@ def main(input_file):
     input_df = generate_search_text(input_df, "first_line")
     input_df = generate_search_text(input_df, "last_line")
 
-    # create lists for content that will go in output columns
-    match_count = []
-    poem_id = []
-    author = []
-    title = []
-    notes = []
-
     # number of matches found
     match_found = 0
 
@@ -478,41 +470,40 @@ def main(input_file):
     # join on search text in reference text, first line in ref text
     # progressively decrease the number of unmatched rows?
 
-    for row in input_df.iter_rows(named=True):
-        match_poem = find_reference_poem(df, row, meta_df)
-        if match_poem:
-            poem_id.append(match_poem["id"])
-            author.append(match_poem.get("author"))
-            title.append(match_poem.get("title"))
-            match_count.append(match_poem["num_matches"])
-            notes.append(match_poem.get("notes"))
-
-            # update the tally of rows we found matches for
-            match_found += 1
-
-        else:
-            # if no match was found, add empty rows to the columns
-            match_count.append(0)  # integer column
-            for col in poem_id, author, title, notes:
-                col.append("")  # string columns\
-
-    # augment filtered input with output and save to file
-    output_df = input_df.with_columns(
-        match_count=pl.Series(match_count),
-        match_poem_id=pl.Series(poem_id),
-        match_author=pl.Series(author),
-        match_title=pl.Series(title),
-        match_notes=pl.Series(notes),
-    ).drop(
-        "search_text",
-        "search_first_line",
-        "search_last_line",
-        "first_line",
-        "last_line",
-    )
     output_file = input_file.with_name(f"{input_file.stem}_matched.csv")
-    # TODO: figure out how to write byte-order-mark to indicate unicode
-    output_df.write_csv(output_file)
+    # keep existing columns from input and add match fields
+    fieldnames = input_columns + [
+        "match_count",
+        "match_poem_id",
+        "match_author",
+        "match_title",
+        "match_notes",
+    ]
+
+    with output_file.open("w", encoding="utf-8") as outfile:
+        # TODO: add byte-order-mark to indicate unicode ?
+        csvwriter = csv.DictWriter(outfile, fieldnames=fieldnames)
+        csvwriter.writeheader()
+
+        for row in input_df.iter_rows(named=True):
+            match_poem = find_reference_poem(df, row, meta_df)
+            # combine row dict with match poem dict
+            if match_poem:
+                # rename match fields for output
+                match_poem["match_poem_id"] = match_poem.pop("id")
+                match_poem["match_author"] = match_poem.pop("author")
+                match_poem["match_title"] = match_poem.pop("title")
+                match_poem["match_notes"] = match_poem.pop("notes")
+                row.update(match_poem)
+
+                # update the tally of rows we found matches for
+                match_found += 1
+            else:
+                row["match_count"] = 0
+            # write row out with input and any match information found;
+            # filter out any fields not in the list of csv field names
+            csvwriter.writerow({k: v for k, v in row.items() if k in fieldnames})
+
     print(f"Poems with match information saved to {output_file}")
     print(
         f"{match_found} excerpts with matches ({match_found / input_df.height * 100:.2f}% of {input_df.height} rows processed)"
