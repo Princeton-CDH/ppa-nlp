@@ -38,7 +38,8 @@ test = [
   "pytest-cov"
 ]
 ocr = ["google-cloud-vision"]
-dev = ["pre-commit", "ruff", "corppa[type-checking]", "corppa[test]", "corppa[ocr]"]
+passim = ["passim @ git+https://github.com/dasmiq/passim.git"]  
+dev = ["pre-commit", "ruff", "corppa[type-checking]", "corppa[test]", "corppa[ocr]", "corppa[passim]"]
 
 [project.scripts]
 corppa-filter = "corppa.utils.filter:main"
@@ -51,3 +52,7 @@ path = "src/corppa/__init__.py"
 [tool.ruff]
 # configure src path so ruff import fixes can identify local imports
 src = ["src"]
+
+[tool.hatch.metadata]
+# so passim can be installed from GitHub (i.e., direct reference)
+allow-direct-references = true
