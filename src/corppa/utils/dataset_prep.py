@@ -1,5 +1,6 @@
 # prep ppa text+image dataset for publication
 import argparse
+import bisect
 import logging
 import signal
 import tarfile
@@ -124,6 +125,68 @@ MATCH_SCORE_MARGIN = 3
 MATCH_SCORE_STRONG = 99
 
 
+def longest_increasing_subseq(values: np.ndarray) -> np.ndarray:
+    """Return the indices (into ``values``) of a longest *strictly* increasing
+    subsequence, keeping the earliest such subsequence when several tie in length.
+
+    We use this to reduce a set of candidate page matches down to a monotonic,
+    conflict-free set of "anchors". Each confident match pairs an original page
+    with a zip page (identified by its column index in the score matrix). Reading
+    those zip-page indices in original-page order, a valid alignment must be
+    strictly increasing: later original pages can only map to later zip pages,
+    and each zip page may be claimed at most once (strict increase => no repeats).
+    Any confident match that would break that ordering - e.g. repeated boilerplate
+    pages that all matched the same zip page, or a match that jumps backwards - is
+    dropped by keeping only the longest increasing run.
+
+    This is the classic O(n log n) patience-sorting algorithm.
+    """
+    n = len(values)
+    if n == 0:
+        return np.empty(0, dtype=int)
+
+    # tails_idx[k] holds the index (into `values`) of the smallest possible tail
+    # value for an increasing subsequence of length k+1 found so far.
+    tails_idx: list[int] = []
+    # tail_values mirrors tails_idx but holds the values themselves, kept in a
+    # separate list so it stays strictly increasing and can be binary-searched
+    # directly (avoids rebuilding it each iteration, keeping this O(n log n)).
+    tail_values: list = []
+    # prev[i] links element i back to the element that precedes it in the best
+    # subsequence ending at i, so we can reconstruct the chain at the end.
+    prev = [-1] * n
+
+    for i, v in enumerate(values):
+        # find the first existing tail that is >= v; bisect_left (not _right)
+        # makes this *strict*, so an equal value replaces rather than extends -
+        # this is what prevents a zip page from being claimed twice.
+        pos = bisect.bisect_left(tail_values, v)
+
+        if pos == len(tails_idx):
+            # v is larger than every current tail: it extends the longest run
+            tails_idx.append(i)
+            tail_values.append(v)
+        else:
+            # v can start/continue a length-(pos+1) run with a smaller tail;
+            # replacing keeps future values more likely to extend it
+            tails_idx[pos] = i
+            tail_values[pos] = v
+
+        # whatever run v lands on, its predecessor is the tail of the run one
+        # shorter (or none, if v starts a length-1 run)
+        prev[i] = tails_idx[pos - 1] if pos > 0 else -1
+
+    # reconstruct the chain by walking prev[] backwards from the last tail, which
+    # is the end of a longest increasing subsequence
+    result: list[int] = []
+    k = tails_idx[-1]
+    while k != -1:
+        result.append(k)
+        k = prev[k]
+    # walked back-to-front, so reverse to restore original order
+    return np.array(result[::-1], dtype=int)
+
+
 def align_shifted_pages(pages_df: pl.DataFrame, zip_pages_df: pl.DataFrame):
     """Align corpus pages to zip page filenames when page order has shifted
     between versions. Shifts are determined by matching pages with sufficient text
@@ -197,10 +260,28 @@ def align_shifted_pages(pages_df: pl.DataFrame, zip_pages_df: pl.DataFrame):
         (best_score >= MATCH_SCORE_STRONG)
         | ((best_score - second_score) >= MATCH_SCORE_MARGIN)
     )
+
+    # confident matches are only *candidate* anchors: taken independently, two
+    # original pages can still claim the same zip page (e.g. repeated boilerplate)
+    # or a spurious match can point backwards. Keep only a monotonic, conflict-free
+    # subset before trusting any shifts.
+    # long_pages_df is sorted by order, so positions are already in original-page
+    # order; conf_pos are the row indices of confident matches, conf_cols their
+    # matched zip-page column indices in that same order.
+    conf_pos = np.flatnonzero(confident)
+    conf_cols = best_idx[conf_pos]
+    # keep only a strictly-increasing run of zip columns: guarantees anchors stay
+    # in sequence and each zip page is claimed at most once (see helper docstring)
+    keep = longest_increasing_subseq(conf_cols)
+    trusted_pos = conf_pos[keep]
+
     # shift is defined as zip order minus original order, so the aligned zip
-    # order for a page is recovered by original order + shift
-    shifts = zip_orders[best_idx] - long_orders
-    trusted_shift = np.where(confident, shifts, np.nan)
+    # order for a page is recovered by original order + shift. Only the surviving
+    # anchors get a trusted shift; every other page is filled from its neighbors.
+    trusted_shift = np.full(scores.shape[0], np.nan)
+    trusted_shift[trusted_pos] = (
+        zip_orders[best_idx[trusted_pos]] - long_orders[trusted_pos]
+    )
 
     long_shift_df = long_pages_df.select("order").with_columns(
         # NaN marks pages without confident matches; convert to nulls so we can forward/back fill

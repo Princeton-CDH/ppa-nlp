@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 from zipfile import ZipFile
 
+import numpy as np
 import orjsonl
 import polars as pl
 import pytest
@@ -18,6 +19,7 @@ from corppa.utils.dataset_prep import (
     align_pages,
     align_shifted_pages,
     get_zip_textfiles,
+    longest_increasing_subseq,
     main,
     process_gale_work,
     process_ht_work,
@@ -505,6 +507,45 @@ def test_process_work_unknown_source_warns_and_yields(tmp_path, caplog):
     assert "unknown source 'SomethingElse'" in caplog.text
 
 
+# --- longest_increasing_subseq ---
+
+
+def test_longest_increasing_subseq_empty():
+    result = longest_increasing_subseq(np.array([], dtype=int))
+    assert result.tolist() == []
+
+
+def test_longest_increasing_subseq_already_increasing():
+    # every element is part of the (only) increasing run
+    values = np.array([10, 11, 12, 13])
+    assert longest_increasing_subseq(values).tolist() == [0, 1, 2, 3]
+
+
+def test_longest_increasing_subseq_drops_backwards_jump():
+    # values: 10, 11, 5, 12 -> the '5' at index 2 breaks the sequence and is
+    # dropped in favor of the longer run 10,11,12
+    values = np.array([10, 11, 5, 12])
+    assert longest_increasing_subseq(values).tolist() == [0, 1, 3]
+
+
+def test_longest_increasing_subseq_strict_drops_duplicates():
+    # equal values must not both be kept (a zip page claimed twice); strictness
+    # keeps only one of the repeated 11s
+    values = np.array([10, 11, 11, 12])
+    result = longest_increasing_subseq(values)
+    kept = values[result]
+    # strictly increasing and no repeats
+    assert kept.tolist() == [10, 11, 12]
+    assert len(set(kept.tolist())) == len(kept)
+
+
+def test_longest_increasing_subseq_keeps_longest_run():
+    # a single large early value should not suppress a longer later run
+    values = np.array([100, 1, 2, 3, 4])
+    result = longest_increasing_subseq(values)
+    assert values[result].tolist() == [1, 2, 3, 4]
+
+
 # --- align_shifted_pages ---
 
 
@@ -559,6 +600,50 @@ def test_align_shifted_pages_consistent_shift():
         "work.00000004": "00000014",
         "work.00000005": "00000015",
     }
+
+
+def test_align_shifted_pages_duplicate_zip_not_double_claimed():
+    # Two original pages (orders 2 and 4) share identical boilerplate text, so
+    # both would independently pick the same zip page as their best match.
+    # The strict-increasing anchor filter must prevent that zip page from being
+    # claimed twice; the resulting alignment must not map two pages to the same
+    # zip filename.
+    boiler = _long_text("this-page-is-repeated-boilerplate")
+    unique_seeds = [
+        "chapter-one-unique",
+        "chapter-two-unique",
+        "chapter-three-unique",
+    ]
+    # pages 1,3,5 have unique text; pages 2,4 share the same boilerplate
+    page_texts = [
+        _long_text(unique_seeds[0]),
+        boiler,
+        _long_text(unique_seeds[1]),
+        boiler,
+        _long_text(unique_seeds[2]),
+    ]
+    pages_df = pl.DataFrame(
+        {
+            "id": [f"work.{o:08d}" for o in range(1, 6)],
+            "order": list(range(1, 6)),
+            "text": page_texts,
+        }
+    )
+    # zip has the same content at a uniform +10 shift
+    zip_pages_df = pl.DataFrame(
+        {
+            "page_filename": [f"{o:08d}" for o in range(11, 16)],
+            "order": list(range(11, 16)),
+            "text": page_texts,
+        }
+    )
+
+    result = align_shifted_pages(pages_df, zip_pages_df)
+
+    assert result is not None
+    filenames = result["page_filename"].drop_nulls().to_list()
+    # no zip filename is assigned to more than one original page
+    assert len(filenames) == len(set(filenames))
 
 
 def test_align_shifted_pages_includes_head_pages():
