@@ -2,7 +2,9 @@
 import argparse
 import bisect
 import logging
+import re
 import signal
+import sys
 import tarfile
 from collections import defaultdict
 from collections.abc import Iterator
@@ -28,6 +30,12 @@ from corppa.utils.path_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+# HathiTrust volumes published in this year or later are a small subset (~34
+# 1930s volumes) whose zip files contain page images only (no OCR text). They
+# use a different internal structure and cannot/need not be text-aligned, so
+# their pages are mapped directly to images by numeric page id.
+HT_IMAGE_ONLY_MIN_YEAR = 1930
 
 # set when an interrupt/termination signal is received so the main loop can
 # stop cleanly at the next work boundary (avoids partial-work output)
@@ -741,16 +749,75 @@ def plot_alignment(review_df: pl.DataFrame):
     )
 
 
+# candidate filenames for the page corpus within a PPA corpus directory,
+# checked in order (uncompressed preferred)
+PAGES_FILENAMES = ["ppa_pages.jsonl", "ppa_pages.jsonl.gz"]
+# candidate filenames for the work-level metadata within a PPA corpus directory
+METADATA_FILENAMES = ["ppa_metadata.csv", "ppa_metadata.json"]
+
+
+def find_corpus_file(corpus_dir: Path, filenames: list[str]) -> Path:
+    """Return the first existing file in ``corpus_dir`` from ``filenames``
+    (checked in order). Raises :class:`FileNotFoundError` if none exist."""
+    for filename in filenames:
+        candidate = corpus_dir / filename
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(
+        f"None of the expected files {filenames} found in {corpus_dir}"
+    )
+
+
+def load_image_only_work_ids(metadata_path: Path) -> set[str]:
+    """Load work-level metadata and return the set of ``work_id`` values for
+    HathiTrust volumes published in or after :data:`HT_IMAGE_ONLY_MIN_YEAR`.
+
+    These volumes have image-only zip files (no OCR text) and are handled
+    specially. The metadata file may be CSV or JSON and must include
+    ``work_id`` and ``pub_year`` columns.
+    """
+    if metadata_path.suffix == ".csv":
+        meta_df = pl.read_csv(metadata_path)
+    elif metadata_path.suffix == ".json":
+        meta_df = pl.read_json(metadata_path)
+    else:
+        raise ValueError(
+            f"Unsupported metadata format {metadata_path.suffix!r}; expected .csv or .json"
+        )
+
+    for required in ("work_id", "pub_year"):
+        if required not in meta_df.columns:
+            raise ValueError(
+                f"Metadata file {metadata_path} is missing required {required!r} column"
+            )
+
+    image_only_df = meta_df.select("work_id", "pub_year").filter(
+        # drop rows with missing/non-numeric years, then apply the year cutoff
+        pl.col("pub_year").cast(pl.Int64, strict=False).ge(HT_IMAGE_ONLY_MIN_YEAR)
+    )
+    return set(image_only_df.get_column("work_id"))
+
+
 def process_work(
-    work_id: str, pages: list[dict], image_dir: Path, tar: tarfile.TarFile
+    work_id: str,
+    pages: list[dict],
+    image_dir: Path,
+    tar: tarfile.TarFile,
+    image_only_work_ids: Optional[set[str]] = None,
 ) -> Iterator[dict]:
     # generic process work method, which calls appropriate source-specific method
+    image_only_work_ids = image_only_work_ids or set()
     source = get_ppa_source(work_id)
     match source:
         case "Gale":
             yield from process_gale_work(work_id, pages, image_dir, tar)
         case "HathiTrust":
-            yield from process_ht_work(work_id, pages, image_dir, tar)
+            # a small subset of (1930s) HathiTrust volumes have image-only zip
+            # files that cannot be text-aligned; map images by page id instead
+            if work_id in image_only_work_ids:
+                yield from process_ht_imageonly_work(work_id, pages, image_dir, tar)
+            else:
+                yield from process_ht_work(work_id, pages, image_dir, tar)
         case "EEBO-TCP":
             yield from pages  # no images
         case _:
@@ -860,6 +927,81 @@ def process_ht_work(
                     yield page
 
 
+def _zip_image_map(zipfile: ZipFile) -> dict[int, str]:
+    """Map numeric page id -> image filename within a HathiTrust zip.
+
+    Used for image-only volumes whose zip files hold page images named by page
+    number (no OCR text to align against). The numeric page id is the trailing
+    number of the image filename stem (matching the convention used elsewhere
+    for zip page files), so a leading institution/volume prefix is tolerated.
+    """
+    image_exts = {".tif", ".jpg", ".jpeg", ".jp2"}
+    image_map: dict[int, str] = {}
+    for filename in zipfile.namelist():
+        file_path = Path(filename)
+        if file_path.suffix.lower() not in image_exts:
+            continue
+        match = re.search(r"([0-9]+)$", file_path.stem)
+        if match is None:
+            continue
+        image_map[int(match.group(1))] = filename
+    return image_map
+
+
+def process_ht_imageonly_work(
+    work_id: str, pages: list[dict], image_dir: Path, tar: tarfile.TarFile
+) -> Iterator[dict]:
+    """Process a HathiTrust work whose zip file contains page images only
+    (no OCR text). Pages are mapped directly to images by numeric page id
+    instead of using text alignment; every page is yielded whether or not an
+    image was found so no pages are dropped from the output corpus."""
+    htid = get_volume_id(work_id)
+    zipfile_path = get_ht_zipfile_path(work_id, image_dir)
+    if not zipfile_path.exists():
+        # yield pages without image paths
+        yield from pages
+        return
+
+    with ZipFile(zipfile_path) as ht_zip:
+        # map numeric page id -> image filename in the zip
+        image_map = _zip_image_map(ht_zip)
+        if not image_map:
+            logger.warning(
+                "no images found in image-only zipfile for work %s, omitting images",
+                work_id,
+            )
+            yield from pages
+            return
+
+        for page in pages:
+            page_id = page["id"]
+            # extract the trailing numeric page id used to match the zip image
+            id_match = re.search(r"[._]([0-9]+)$", page_id)
+            page_num = int(id_match.group(1)) if id_match else None
+            zip_image_path = image_map.get(page_num) if page_num is not None else None
+            if zip_image_path is not None:
+                img_ext = Path(zip_image_path).suffix
+                tar_image_path = f"{encode_htid(htid)}/{page_id}{img_ext}"
+                try:
+                    add_zip_file_to_tar(ht_zip, zip_image_path, tar, tar_image_path)
+                    # if adding succeeded, record the image path for output
+                    page["image_path"] = tar_image_path
+                except KeyError:
+                    logger.warning(
+                        "image %s not found in zipfile for work %s; skipping",
+                        zip_image_path,
+                        work_id,
+                    )
+            else:
+                logger.debug(
+                    "no image found for page %s in image-only work %s",
+                    page_id,
+                    work_id,
+                )
+            # yield every page whether or not an image was added
+            yield page
+
+
 def main():
     global _stop_requested
     _stop_requested = False
@@ -868,8 +1010,10 @@ def main():
         description="Prepare PPA full-text dataset for publication by aligning pages and organizing images",
     )
     parser.add_argument(
-        "input",
-        help="PPA full-text corpus; must be a JSONL file (compressed or not)",
+        "corpus_dir",
+        help="PPA full-text corpus directory; must contain a page corpus "
+        "(ppa_pages.jsonl or ppa_pages.jsonl.gz) and work-level metadata "
+        "(ppa_metadata.csv or ppa_metadata.json)",
         type=Path,
     )
     parser.add_argument(
@@ -915,6 +1059,26 @@ def main():
         level=args.log_level.upper(),
         format="%(levelname)s: %(message)s",
         filename=args.log_file,
+    )
+
+    if not args.corpus_dir.is_dir():
+        logger.error("corpus directory %s does not exist", args.corpus_dir)
+        sys.exit(-1)
+    # infer the page corpus and work-level metadata files from the corpus dir
+    try:
+        input_pages_path = find_corpus_file(args.corpus_dir, PAGES_FILENAMES)
+        metadata_path = find_corpus_file(args.corpus_dir, METADATA_FILENAMES)
+    except FileNotFoundError as err:
+        logger.error("%s", err)
+        sys.exit(-1)
+
+    # determine the set of image-only (1930s) HathiTrust works to handle specially
+    image_only_work_ids = load_image_only_work_ids(metadata_path)
+    logger.info(
+        "%s image-only HathiTrust work(s) (pub_year >= %d) from %s",
+        f"{len(image_only_work_ids):,}",
+        HT_IMAGE_ONLY_MIN_YEAR,
+        metadata_path.name,
     )
 
     if not args.output_dir.is_dir():
@@ -969,7 +1133,7 @@ def main():
 
     # use a polars lazy frame to calculate the total so tqdm can estimate completion
     start_time = perf_counter()
-    total_pages = pl.scan_ndjson(args.input).select(pl.len()).collect().item()
+    total_pages = pl.scan_ndjson(input_pages_path).select(pl.len()).collect().item()
     end_time = perf_counter()
     logger.info(
         "%s total pages (calculated in %0.2fs)",
@@ -994,7 +1158,7 @@ def main():
         # whether the current work should be skipped (already in output)
         skip_work = False
         for page in tqdm(
-            orjsonl.stream(args.input),
+            orjsonl.stream(input_pages_path),
             desc="Reading pages",
             total=total_pages,
             unit_scale=True,
@@ -1008,7 +1172,13 @@ def main():
                         counts["works_skipped"] += 1
                     else:
                         pages = list(
-                            process_work(prev_work_id, pages, args.image_dir, tar)
+                            process_work(
+                                prev_work_id,
+                                pages,
+                                args.image_dir,
+                                tar,
+                                image_only_work_ids,
+                            )
                         )
                         orjsonl.extend(output_pages_path, pages)
                         counts["works_processed"] += 1
@@ -1037,7 +1207,15 @@ def main():
             if skip_work:
                 counts["works_skipped"] += 1
             else:
-                pages = list(process_work(prev_work_id, pages, args.image_dir, tar))
+                pages = list(
+                    process_work(
+                        prev_work_id,
+                        pages,
+                        args.image_dir,
+                        tar,
+                        image_only_work_ids,
+                    )
+                )
                 orjsonl.extend(output_pages_path, pages)
                 counts["works_processed"] += 1
                 counts["pages_processed"] += len(pages)
