@@ -709,11 +709,16 @@ def plot_alignment(review_df: pl.DataFrame):
     # circular points sized by aligned-match score. filled=True so the single
     # color encoding fills the dot and drives a proper (filled-swatch) legend;
     # fillOpacity is toggled so scored pages read as solid dots and zero-/no-score
-    # pages read as hollow rings (still visible) instead of disappearing.
-    points = base.mark_point(shape="circle", strokeWidth=1.5, filled=True).encode(
+    # pages (e.g. unmatched original pages) read as hollow rings instead of
+    # disappearing. The status color is also applied to the stroke so hollow
+    # points still have a visible (colored) outline when the fill is transparent.
+    points = base.mark_point(
+        shape="circle", strokeWidth=1.5, filled=True, strokeOpacity=1.0
+    ).encode(
         x=alt.X("x:Q", title="page order", scale=x_scale),
         y=alt.Y("row:N", scale=row_scale, title=None),
         color=status_color,
+        stroke=status_color,
         # solid fill when there is a positive match score, hollow (transparent) at 0
         fillOpacity=alt.condition("datum.has_match", alt.value(1.0), alt.value(0.0)),
         size=alt.Size(

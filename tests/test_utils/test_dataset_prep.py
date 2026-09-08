@@ -1184,6 +1184,15 @@ def test_plot_alignment_unmatched_pages_have_no_zip_point(tmp_path):
     assert unmatched["match_score"].null_count() == 0
     assert (unmatched["match_score"] == 0.0).all()
 
+    # the points layer must encode a status-colored stroke so hollow (zero-fill)
+    # points - e.g. unmatched original pages - still render as visible rings
+    # rather than disappearing when their fill is transparent
+    spec = chart.to_dict()
+    points_layer = next(
+        layer for layer in spec["layer"] if layer["mark"].get("type") == "point"
+    )
+    assert points_layer["encoding"]["stroke"]["field"] == "status"
+
 
 def test_plot_alignment_x_domain_limited_to_plotted_pages(tmp_path):
     # excerpt-like: only a few corpus pages, but the zip spans the whole volume.
