@@ -448,19 +448,9 @@ def align_shifted_pages(
 
     # sanity-check the alignment; warn (but don't fail) on anything suspicious so
     # a questionable mapping is surfaced without halting the whole run.
+    # (unmatched page count is already reported in the shift summary above;
+    # duplicate filenames are impossible because of the dedup step above)
     matched = page_mapping_df.filter(pl.col.page_filename.is_not_null())
-    # report pages that did not align to any zip page (no filename)
-    num_unmatched = page_mapping_df.height - matched.height
-    if num_unmatched:
-        logger.info(
-            "%d of %d page(s) did not align to a zip page filename",
-            num_unmatched,
-            page_mapping_df.height,
-        )
-    # two original pages should never map to the same zip page filename
-    num_dupes = matched.height - matched["page_filename"].n_unique()
-    if num_dupes:
-        logger.warning("alignment produced %d duplicate page filename(s)", num_dupes)
     # aligned order should preserve original page order: sorting by original
     # order, aligned_order should be strictly increasing. Gaps are fine (pages
     # can be removed between versions); order going backwards is not.

@@ -875,12 +875,12 @@ def test_align_shifted_pages_monotonic_gap_no_warning(caplog):
         align_shifted_pages(pages_df, zip_pages_df)
 
     assert "not monotonic" not in caplog.text
-    assert "duplicate page filename" not in caplog.text
 
 
 def test_align_shifted_pages_logs_unmatched_pages(caplog):
     # pages 1-4 shift +10 -> aligned orders 11,12,13,14, but the zip only has
-    # 11,12,13; page 4 aligns to a missing zip page and gets no filename
+    # 11,12,13; page 4 aligns to a missing zip page and gets no filename.
+    # the unmatched count is reported as part of the shift summary log line.
     seeds = [f"chapter-{i}-unique-content" for i in range(4)]
     pages_df, zip_pages_df = _make_shifted_frames(
         page_orders=[1, 2, 3, 4],
@@ -893,7 +893,7 @@ def test_align_shifted_pages_logs_unmatched_pages(caplog):
     with caplog.at_level("INFO", logger="corppa.utils.dataset_prep"):
         align_shifted_pages(pages_df, zip_pages_df)
 
-    assert "1 of 4 page(s) did not align to a zip page filename" in caplog.text
+    assert "1 page unmatched" in caplog.text
 
 
 def test_align_shifted_pages_non_monotonic_warns(caplog):
