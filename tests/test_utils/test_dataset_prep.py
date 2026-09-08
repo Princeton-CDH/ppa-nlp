@@ -646,6 +646,39 @@ def test_align_shifted_pages_duplicate_zip_not_double_claimed():
     assert len(filenames) == len(set(filenames))
 
 
+def test_align_shifted_pages_fill_boundary_duplicate_resolved():
+    # A shift-boundary duplicate that LIS cannot catch: anchors are consistent,
+    # but the forward/back-fill makes two adjacent pages resolve to the same
+    # aligned zip page. The score-based dedup must keep the real long-text match
+    # and null the (short, filled) loser so no zip page is assigned twice.
+    seeds = [f"unique-content-{i}" for i in range(4)]
+    pages_df = pl.DataFrame(
+        {
+            "id": [f"work.{o:08d}" for o in range(1, 5)],
+            "order": [1, 2, 3, 4],
+            # pages 2,3 are short -> shift is filled from neighboring anchors
+            "text": ["short a", "short b", _long_text(seeds[2]), _long_text(seeds[3])],
+        }
+    )
+    # anchor at order 1 -> zip 11 (shift +10); anchor at order 4 -> zip 13 (shift +9)
+    zip_pages_df = pl.DataFrame(
+        {
+            "page_filename": ["00000011", "00000012", "00000013"],
+            "order": [11, 12, 13],
+            "text": [_long_text(seeds[2]), "zip junk", _long_text(seeds[3])],
+        }
+    )
+
+    result = align_shifted_pages(pages_df, zip_pages_df)
+
+    mapping = dict(result.select(["id", "page_filename"]).iter_rows())
+    filenames = [f for f in mapping.values() if f is not None]
+    # strict 1:1: no zip filename assigned to more than one page
+    assert len(filenames) == len(set(filenames))
+    # the genuine long-text match keeps the contested filename
+    assert mapping["work.00000004"] == "00000013"
+
+
 def test_align_shifted_pages_includes_head_pages():
     # Pages before the first anchor are typically short pages that got
     # filtered out. They must still be included in the mapping via the

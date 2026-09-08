@@ -325,17 +325,52 @@ def align_shifted_pages(pages_df: pl.DataFrame, zip_pages_df: pl.DataFrame):
         )
 
     # single join for the whole work: shift each page's order and look up the
-    # zip page filename at the aligned order
+    # zip page filename at the aligned order. Pull the zip page text along too
+    # (as zip_text) so we can score each mapping and break duplicate claims below.
     page_mapping_df = pages_shift_df.with_columns(
         # calculate the aligned order by applying the actual or inferred shift to original order
         aligned_order=(pl.col.order + pl.col.inferred_shift).cast(pl.Int64)
     ).join(
         # then join all pages on the new aligned order
-        zip_pages_df.select(["order", "page_filename"]),
+        zip_pages_df.select(["order", "page_filename", pl.col.text.alias("zip_text")]),
         left_on="aligned_order",
         right_on="order",
         how="left",
     )
+
+    # Enforce a strict 1:1 mapping: the forward/back-fill of shifts can make two
+    # adjacent original pages resolve to the *same* aligned zip page at a shift
+    # boundary (LIS only dedupes anchors, not filled pages). When that happens,
+    # keep the page whose text actually matches the zip page best and drop the
+    # filename from the rest so no zip image is assigned to more than one page.
+    if page_mapping_df.filter(pl.col.page_filename.is_not_null()).height:
+        page_mapping_df = (
+            page_mapping_df.with_columns(
+                # actual similarity between each page's text and the zip page it
+                # resolved to; null (no filename) rows score null and never win.
+                # parallel=False: keep single-threaded (see align_pages note).
+                match_score=pl.when(pl.col.page_filename.is_not_null())
+                .then(pds.str_fuzz("text", "zip_text", parallel=False))
+                .otherwise(None)
+            )
+            .with_columns(
+                # rank claimants of the same zip filename by score (desc), then by
+                # original order (asc) as a deterministic tiebreak. rank is null
+                # for unmapped pages, which we treat as "keep" (nothing to dedupe).
+                claim_rank=pl.struct(score=-pl.col.match_score, order=pl.col.order)
+                .rank("ordinal")
+                .over("page_filename"),
+            )
+            .with_columns(
+                # only the top-ranked (rank == 1) claimant keeps the filename;
+                # losing duplicates have their filename cleared
+                page_filename=pl.when(
+                    pl.col.page_filename.is_null() | (pl.col.claim_rank == 1)
+                )
+                .then(pl.col.page_filename)
+                .otherwise(None)
+            )
+        )
 
     # sanity-check the alignment; warn (but don't fail) on anything suspicious so
     # a questionable mapping is surfaced without halting the whole run.
