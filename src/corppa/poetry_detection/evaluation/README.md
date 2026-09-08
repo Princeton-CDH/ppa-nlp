@@ -23,17 +23,18 @@ precision and recall scores. Our approach builds off existing methods for evalua
 annotations but makes design choices suitable to our task.
 
 ### Assumptions
-**Spans.** In this setting a span to have the following three components:
+**Spans.** In this setting a span has the following three components:
 - start: Start index of the span
 - end: End index of the span
-- label: The ID of the referenced poem
+- poem_id: The ID of the referenced poem
 
 Note that a span's interval is Pythonic [closed, open) interval.
 
-**Reference Spans.** We assume that a reference's spans do not overlap. Either the entire span
-is an excerpt from a poem or it is not. Note that our method can generally accomodate overlapping
-spans if they have different labels (i.e., one poem reuses a line from yet another poem), but only
-if poem labels are taken into account.
+**Reference Spans.** Ideally, a reference spans do not overlap. Either the entire span is an
+excerpt from a poem or it is not. That said, our method can generally accomodate overlapping
+spans if they have different labels (i.e., one poem reuses a line from yet another poem). In
+order to allow for general comparison, we accomodate overlapping *unlabeled* spans by
+combining all overlapping spans.
 
 **System Spans.** Unlike reference spans, system spans are permitted to overlap. This can easily
 happen in the case of passim where overlapping passages can be identified for different lines of
@@ -159,9 +160,8 @@ $$ Recall = \frac{relevance\textunderscore score}{\text{\\# reference spans}} $$
 
 **Edge Cases.**
 If a page has no relevant items (i.e. the page contains no poem excerpts), precision is equal to 1
-if there are no system spans for the page, otherwise 0. Likewise, if a system produces no system
-spans for a page (i.e., the system identifies no poem excerpts within the page), recall is equal to 1
-if the page has no poem excerpts (i.e., there are no reference spans for this page), and 0 otherwise.
+if there are no system spans for the page. Likewise, if a system produces no system spans for a page
+(i.e., the system identifies no poem excerpts within the page), recall is equal to 1.
 
 ## Ignoring Poem Labels
 Optionally, poem labels can be ignored. This turns the task from identifying particular poems instead to
@@ -181,12 +181,15 @@ span annotation (`.JSONL`) files. Results are written to an output `.CSV` file.
 **Optional parameters.**
 - `ignore-label`: Ignore span labels for span evaluations
 - `partial-match-weight`: Downweight for partial matches for span evaluations (default: 1.0)
+- `ref-index-prefix`: Prefix for reference span index fields. The field is assume is assumed to end with "start" and "end" respectively.
+- `sys-index-prefix`: Prefix for sysem span index fields. The field is assume is assumed to end with "start" and "end" respectively.
 
 **Output.**
 Currently, the output `.CSV` file includes the following fields with each row corresponding to a page:
 - page_id: PPA page ID
 - precision: precision score
 - recall: recall score
+- f1: F1 score
 - n_span_matches: number of (partial and exact) span matches
 - n_span_misses: number of span misses
 - n_span_spurious: number of spurious system spans

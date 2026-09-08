@@ -33,7 +33,7 @@ def test_get_page_texts(mock_orjsonl):
 @patch.object(LabeledExcerpt, "correct_page_excerpt")
 def test_build_passim_excerpt(mock_correct_excerpt):
     span_record = {
-        "ref_id": "poem_a",
+        "poem_id": "poem_a",
         "ref_corpus": "ref",
         "ref_start": 11,
         "ref_end": 12,
@@ -83,7 +83,7 @@ def test_get_passim_span():
         "page_id": "ppa_page_id",
         "page_start": "page_start_idx",
         "page_end": "page_end_idx",
-        "ref_id": "poem_id",
+        "poem_id": "poem_id",
         "ref_corpus": "ref",
         "ref_start": "ref_start_idx",
         "ref_end": "ref_end_idx",
@@ -143,7 +143,7 @@ def test_add_excerpts(mock_orjsonl):
                 {
                     "page_start": 1,
                     "page_end": 3,
-                    "ref_id": "poem_a",
+                    "poem_id": "poem_a",
                     "ref_corpus": "r1",
                     "ref_start": 11,
                     "ref_end": 13,
@@ -156,7 +156,7 @@ def test_add_excerpts(mock_orjsonl):
                 {
                     "page_start": 2,
                     "page_end": 5,
-                    "ref_id": "poem_1",
+                    "poem_id": "poem_1",
                     "ref_corpus": "r2",
                     "ref_start": 3,
                     "ref_end": 6,
@@ -164,7 +164,7 @@ def test_add_excerpts(mock_orjsonl):
                 {
                     "page_start": 6,
                     "page_end": 11,
-                    "ref_id": "poem_b",
+                    "poem_id": "poem_b",
                     "ref_corpus": "r1",
                     "ref_start": 0,
                     "ref_end": 6,
@@ -211,7 +211,7 @@ def test_add_excerpts(mock_orjsonl):
                     "page_start": 1,
                     "page_end": 3,
                     "ppa_excerpt": "ex",
-                    "ref_id": "poem_a",
+                    "poem_id": "poem_a",
                     "ref_corpus": "r1",
                     "ref_start": 11,
                     "ref_end": 13,
@@ -225,7 +225,7 @@ def test_add_excerpts(mock_orjsonl):
                     "page_start": 2,
                     "page_end": 5,
                     "ppa_excerpt": "llo",
-                    "ref_id": "poem_1",
+                    "poem_id": "poem_1",
                     "ref_corpus": "r2",
                     "ref_start": 3,
                     "ref_end": 6,
@@ -235,7 +235,7 @@ def test_add_excerpts(mock_orjsonl):
                     "page_start": 6,
                     "page_end": 11,
                     "ppa_excerpt": "world",
-                    "ref_id": "poem_b",
+                    "poem_id": "poem_b",
                     "ref_corpus": "r1",
                     "ref_start": 0,
                     "ref_end": 6,

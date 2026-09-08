@@ -58,7 +58,7 @@ def build_passim_excerpt(
         ppa_span_end=span_record["page_end"],
         ppa_span_text=span_record["ppa_excerpt"],
         detection_methods={"passim"},
-        poem_id=span_record["ref_id"],
+        poem_id=span_record["poem_id"],
         ref_corpus=span_record["ref_corpus"],
         ref_span_start=span_record["ref_start"],
         ref_span_end=span_record["ref_end"],
@@ -78,7 +78,7 @@ def get_passim_span(alignment_record) -> dict[str, Any]:
     page-level record.
     """
     span_record = {
-        "ref_id": alignment_record["id"],
+        "poem_id": alignment_record["id"],
         "ref_corpus": alignment_record["corpus"],
         "ref_start": alignment_record["begin"],
         "ref_end": alignment_record["end"],
@@ -143,8 +143,8 @@ def add_excerpts(
             span["ppa_excerpt"] = ppa_record["text"][start:end]
             # Add the page_id to the referenced text
             corpus_id = span["ref_corpus"]
-            ref_id = span["ref_id"]
-            refs_to_pages[corpus_id][ref_id].add(page_id)
+            poem_id = span["poem_id"]
+            refs_to_pages[corpus_id][poem_id].add(page_id)
 
     # Add reference excerpts
     for ref_corpus in ref_corpora:
@@ -155,14 +155,14 @@ def add_excerpts(
         )
         for ref_record in ref_progress:
             corpus_id = ref_record["corpus"]
-            ref_id = ref_record["id"]
-            if ref_id not in refs_to_pages[corpus_id]:
+            poem_id = ref_record["id"]
+            if poem_id not in refs_to_pages[corpus_id]:
                 # Skip unreferenced texts
                 continue
-            for page_id in refs_to_pages[corpus_id][ref_id]:
+            for page_id in refs_to_pages[corpus_id][poem_id]:
                 # Add reference excerpts to corresponding spans
                 for span in page_results[page_id]["poem_spans"]:
-                    if span["ref_corpus"] == corpus_id and span["ref_id"] == ref_id:
+                    if span["ref_corpus"] == corpus_id and span["poem_id"] == poem_id:
                         start, end = span["ref_start"], span["ref_end"]
                         span["ref_excerpt"] = ref_record["text"][start:end]
 

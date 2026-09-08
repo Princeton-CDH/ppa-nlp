@@ -3,7 +3,16 @@
 
 """
 Evaluate the poetry spans detected and identified by some *system*
-against a provided *reference* set of span annotations.
+against a provided *reference* set of span annotations. These span annotation
+sets are JSONL files with the following two fields: (1) page_id corresponding
+to the page's unique ID and (2) poem_spans a list of the page's span
+annotations.
+
+A span annotation is a JSON object with the following fields:
+    - start: the starting char index (inclusive) of the span within the page
+    - end: the ending char index (exclusive) of the span within the page
+    - poem_id (optional): the poem id for the span if its labeled
+
 
 Examples:
 ```
@@ -28,60 +37,52 @@ from xopen import xopen
 from corppa.poetry_detection.core import Span
 
 
-class PageReferenceSpans:
+class PageSpans:
     """
-    Page-level reference spans object
+    Page-level span annotations object
     """
 
-    def __init__(self, page_json):
+    page_id: str = ""
+    labeled_spans: list[Span] = []
+    unlabeled_spans: list[Span] = []
+
+    def __init__(self, page_json, index_pfx=""):
         self.page_id = page_json["page_id"]
-        self.spans = self._get_spans(page_json)
-
-    @staticmethod
-    def _get_spans(page_json):
-        """
-        Get span list from page-level json
-        """
-        spans = []
-        if page_json["n_excerpts"] > 0:
-            for excerpt in page_json["excerpts"]:
-                spans.append(Span(excerpt["start"], excerpt["end"], excerpt["poem_id"]))
-
-        # Sort spans by primarily by start index and secondarily by end index
-        spans.sort(key=lambda x: (x.start, x.end))
-        return spans
-
-
-class PageSystemSpans:
-    """
-    Page-level system spans object.
-
-    Note: Unlike a page's reference spans, the spans produced by a system might
-    overlap. While these overlapping spans are worth penalizing when span labels
-    are taken in to account, this seems less true when labels are ignored.
-    """
-
-    def __init__(self, page_json):
-        self.page_id = page_json["page_id"]
-        self.labeled_spans = self._get_labeled_spans(page_json)
+        self.labeled_spans = self._get_labeled_spans(page_json, index_pfx=index_pfx)
         self.unlabeled_spans = self._get_unlabeled_spans(self.labeled_spans)
 
     @staticmethod
-    def _get_labeled_spans(page_json):
+    def _get_labeled_spans(page_json, index_pfx="") -> list[Span]:
         """
-        Get (labeled) spans from page-level json
+        Extract labeled spans from page-level json
         """
+        start_field = f"{index_pfx}start"
+        end_field = f"{index_pfx}end"
         spans = []
-        if page_json["n_spans"] > 0:
-            # TODO: Revisit the format for the system results jsonl
-            for span in page_json["poem_spans"]:
-                spans.append(Span(span["page_start"], span["page_end"], span["ref_id"]))
-        # Sort spans by primarily by start index and secondarily by end index
+        check_index_names = True  # Validation flag
+        for excerpt in page_json["poem_spans"]:
+            if check_index_names:
+                # For first excerpt validate index field names
+                for field in [start_field, end_field]:
+                    if field not in excerpt:
+                        raise ValueError(
+                            f"Missing span field: '{field}'. Check index prefix."
+                        )
+                check_index_names = False
+            # Note: unlabeled spans are assigned an empty string label
+            spans.append(
+                Span(
+                    excerpt[f"{index_pfx}start"],
+                    excerpt[f"{index_pfx}end"],
+                    excerpt.get("poem_id", ""),
+                )
+            )
+        # Sort spans primarily by start index and secondarily by end index
         spans.sort(key=lambda x: (x.start, x.end))
         return spans
 
     @staticmethod
-    def _get_unlabeled_spans(labeled_spans):
+    def _get_unlabeled_spans(labeled_spans) -> list[Span]:
         """
         Get "label-free" spans derived from object's labeled spans. All overlapping
         (but not adjacent) spans are merged into a single span.
@@ -118,22 +119,25 @@ class PageEvaluation:
 
     def __init__(
         self,
-        page_ref_spans: PageReferenceSpans,
-        page_sys_spans: PageSystemSpans,
+        ref_page: PageSpans,
+        sys_page: PageSpans,
         ignore_label: bool = False,
     ) -> None:
-        if page_ref_spans.page_id != page_sys_spans.page_id:
+        if ref_page.page_id != sys_page.page_id:
             raise ValueError(
                 "Reference and system spans must correspond to the same page"
             )
         # Save working input
-        self.page_id = page_ref_spans.page_id
+        self.page_id = ref_page.page_id
         self.ignore_label = ignore_label
-        self.ref_spans = page_ref_spans.spans
+        ## Load appropriate version of each span set
         if self.ignore_label:
-            self.sys_spans = page_sys_spans.unlabeled_spans
+            self.ref_spans = ref_page.unlabeled_spans
+            self.sys_spans = sys_page.unlabeled_spans
         else:
-            self.sys_spans = page_sys_spans.labeled_spans
+            self.ref_spans = ref_page.labeled_spans
+            self.sys_spans = sys_page.labeled_spans
+
         # Determine mappings between reference and system spans
         self.ref_to_sys, self.sys_to_refs = self._get_span_mappings(
             self.ref_spans, self.sys_spans, self.ignore_label
@@ -391,13 +395,19 @@ class PageEvaluation:
         return result
 
 
-def get_page_eval(ref_json, sys_json, ignore_label: bool = False) -> PageEvaluation:
+def get_page_eval(
+    ref_json,
+    sys_json,
+    ignore_label: bool = False,
+    ref_index_pfx: str = "",
+    sys_index_pfx: str = "",
+) -> PageEvaluation:
     """
     Returns the PageEvaluation object for a given page's reference
     and system annotation json objects.
     """
-    page_ref = PageReferenceSpans(ref_json)
-    page_sys = PageSystemSpans(sys_json)
+    page_ref = PageSpans(ref_json, index_pfx=ref_index_pfx)
+    page_sys = PageSpans(sys_json, index_pfx=sys_index_pfx)
     return PageEvaluation(page_ref, page_sys, ignore_label=ignore_label)
 
 
@@ -406,6 +416,8 @@ def get_page_evals(
     ref_file: Path,
     sys_file: Path,
     ignore_label: bool = False,
+    ref_index_pfx: str = "",
+    sys_index_pfx: str = "",
     disable_progress: bool = False,
 ) -> Generator[PageEvaluation]:
     """
@@ -426,8 +438,17 @@ def get_page_evals(
     )
     for ref_page in progress_pages:
         page_id = ref_page["page_id"]
+        # Skip pages without system annotations
+        if page_id not in system_pages:
+            continue
         sys_page = system_pages[page_id]
-        yield get_page_eval(ref_page, sys_page, ignore_label=ignore_label)
+        yield get_page_eval(
+            ref_page,
+            sys_page,
+            ignore_label=ignore_label,
+            ref_index_pfx=ref_index_pfx,
+            sys_index_pfx=sys_index_pfx,
+        )
 
 
 def write_page_evals(
@@ -436,6 +457,8 @@ def write_page_evals(
     out_csv: Path,
     ignore_label: bool = False,
     partial_match_weight: float = 1,
+    ref_index_pfx: str = "",
+    sys_index_pfx: str = "",
     disable_progress: bool = False,
 ) -> None:
     """
@@ -466,6 +489,8 @@ def write_page_evals(
             ref_file,
             sys_file,
             ignore_label=ignore_label,
+            ref_index_pfx=ref_index_pfx,
+            sys_index_pfx=sys_index_pfx,
             disable_progress=disable_progress,
         ):
             page_results = page_eval.evaluate(partial_match_weight=partial_match_weight)
@@ -484,7 +509,7 @@ def write_page_evals(
     )
 
 
-def main():
+def main():  # pragma: no cover
     """
     Calculates page-level span evaluations given some reference (i.e, adjudicated
     annotations) and system annotations (e.g. passim results) JSONL files. These
@@ -495,12 +520,12 @@ def main():
         description="Calculates page-level span evaluations"
     )
     parser.add_argument(
-        "reference_jsonl",
+        "ref_jsonl",
         help="Path to reference poetry span annotations (JSONL file)",
         type=Path,
     )
     parser.add_argument(
-        "system_jsonl",
+        "sys_jsonl",
         help="Path to system span annotations to be evaluated (JSONL file)",
         type=Path,
     )
@@ -522,6 +547,18 @@ def main():
         default=1,
     )
     parser.add_argument(
+        "--ref-index-prefix",
+        help="Prefix for reference span index fields. The fields are assumed to end with "
+        "start and end respectively.",
+        default="",
+    )
+    parser.add_argument(
+        "--sys-index-prefix",
+        help="Prefix for system span index fields. The fields are assumed to end with "
+        "start and end respectively.",
+        default="",
+    )
+    parser.add_argument(
         "--progress",
         help="Show progress",
         action=argparse.BooleanOptionalAction,
@@ -532,16 +569,16 @@ def main():
     disable_progress = not args.progress
 
     # Check that input files exist
-    if not args.reference_jsonl.is_file():
+    if not args.ref_jsonl.is_file():
         print(
-            f"Error: reference JSONL file {args.reference_jsonl} does not exist",
+            f"Error: reference JSONL file {args.ref_jsonl} does not exist",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    if not args.system_jsonl.is_file():
+    if not args.sys_jsonl.is_file():
         print(
-            f"Error: system JSONL file {args.system_jsonl} does not exist",
+            f"Error: system JSONL file {args.sys_jsonl} does not exist",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -555,11 +592,13 @@ def main():
         sys.exit(1)
 
     write_page_evals(
-        args.reference_jsonl,
-        args.system_jsonl,
+        args.ref_jsonl,
+        args.sys_jsonl,
         args.output_file,
         ignore_label=args.ignore_label,
         partial_match_weight=args.partial_match_weight,
+        ref_index_pfx=args.ref_index_prefix,
+        sys_index_pfx=args.sys_index_prefix,
         disable_progress=disable_progress,
     )
 

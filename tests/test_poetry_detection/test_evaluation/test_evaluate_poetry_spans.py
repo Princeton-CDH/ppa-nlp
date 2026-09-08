@@ -8,95 +8,104 @@ import pytest
 from corppa.poetry_detection.core import Span
 from corppa.poetry_detection.evaluation.evaluate_poetry_spans import (
     PageEvaluation,
-    PageReferenceSpans,
-    PageSystemSpans,
+    PageSpans,
     get_page_eval,
     get_page_evals,
     write_page_evals,
 )
 
 
-class TestPageReferenceSpans:
-    @patch.object(PageReferenceSpans, "_get_spans")
-    def test_init(self, mock_get_spans):
-        mock_get_spans.return_value = "spans list"
+class TestPageSpans:
+    @patch.object(PageSpans, "_get_unlabeled_spans", autospec=True)
+    @patch.object(PageSpans, "_get_labeled_spans", autospec=True)
+    def test_init(self, mock_get_labeled_spans, mock_get_unlabeled_spans):
+        mock_get_labeled_spans.return_value = "labeled spans list"
+        mock_get_unlabeled_spans.return_value = "unlabeled spans list"
         page_json = {"page_id": "12345"}
-        result = PageReferenceSpans(page_json)
+        # Defaults
+        result = PageSpans(page_json)
         assert result.page_id == "12345"
-        assert result.spans == "spans list"
-        mock_get_spans.assert_called_once_with(page_json)
+        assert result.labeled_spans == "labeled spans list"
+        assert result.unlabeled_spans == "unlabeled spans list"
+        mock_get_labeled_spans.assert_called_once_with(page_json, index_pfx="")
+        mock_get_unlabeled_spans.assert_called_once_with("labeled spans list")
+        # With optional arg
+        mock_get_labeled_spans.reset_mock()
+        mock_get_unlabeled_spans.reset_mock()
+        result = PageSpans(page_json, index_pfx="pfx")
+        mock_get_labeled_spans.assert_called_once_with(page_json, index_pfx="pfx")
+        mock_get_unlabeled_spans.assert_called_once_with("labeled spans list")
 
-    def test_get_spans(self):
+    def test_get_labeled_spans(self):
         # No spans
-        page_json = {"page_id": "id", "n_excerpts": 0}
-        result = PageReferenceSpans._get_spans(page_json)
+        page_json = {"page_id": "id", "poem_spans": []}
+        result = PageSpans._get_labeled_spans(page_json)
         assert result == []
 
-        # With spans
-        excerpts = [
+        # With labeled spans
+        poem_spans = [
             {"start": 0, "end": 5, "poem_id": "c"},
             {"start": 3, "end": 4, "poem_id": "a"},
             {"start": 1, "end": 8, "poem_id": "b"},
             {"start": 1, "end": 3, "poem_id": "c"},
         ]
-        page_json = {"page_id": "id", "n_excerpts": 4, "excerpts": excerpts}
-        result = PageReferenceSpans._get_spans(page_json)
+        page_json = {"page_id": "id", "poem_spans": poem_spans}
+        result = PageSpans._get_labeled_spans(page_json)
         expected_spans = [
             Span(0, 5, "c"),
             Span(1, 3, "c"),
             Span(1, 8, "b"),
             Span(3, 4, "a"),
         ]
-        assert len(result) == 4
+        assert len(result) == len(poem_spans)
         for i, span in enumerate(result):
             assert span == expected_spans[i]
 
-
-class TestPageSystemSpans:
-    @patch.object(PageSystemSpans, "_get_unlabeled_spans")
-    @patch.object(PageSystemSpans, "_get_labeled_spans")
-    def test_init(self, mock_get_labeled_spans, mock_get_unlabeled_spans):
-        mock_get_labeled_spans.return_value = "labeled spans list"
-        mock_get_unlabeled_spans.return_value = "unlabeled spans list"
-        page_json = {"page_id": "12345"}
-        result = PageSystemSpans(page_json)
-        assert result.page_id == "12345"
-        assert result.labeled_spans == "labeled spans list"
-        assert result.unlabeled_spans == "unlabeled spans list"
-        mock_get_labeled_spans.assert_called_once_with(page_json)
-        mock_get_unlabeled_spans.assert_called_once()
-
-    def test_get_labeled_spans(self):
-        # No spans
-        page_json = {"page_id": "id", "n_spans": 0}
-        result = PageSystemSpans._get_labeled_spans(page_json)
-        assert result == []
-
-        # With spans
-        poem_spans = [
-            {"page_start": 0, "page_end": 5, "ref_id": "c"},
-            {"page_start": 3, "page_end": 4, "ref_id": "a"},
-            {"page_start": 1, "page_end": 8, "ref_id": "b"},
-            {"page_start": 1, "page_end": 3, "ref_id": "c"},
+        # With unlabeled spans
+        unlabeled_spans = [
+            {"start": 0, "end": 5, "other": "ignored"},
+            {"start": 10, "end": 20},
         ]
-        page_json = {"page_id": "id", "n_spans": 4, "poem_spans": poem_spans}
-        result = PageSystemSpans._get_labeled_spans(page_json)
-        expected_spans = [
-            Span(0, 5, "c"),
-            Span(1, 3, "c"),
-            Span(1, 8, "b"),
-            Span(3, 4, "a"),
-        ]
-        assert len(result) == 4
+        page_json = {"page_id": "id", "poem_spans": unlabeled_spans}
+        result = PageSpans._get_labeled_spans(page_json)
+        expected_spans = [Span(0, 5, ""), Span(10, 20, "")]
+        assert len(result) == len(unlabeled_spans)
         for i, span in enumerate(result):
             assert span == expected_spans[i]
+
+        # With index prefix
+        ## Test unprefixed fields are ignored
+        prefixed_spans = [
+            {"start": 0, "end": 5, "page_start": 1, "page_end": 4, "poem_id": "a"},
+            {"start": 1, "end": 8, "page_start": 2, "page_end": 6, "poem_id": "b"},
+        ]
+        page_json = {"page_id": "id", "poem_spans": prefixed_spans}
+        result = PageSpans._get_labeled_spans(page_json, index_pfx="page_")
+        expected_spans = [Span(1, 4, "a"), Span(2, 6, "b")]
+        assert len(result) == len(prefixed_spans)
+        for i, span in enumerate(result):
+            assert span == expected_spans[i]
+        ## Missing prefixed start field
+        missing_start = [{"start": 0, "end": 5, "page_end": 4, "poem_id": "a"}]
+        page_json = {"page_id": "id", "poem_spans": missing_start}
+        with pytest.raises(
+            ValueError, match="Missing span field: 'page_start'. Check index prefix."
+        ):
+            result = PageSpans._get_labeled_spans(page_json, index_pfx="page_")
+        ## Missing prefixed end field
+        missing_end = [{"start": 0, "end": 5, "page_start": 1, "poem_id": "a"}]
+        page_json = {"page_id": "id", "poem_spans": missing_end}
+        with pytest.raises(
+            ValueError, match="Missing span field: 'page_end'. Check index prefix."
+        ):
+            result = PageSpans._get_labeled_spans(page_json, index_pfx="page_")
 
     def test_get_unlabeled_spans(self):
         # No spans
-        result = PageSystemSpans._get_unlabeled_spans([])
+        result = PageSpans._get_unlabeled_spans([])
         assert result == []
 
-        # With spans
+        # With labeled spans
         labeled_spans = [
             Span(0, 1, "a"),
             Span(1, 4, "a"),
@@ -104,34 +113,47 @@ class TestPageSystemSpans:
             Span(3, 5, "d"),
             Span(9, 10, "a"),
         ]
-        result = PageSystemSpans._get_unlabeled_spans(labeled_spans)
+        result = PageSpans._get_unlabeled_spans(labeled_spans)
         expected_spans = [Span(0, 1, ""), Span(1, 5, ""), Span(9, 10, "")]
+        assert len(result) == 3
+        for i, span in enumerate(result):
+            assert span == expected_spans[i]
+
+        # With label-less spans
+        no_labels = [Span(s.start, s.end, "") for s in labeled_spans]
+        result = PageSpans._get_unlabeled_spans(no_labels)
         assert len(result) == 3
         for i, span in enumerate(result):
             assert span == expected_spans[i]
 
 
 class TestPageEvaluation:
-    @patch.object(PageEvaluation, "_get_span_pairs")
-    @patch.object(PageEvaluation, "_get_span_mappings")
+    @patch.object(PageEvaluation, "_get_span_pairs", autospec=True)
+    @patch.object(PageEvaluation, "_get_span_mappings", autospec=True)
     def test_init(self, mock_get_span_mappings, mock_get_span_pairs):
         # Page id mismatch
-        page_ref_spans = NonCallableMock(page_id="a")
-        page_sys_spans = NonCallableMock(page_id="b")
+        ref_page = NonCallableMock(spec=PageSpans, page_id="a")
+        sys_page = NonCallableMock(spec=PageSpans, page_id="b")
         with pytest.raises(
             ValueError,
             match="Reference and system spans must correspond to the same page",
         ):
-            PageEvaluation(page_ref_spans, page_sys_spans)
+            PageEvaluation(ref_page, sys_page)
         mock_get_span_mappings.assert_not_called()
         mock_get_span_pairs.assert_not_called()
 
         # Setup for non-error cases
-        page_ref_spans = NonCallableMock(page_id="id", spans="spans")
-        page_sys_spans = NonCallableMock(
+        ref_page = NonCallableMock(
+            spec=PageSpans,
             page_id="id",
-            labeled_spans="labeled spans",
-            unlabeled_spans="unlabeled spans",
+            labeled_spans="ref labeled",
+            unlabeled_spans="ref unlabeled",
+        )
+        sys_page = NonCallableMock(
+            spec=PageSpans,
+            page_id="id",
+            labeled_spans="sys labeled",
+            unlabeled_spans="sys unlabeled",
         )
 
         # Default case (ignore_label = False)
@@ -140,11 +162,11 @@ class TestPageEvaluation:
             "sys span --> ref spans",
         )
         mock_get_span_pairs.return_value = "span pairs"
-        result = PageEvaluation(page_ref_spans, page_sys_spans)
+        result = PageEvaluation(ref_page, sys_page)
         assert result.page_id == "id"
         assert not result.ignore_label
-        assert result.ref_spans == "spans"
-        assert result.sys_spans == "labeled spans"
+        assert result.ref_spans == "ref labeled"
+        assert result.sys_spans == "sys labeled"
         assert result.ref_to_sys == "ref span --> sys span"
         assert result.sys_to_refs == "sys span --> ref spans"
         assert result.span_pairs == "span pairs"
@@ -154,11 +176,11 @@ class TestPageEvaluation:
         # Ignore labels
         mock_get_span_mappings.reset_mock()
         mock_get_span_pairs.reset_mock()
-        result = PageEvaluation(page_ref_spans, page_sys_spans, ignore_label=True)
+        result = PageEvaluation(ref_page, sys_page, ignore_label=True)
         assert result.page_id == "id"
         assert result.ignore_label
-        assert result.ref_spans == "spans"
-        assert result.sys_spans == "unlabeled spans"
+        assert result.ref_spans == "ref unlabeled"
+        assert result.sys_spans == "sys unlabeled"
         assert result.ref_to_sys == "ref span --> sys span"
         assert result.sys_to_refs == "sys span --> ref spans"
         assert result.span_pairs == "span pairs"
@@ -221,8 +243,8 @@ class TestPageEvaluation:
         result = PageEvaluation._get_span_pairs(ref_spans, sys_spans, sys_to_refs)
         assert result == expected_result
 
-    @patch.object(Span, "overlap_factor")
-    @patch.object(Span, "is_exact_match")
+    @patch.object(Span, "overlap_factor", autospec=True)
+    @patch.object(Span, "is_exact_match", autospec=True)
     def test_relevance_score(self, mock_is_exact_match, mock_overlap_factor):
         # test pairs (note the actual values are not used directly in test)
         span_pairs = [
@@ -268,149 +290,283 @@ class TestPageEvaluation:
         assert PageEvaluation._retrieved_count([[3, 5]]) == 2
         assert PageEvaluation._retrieved_count([[], [1, 2, 3], [6]]) == 5
 
-    @patch.object(PageEvaluation, "_relevance_score")
-    @patch.object(PageEvaluation, "_retrieved_count")
-    @patch.object(PageEvaluation, "_get_span_pairs", return_value="span_pairs")
-    @patch.object(PageEvaluation, "_get_span_mappings", return_value=("r2s", "s2rs"))
+    @patch.object(PageEvaluation, "_relevance_score", autospec=True)
+    @patch.object(PageEvaluation, "_retrieved_count", autospec=True)
+    @patch.object(
+        PageEvaluation, "_get_span_pairs", return_value="span_pairs", autospec=True
+    )
+    @patch.object(
+        PageEvaluation,
+        "_get_span_mappings",
+        return_value=("r2s", "s2rs"),
+        autospec=True,
+    )
     def test_precision(
         self, mock_span_maps, mock_span_pairs, mock_retrieved_count, mock_relevance
     ):
+        ref_page_none = NonCallableMock(spec=PageSpans, page_id="id", labeled_spans=[])
+        sys_page_none = NonCallableMock(spec=PageSpans, page_id="id", labeled_spans=[])
+        ref_page = NonCallableMock(spec=PageSpans, page_id="id", labeled_spans=["r"])
+        sys_page = NonCallableMock(spec=PageSpans, page_id="id", labeled_spans=["s"])
+
         # Edge case: No system spans
-        page_sys_spans = NonCallableMock(page_id="id", labeled_spans=[])
         ## With reference spans
-        page_ref_spans = NonCallableMock(page_id="id", spans=["s"])
-        page_eval = PageEvaluation(page_ref_spans, page_sys_spans)
+        page_eval = PageEvaluation(ref_page, sys_page_none)
         assert page_eval.precision() == 1
         mock_retrieved_count.assert_not_called()
         mock_relevance.assert_not_called()
         ## No reference spans
-        page_ref_spans = NonCallableMock(page_id="id", spans=[])
-        page_eval = PageEvaluation(page_ref_spans, page_sys_spans)
+        page_eval = PageEvaluation(ref_page_none, sys_page_none)
         assert page_eval.precision() == 1
         mock_retrieved_count.assert_not_called()
         mock_relevance.assert_not_called()
 
         # With system spans
+        ## Single span
+        mock_retrieved_count.return_value = 1
+        mock_relevance.return_value = 0.5
+        page_eval = PageEvaluation(ref_page, sys_page, ignore_label="ignore_label")
+        assert page_eval.precision(partial_match_weight="weight") == 0.5
+        mock_retrieved_count.assert_called_once_with("s2rs")
+        mock_relevance.assert_called_once_with("span_pairs", "ignore_label", "weight")
+        ## Multiple spans
+        mock_retrieved_count.reset_mock()
+        mock_relevance.reset_mock()
         mock_retrieved_count.return_value = 2
         mock_relevance.return_value = 0.5
-        page_sys_spans = NonCallableMock(page_id="id", labeled_spans=["s"] * 2)
-        page_eval = PageEvaluation(
-            page_ref_spans, page_sys_spans, ignore_label="ignore_label"
+        sys_page_mult = NonCallableMock(
+            spec=PageSpans, page_id="id", labeled_spans=["s"] * 2
         )
+        page_eval = PageEvaluation(ref_page, sys_page_mult, ignore_label="ignore_label")
         assert page_eval.precision(partial_match_weight="weight") == 0.5 / 2
         mock_retrieved_count.assert_called_once_with("s2rs")
         mock_relevance.assert_called_once_with("span_pairs", "ignore_label", "weight")
-
+        ## System spans are split
         mock_retrieved_count.reset_mock()
-        mock_retrieved_count.return_value = 7
         mock_relevance.reset_mock()
+        mock_retrieved_count.return_value = 7
         mock_relevance.return_value = 4.5
-        page_sys_spans = NonCallableMock(page_id="id", labeled_spans=["s"] * 4)
-        page_eval = PageEvaluation(
-            page_ref_spans, page_sys_spans, ignore_label="ignore_label"
-        )
+        page_eval = PageEvaluation(ref_page, sys_page_mult, ignore_label="ignore_label")
         assert page_eval.precision(partial_match_weight="weight") == 4.5 / 7
         mock_retrieved_count.assert_called_once_with("s2rs")
         mock_relevance.assert_called_once_with("span_pairs", "ignore_label", "weight")
+        ## Same result with no reference spans
+        page_eval = PageEvaluation(
+            ref_page_none, sys_page_mult, ignore_label="ignore_label"
+        )
+        assert page_eval.precision(partial_match_weight="weight") == 4.5 / 7
 
-    @patch.object(PageEvaluation, "_relevance_score")
-    @patch.object(PageEvaluation, "_get_span_pairs", return_value="span_pairs")
-    @patch.object(PageEvaluation, "_get_span_mappings", return_value=("r2s", "s2rs"))
+    @patch.object(PageEvaluation, "_relevance_score", autospec=True)
+    @patch.object(
+        PageEvaluation, "_get_span_pairs", return_value="span_pairs", autospec=True
+    )
+    @patch.object(
+        PageEvaluation,
+        "_get_span_mappings",
+        return_value=("r2s", "s2rs"),
+        autospec=True,
+    )
     def test_recall(self, mock_span_maps, mock_span_pairs, mock_relevance):
+        ref_page_none = NonCallableMock(spec=PageSpans, page_id="id", labeled_spans=[])
+        sys_page_none = NonCallableMock(spec=PageSpans, page_id="id", labeled_spans=[])
+        ref_page = NonCallableMock(spec=PageSpans, page_id="id", labeled_spans=["r"])
+        sys_page = NonCallableMock(spec=PageSpans, page_id="id", labeled_spans=["s"])
+
         # Edge case: No reference spans
-        page_ref_spans = NonCallableMock(page_id="id", spans=[])
         ## With system spans
-        page_sys_spans = NonCallableMock(page_id="id", labeled_spans=["s"])
-        page_eval = PageEvaluation(page_ref_spans, page_sys_spans)
+        page_eval = PageEvaluation(ref_page_none, sys_page)
         assert page_eval.recall() == 1
         mock_relevance.assert_not_called()
         ## No system spans
-        page_sys_spans = NonCallableMock(page_id="id", labeled_spans=[])
-        page_eval = PageEvaluation(page_ref_spans, page_sys_spans)
+        page_eval = PageEvaluation(ref_page_none, sys_page_none)
         assert page_eval.recall() == 1
         mock_relevance.assert_not_called()
 
-        # With reference spans
+        # Standard Case
+        ## Single reference span
         mock_relevance.return_value = 0.5
-        page_ref_spans = NonCallableMock(page_id="id", spans=["a"])
-        page_eval = PageEvaluation(
-            page_ref_spans, page_sys_spans, ignore_label="ignore_label"
-        )
+        page_eval = PageEvaluation(ref_page, sys_page)
         assert page_eval.recall(partial_match_weight="weight") == 0.5 / 1
-        mock_relevance.assert_called_once_with("span_pairs", "ignore_label", "weight")
-
+        mock_relevance.assert_called_once_with("span_pairs", False, "weight")
+        ## Multiple reference spans
         mock_relevance.reset_mock()
         mock_relevance.return_value = 2.1
-        page_ref_spans = NonCallableMock(page_id="id", spans=["a"] * 3)
-        page_eval = PageEvaluation(
-            page_ref_spans, page_sys_spans, ignore_label="ignore_label"
+        ref_page_mult = NonCallableMock(
+            spec=PageSpans, page_id="id", labeled_spans=["r"] * 3
         )
+        page_eval = PageEvaluation(ref_page_mult, sys_page)
         assert page_eval.recall(partial_match_weight="weight") == 2.1 / 3
-        mock_relevance.assert_called_once_with("span_pairs", "ignore_label", "weight")
+        mock_relevance.assert_called_once_with("span_pairs", False, "weight")
+        ## Same result with no system spans
+        mock_relevance.reset_mock()
+        page_eval = PageEvaluation(ref_page_mult, sys_page_none)
+        assert page_eval.recall() == 2.1 / 3
 
-    @patch.object(PageEvaluation, "recall")
-    @patch.object(PageEvaluation, "precision")
-    @patch.object(PageEvaluation, "_get_span_pairs", return_value="span_pairs")
-    @patch.object(PageEvaluation, "_get_span_mappings", return_value=("r2s", "s2rs"))
+    @patch.object(PageEvaluation, "_relevance_score", autospec=True)
+    @patch.object(
+        PageEvaluation, "_get_span_pairs", return_value="span_pairs", autospec=True
+    )
+    @patch.object(
+        PageEvaluation,
+        "_get_span_mappings",
+        return_value=("r2s", "s2rs"),
+        autospec=True,
+    )
+    def test_recall_ignore_label(self, mock_span_maps, mock_span_pairs, mock_relevance):
+        ref_page = NonCallableMock(spec=PageSpans, page_id="id", unlabeled_spans=["r"])
+        sys_page = NonCallableMock(spec=PageSpans, page_id="id", unlabeled_spans=["s"])
+
+        ## Single reference span
+        mock_relevance.return_value = 0.5
+        page_eval = PageEvaluation(ref_page, sys_page, ignore_label=True)
+        assert page_eval.recall(partial_match_weight="weight") == 0.5 / 1
+        mock_relevance.assert_called_once_with("span_pairs", True, "weight")
+
+        ## Multiple reference spans
+        mock_relevance.reset_mock()
+        mock_relevance.return_value = 2.1
+        ref_page_mult = NonCallableMock(
+            spec=PageSpans, page_id="id", unlabeled_spans=["r"] * 3
+        )
+        page_eval = PageEvaluation(ref_page_mult, sys_page, ignore_label=True)
+        assert page_eval.recall(partial_match_weight="weight") == 2.1 / 3
+        mock_relevance.assert_called_once_with("span_pairs", True, "weight")
+
+        ## Same results with no system spans
+        mock_relevance.reset_mock()
+        sys_page_none = NonCallableMock(
+            spec=PageSpans, page_id="id", unlabeled_spans=[]
+        )
+        page_eval = PageEvaluation(ref_page_mult, sys_page_none, ignore_label=True)
+        assert page_eval.recall() == 2.1 / 3
+
+    @patch.object(PageEvaluation, "recall", autospec=True)
+    @patch.object(PageEvaluation, "precision", autospec=True)
+    @patch.object(
+        PageEvaluation, "_get_span_pairs", return_value="span_pairs", autospec=True
+    )
+    @patch.object(
+        PageEvaluation,
+        "_get_span_mappings",
+        return_value=("r2s", "s2rs"),
+        autospec=True,
+    )
     def test_f1_score(
         self, mock_span_maps, mock_span_pairs, mock_precision, mock_recall
     ):
-        page_no_ref_spans = NonCallableMock(page_id="id", spans=[])
-        page_no_sys_spans = NonCallableMock(page_id="id", labeled_spans=[])
-        page_ref_spans = NonCallableMock(page_id="id", spans=["a"])
-        page_sys_spans = NonCallableMock(page_id="id", labeled_spans=["s"])
+        ref_page_none = NonCallableMock(
+            spec=PageSpans, page_id="id", unlabeled_spans=[]
+        )
+        sys_page_none = NonCallableMock(
+            spec=PageSpans, page_id="id", unlabeled_spans=[]
+        )
+        ref_page = NonCallableMock(spec=PageSpans, page_id="id", unlabeled_spans=["r"])
+        sys_page = NonCallableMock(spec=PageSpans, page_id="id", unlabeled_spans=["s"])
 
         # Edge case: precision and recall are 0
         ## No system or ref spans
         mock_precision.return_value = 0
         mock_recall.return_value = 0
-        page_eval = PageEvaluation(page_no_ref_spans, page_no_sys_spans)
+        page_eval = PageEvaluation(ref_page_none, sys_page_none, ignore_label=True)
         assert page_eval.f1_score() == 1
-        mock_precision.assert_called_once_with(partial_match_weight=1)
-        mock_recall.assert_called_once_with(partial_match_weight=1)
+        mock_precision.assert_called_once_with(page_eval, partial_match_weight=1)
+        mock_recall.assert_called_once_with(page_eval, partial_match_weight=1)
         ## With system spans
         mock_precision.reset_mock()
         mock_recall.reset_mock()
-        page_eval = PageEvaluation(page_no_ref_spans, page_sys_spans)
+        page_eval = PageEvaluation(ref_page_none, sys_page, ignore_label=True)
         assert page_eval.f1_score() == 0
-        mock_precision.assert_called_once_with(partial_match_weight=1)
-        mock_recall.assert_called_once_with(partial_match_weight=1)
+        mock_precision.assert_called_once_with(page_eval, partial_match_weight=1)
+        mock_recall.assert_called_once_with(page_eval, partial_match_weight=1)
         ## With ref spans
         mock_precision.reset_mock()
         mock_recall.reset_mock()
-        page_eval = PageEvaluation(page_ref_spans, page_no_sys_spans)
+        page_eval = PageEvaluation(ref_page, sys_page_none, ignore_label=True)
         assert page_eval.f1_score() == 0
-        mock_precision.assert_called_once_with(partial_match_weight=1)
-        mock_recall.assert_called_once_with(partial_match_weight=1)
+        mock_precision.assert_called_once_with(page_eval, partial_match_weight=1)
+        mock_recall.assert_called_once_with(page_eval, partial_match_weight=1)
         ## With both
         mock_precision.reset_mock()
         mock_recall.reset_mock()
-        page_eval = PageEvaluation(page_ref_spans, page_sys_spans)
+        page_eval = PageEvaluation(ref_page, sys_page)
         assert page_eval.f1_score() == 0
-        mock_precision.assert_called_once_with(partial_match_weight=1)
-        mock_recall.assert_called_once_with(partial_match_weight=1)
+        mock_precision.assert_called_once_with(page_eval, partial_match_weight=1)
+        mock_recall.assert_called_once_with(page_eval, partial_match_weight=1)
 
         # Standard
         mock_precision.reset_mock()
         mock_recall.reset_mock()
         mock_precision.return_value = 0.25
         mock_recall.return_value = 0.75
-        page_eval = PageEvaluation(page_ref_spans, page_sys_spans)
+        page_eval = PageEvaluation(ref_page, sys_page)
         assert page_eval.f1_score() == 0.375  # (2*.25*.75)/1
-        mock_precision.assert_called_once_with(partial_match_weight=1)
-        mock_recall.assert_called_once_with(partial_match_weight=1)
+        mock_precision.assert_called_once_with(page_eval, partial_match_weight=1)
+        mock_recall.assert_called_once_with(page_eval, partial_match_weight=1)
 
         mock_precision.return_value = 0.75
         mock_recall.return_value = 0.5
-        page_eval = PageEvaluation(page_ref_spans, page_sys_spans)
+        page_eval = PageEvaluation(ref_page, sys_page)
         assert page_eval.f1_score() == 0.6  # (2*.5*.75)/1.25
 
         ## Check propagation of optional var
         mock_precision.reset_mock()
         mock_recall.reset_mock()
         page_eval.f1_score(partial_match_weight=0.2)
-        mock_precision.assert_called_once_with(partial_match_weight=0.2)
-        mock_recall.assert_called_once_with(partial_match_weight=0.2)
+        mock_precision.assert_called_once_with(page_eval, partial_match_weight=0.2)
+        mock_recall.assert_called_once_with(page_eval, partial_match_weight=0.2)
+
+    @patch.object(PageEvaluation, "recall", autospec=True)
+    @patch.object(PageEvaluation, "precision", autospec=True)
+    @patch.object(
+        PageEvaluation, "_get_span_pairs", return_value="span_pairs", autospec=True
+    )
+    @patch.object(
+        PageEvaluation,
+        "_get_span_mappings",
+        return_value=("r2s", "s2rs"),
+        autospec=True,
+    )
+    def test_f1_score_ignore_label(
+        self, mock_span_maps, mock_span_pairs, mock_precision, mock_recall
+    ):
+        ref_page_none = NonCallableMock(
+            spec=PageSpans, page_id="id", unlabeled_spans=[]
+        )
+        sys_page_none = NonCallableMock(
+            spec=PageSpans, page_id="id", unlabeled_spans=[]
+        )
+        ref_page = NonCallableMock(spec=PageSpans, page_id="id", unlabeled_spans=["r"])
+        sys_page = NonCallableMock(spec=PageSpans, page_id="id", unlabeled_spans=["s"])
+
+        # Edge case: precision and recall are 0
+        ## No system or ref spans
+        mock_precision.return_value = 0
+        mock_recall.return_value = 0
+        page_eval = PageEvaluation(ref_page_none, sys_page_none, ignore_label=True)
+        assert page_eval.f1_score() == 1
+        mock_precision.assert_called_once_with(page_eval, partial_match_weight=1)
+        mock_recall.assert_called_once_with(page_eval, partial_match_weight=1)
+        ## With system spans
+        mock_precision.reset_mock()
+        mock_recall.reset_mock()
+        page_eval = PageEvaluation(ref_page_none, sys_page, ignore_label=True)
+        assert page_eval.f1_score() == 0
+        mock_precision.assert_called_once_with(page_eval, partial_match_weight=1)
+        mock_recall.assert_called_once_with(page_eval, partial_match_weight=1)
+        ## With ref spans
+        mock_precision.reset_mock()
+        mock_recall.reset_mock()
+        page_eval = PageEvaluation(ref_page, sys_page_none, ignore_label=True)
+        assert page_eval.f1_score() == 0
+        mock_precision.assert_called_once_with(page_eval, partial_match_weight=1)
+        mock_recall.assert_called_once_with(page_eval, partial_match_weight=1)
+        ## With both
+        mock_precision.reset_mock()
+        mock_recall.reset_mock()
+        page_eval = PageEvaluation(ref_page, sys_page, ignore_label=True)
+        assert page_eval.f1_score() == 0
+        mock_precision.assert_called_once_with(page_eval, partial_match_weight=1)
+        mock_recall.assert_called_once_with(page_eval, partial_match_weight=1)
 
     def test_get_match_counts(self):
         expected_results = {
@@ -482,13 +638,20 @@ class TestPageEvaluation:
         expected_results["n_poem_spurious"] = 1
         assert results == expected_results
 
-    @patch.object(PageEvaluation, "f1_score", return_value="f1_score")
-    @patch.object(PageEvaluation, "recall", return_value="recall_score")
-    @patch.object(PageEvaluation, "precision", return_value="precision_score")
-    @patch.object(PageEvaluation, "_get_spurious_counts")
-    @patch.object(PageEvaluation, "_get_match_counts")
-    @patch.object(PageEvaluation, "_get_span_pairs")
-    @patch.object(PageEvaluation, "_get_span_mappings", return_value=("r2s", "s2rs"))
+    @patch.object(PageEvaluation, "f1_score", return_value="f1_score", autospec=True)
+    @patch.object(PageEvaluation, "recall", return_value="recall_score", autospec=True)
+    @patch.object(
+        PageEvaluation, "precision", return_value="precision_score", autospec=True
+    )
+    @patch.object(PageEvaluation, "_get_spurious_counts", autospec=True)
+    @patch.object(PageEvaluation, "_get_match_counts", autospec=True)
+    @patch.object(PageEvaluation, "_get_span_pairs", autospec=True)
+    @patch.object(
+        PageEvaluation,
+        "_get_span_mappings",
+        return_value=("r2s", "s2rs"),
+        autospec=True,
+    )
     def test_evaluate(
         self,
         mock_span_maps,
@@ -499,6 +662,20 @@ class TestPageEvaluation:
         mock_recall,
         mock_f1,
     ):
+        # Setup PageSpans inputs
+        ref_page = NonCallableMock(
+            spec=PageSpans,
+            page_id="id",
+            labeled_spans="ref labeled",
+            unlabeled_spans="ref unlabeled",
+        )
+        sys_page = NonCallableMock(
+            spec=PageSpans,
+            page_id="id",
+            labeled_spans="sys labeled",
+            unlabeled_spans="sys unlabeled",
+        )
+
         # Set mock count values
         mock_matches.return_value = {
             "n_span_matches": "a",
@@ -510,12 +687,7 @@ class TestPageEvaluation:
             "n_span_spurious": "A",
             "n_poem_spurious": "B",
         }
-        # Setup PageEvaluation object
-        page_ref_spans = NonCallableMock(page_id="id", spans="ref_spans")
-        page_sys_spans = NonCallableMock(page_id="id", labeled_spans="sys_spans")
-        page_eval = PageEvaluation(page_ref_spans, page_sys_spans)
-
-        result = page_eval.evaluate(partial_match_weight="partial_match_weight")
+        # Expected result
         expected_result = {
             "page_id": "id",
             "precision": "precision_score",
@@ -528,34 +700,87 @@ class TestPageEvaluation:
             "n_poem_misses": "d",
             "n_poem_spurious": "B",
         }
+
+        ## Evaluate with labels
+        page_eval = PageEvaluation(ref_page, sys_page)
+        result = page_eval.evaluate(partial_match_weight="partial_match_weight")
         assert result == expected_result
-        mock_matches.assert_called_once_with("ref_spans", "r2s")
-        mock_spurious.assert_called_once_with("ref_spans", "sys_spans", "s2rs")
+        mock_matches.assert_called_once_with("ref labeled", "r2s")
+        mock_spurious.assert_called_once_with("ref labeled", "sys labeled", "s2rs")
         mock_precision.assert_called_once_with(
-            partial_match_weight="partial_match_weight"
+            page_eval, partial_match_weight="partial_match_weight"
         )
-        mock_recall.assert_called_once_with(partial_match_weight="partial_match_weight")
+        mock_recall.assert_called_once_with(
+            page_eval, partial_match_weight="partial_match_weight"
+        )
+        mock_f1.assert_called_once_with(
+            page_eval, partial_match_weight="partial_match_weight"
+        )
+
+        ## Evaluate ignoring labels
+        mock_matches.reset_mock()
+        mock_spurious.reset_mock()
+        mock_precision.reset_mock()
+        mock_recall.reset_mock()
+        mock_f1.reset_mock()
+
+        page_eval = PageEvaluation(ref_page, sys_page, ignore_label=True)
+        result = page_eval.evaluate(partial_match_weight="partial_match_weight")
+        assert result == expected_result
+        mock_matches.assert_called_once_with("ref unlabeled", "r2s")
+        mock_spurious.assert_called_once_with("ref unlabeled", "sys unlabeled", "s2rs")
+        mock_precision.assert_called_once_with(
+            page_eval, partial_match_weight="partial_match_weight"
+        )
+        mock_recall.assert_called_once_with(
+            page_eval, partial_match_weight="partial_match_weight"
+        )
+        mock_f1.assert_called_once_with(
+            page_eval, partial_match_weight="partial_match_weight"
+        )
 
 
-@patch("corppa.poetry_detection.evaluation.evaluate_poetry_spans.PageEvaluation")
-@patch("corppa.poetry_detection.evaluation.evaluate_poetry_spans.PageSystemSpans")
-@patch("corppa.poetry_detection.evaluation.evaluate_poetry_spans.PageReferenceSpans")
-def test_get_page_eval(mock_ref_spans, mock_sys_spans, mock_page_eval):
-    mock_ref_spans.return_value = "ref_spans"
-    mock_sys_spans.return_value = "sys_spans"
-
+@patch(
+    "corppa.poetry_detection.evaluation.evaluate_poetry_spans.PageEvaluation",
+    autospec=True,
+)
+@patch(
+    "corppa.poetry_detection.evaluation.evaluate_poetry_spans.PageSpans", autospec=True
+)
+def test_get_page_eval(mock_page_spans, mock_page_eval):
+    mock_page_spans.side_effect = ["ref-page", "sys-page"]
     mock_page_eval.return_value = "page_eval"
 
-    result = get_page_eval("ref_json", "sys_json", "ignore_label")
+    # With defaults
+    result = get_page_eval("ref_json", "sys_json")
     assert result == "page_eval"
-    mock_ref_spans.assert_called_once_with("ref_json")
-    mock_sys_spans.assert_called_once_with("sys_json")
+    mock_page_spans.assert_has_calls(
+        [call("ref_json", index_pfx=""), call("sys_json", index_pfx="")]
+    )
+    mock_page_eval.assert_called_once_with("ref-page", "sys-page", ignore_label=False)
+    # Optional args set
+    mock_page_spans.reset_mock()
+    mock_page_eval.reset_mock()
+    mock_page_spans.side_effect = ["ref-page", "sys-page"]
+    result = get_page_eval(
+        "ref_json",
+        "sys_json",
+        ignore_label="ignore_label",
+        ref_index_pfx="ref",
+        sys_index_pfx="sys",
+    )
+    mock_page_spans.assert_has_calls(
+        [call("ref_json", index_pfx="ref"), call("sys_json", index_pfx="sys")]
+    )
     mock_page_eval.assert_called_once_with(
-        "ref_spans", "sys_spans", ignore_label="ignore_label"
+        "ref-page", "sys-page", ignore_label="ignore_label"
     )
 
 
-@patch("corppa.poetry_detection.evaluation.evaluate_poetry_spans.get_page_eval")
+@patch(
+    "corppa.poetry_detection.evaluation.evaluate_poetry_spans.get_page_eval",
+    autospec=True,
+)
 def test_get_page_evals(mock_get_page_eval, tmp_path):
     ref_jsonl = '{"page_id":"a", "excerpts":[]}\n{"page_id":"b", "excerpts":[]}\n'
     ref_file = tmp_path / "ref.jsonl"
@@ -565,30 +790,67 @@ def test_get_page_evals(mock_get_page_eval, tmp_path):
     sys_file.write_text(sys_jsonl)
     mock_get_page_eval.side_effect = ["A", "B"]
 
-    results = list(
-        get_page_evals(ref_file, sys_file, ignore_label="flag", disable_progress=True)
+    # With defaults
+    results = get_page_evals(ref_file, sys_file, disable_progress=True)
+    assert list(results) == ["A", "B"]
+    assert mock_get_page_eval.call_count == 2
+    expected_calls = [
+        call(
+            {"page_id": "a", "excerpts": []},
+            {"page_id": "a", "poem_spans": []},
+            ignore_label=False,
+            ref_index_pfx="",
+            sys_index_pfx="",
+        ),
+        call(
+            {"page_id": "b", "excerpts": []},
+            {"page_id": "b", "poem_spans": []},
+            ignore_label=False,
+            ref_index_pfx="",
+            sys_index_pfx="",
+        ),
+    ]
+    mock_get_page_eval.assert_has_calls(expected_calls)
+
+    # With optional args
+    mock_get_page_eval.reset_mock()
+    mock_get_page_eval.side_effect = ["A", "B"]
+    results = get_page_evals(
+        ref_file,
+        sys_file,
+        ignore_label="flag",
+        ref_index_pfx="ref",
+        sys_index_pfx="sys",
+        disable_progress=True,
     )
-    assert results == ["A", "B"]
+    assert list(results) == ["A", "B"]
     assert mock_get_page_eval.call_count == 2
     expected_calls = [
         call(
             {"page_id": "a", "excerpts": []},
             {"page_id": "a", "poem_spans": []},
             ignore_label="flag",
+            ref_index_pfx="ref",
+            sys_index_pfx="sys",
         ),
         call(
             {"page_id": "b", "excerpts": []},
             {"page_id": "b", "poem_spans": []},
             ignore_label="flag",
+            ref_index_pfx="ref",
+            sys_index_pfx="sys",
         ),
     ]
     mock_get_page_eval.assert_has_calls(expected_calls)
 
 
-@patch("corppa.poetry_detection.evaluation.evaluate_poetry_spans.get_page_evals")
+@patch(
+    "corppa.poetry_detection.evaluation.evaluate_poetry_spans.get_page_evals",
+    autospec=True,
+)
 def test_write_page_evals(mock_get_page_evals, tmp_path):
     out_csv = tmp_path / "result.csv"
-    page_eval_a = NonCallableMock()
+    page_eval_a = NonCallableMock(spec=PageEvaluation)
     page_eval_a.evaluate.return_value = {
         "page_id": "a",
         "precision": 1,
@@ -601,7 +863,7 @@ def test_write_page_evals(mock_get_page_evals, tmp_path):
         "n_poem_misses": 0,
         "n_poem_spurious": 0,
     }
-    page_eval_b = NonCallableMock()
+    page_eval_b = NonCallableMock(spec=PageEvaluation)
     page_eval_b.evaluate.return_value = {
         "page_id": "b",
         "precision": 2 / 3,
@@ -622,11 +884,18 @@ def test_write_page_evals(mock_get_page_evals, tmp_path):
         "sys_file",
         out_csv,
         ignore_label="bool",
+        ref_index_pfx="ref",
+        sys_index_pfx="sys",
         partial_match_weight="weight",
         disable_progress="bool",
     )
     mock_get_page_evals.assert_called_once_with(
-        "ref_file", "sys_file", ignore_label="bool", disable_progress="bool"
+        "ref_file",
+        "sys_file",
+        ignore_label="bool",
+        ref_index_pfx="ref",
+        sys_index_pfx="sys",
+        disable_progress="bool",
     )
     page_eval_a.evaluate.assert_called_once_with(partial_match_weight="weight")
     page_eval_b.evaluate.assert_called_once_with(partial_match_weight="weight")
