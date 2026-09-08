@@ -18,12 +18,15 @@ from corppa.utils.dataset_prep import (
     add_zip_file_to_tar,
     align_pages,
     align_shifted_pages,
+    get_ht_zipfile_path,
     get_zip_textfiles,
     longest_increasing_subseq,
     main,
+    plot_alignment,
     process_gale_work,
     process_ht_work,
     process_work,
+    review_alignment,
 )
 
 WORK_ID = "htid:test.12345678"
@@ -886,6 +889,237 @@ def test_align_pages_underscore_page_id(aligned_zip):
         "work_00000002",
         "work_00000003",
     }
+
+
+# --- detailed alignment review + visualization ---
+
+
+def test_align_shifted_pages_detailed_schema_and_flags():
+    # detailed=True returns the diagnostic frame with anchor/matched flags
+    seeds = [f"chapter-{i}-unique-content" for i in range(5)]
+    pages_df, zip_pages_df = _make_shifted_frames(
+        page_orders=list(range(1, 6)),
+        zip_orders=list(range(11, 16)),
+        seeds=seeds,
+    )
+
+    result = align_shifted_pages(pages_df, zip_pages_df, detailed=True)
+
+    # expected diagnostic columns are present
+    assert {
+        "id",
+        "order",
+        "aligned_order",
+        "page_filename",
+        "match_score",
+        "shift",
+        "inferred_shift",
+        "is_anchor",
+        "is_matched",
+        "text_len",
+        "zip_text_len",
+        "text_snippet",
+        "zip_text_snippet",
+    } <= set(result.columns)
+    # all five pages align (uniform +10 shift) and every one is an anchor here
+    assert result.height == 5
+    assert result["is_matched"].all()
+    assert result["is_anchor"].all()
+    # mapped order is original order + 10
+    assert (result["aligned_order"] - result["order"]).unique().to_list() == [10]
+    # matched pages carry both text lengths; here orig and zip share text
+    assert result["text_len"].to_list() == result["zip_text_len"].to_list()
+
+
+def test_align_shifted_pages_detailed_marks_inferred_page():
+    # a short leading page is filled (not an anchor) but still matched
+    seeds = [f"chapter-{i}-unique-content" for i in range(5)]
+    pages_df = pl.DataFrame(
+        {
+            "id": [f"work.{o:08d}" for o in range(1, 6)],
+            "order": list(range(1, 6)),
+            "text": ["short lead"] + [_long_text(s) for s in seeds[1:]],
+        }
+    )
+    zip_pages_df = pl.DataFrame(
+        {
+            "page_filename": [f"{o:08d}" for o in range(11, 16)],
+            "order": list(range(11, 16)),
+            "text": ["zip junk"] + [_long_text(s) for s in seeds[1:]],
+        }
+    )
+
+    result = align_shifted_pages(pages_df, zip_pages_df, detailed=True).sort("order")
+
+    row1 = result.row(0, named=True)
+    # first page is short: filled via neighbor shift, so not an anchor
+    assert row1["is_anchor"] is False
+    assert row1["is_matched"] is True
+
+
+def test_align_shifted_pages_detailed_text_snippet():
+    # snippet is the first non-empty line, whitespace-collapsed and truncated
+    long_first_line = "This is the opening line of the page " * 5  # > 80 chars
+    text = f"   \n\n{long_first_line}\nsecond line\n" + ("filler word " * 60)
+    pages_df = pl.DataFrame({"id": ["work.00000001"], "order": [1], "text": [text]})
+    zip_pages_df = pl.DataFrame(
+        {"page_filename": ["00000011"], "order": [11], "text": [text]}
+    )
+
+    result = align_shifted_pages(pages_df, zip_pages_df, detailed=True)
+
+    snippet = result["text_snippet"][0]
+    # leading blank lines stripped; only the first line is used (no "second line")
+    assert snippet.startswith("This is the opening line")
+    assert "second line" not in snippet
+    # truncated to the configured length plus a single-char ellipsis
+    assert len(snippet) == dataset_prep.TEXT_SNIPPET_LEN + 1
+    assert snippet.endswith("…")
+    # matched zip snippet is populated too (same text here)
+    assert result["zip_text_snippet"][0] == snippet
+
+
+def test_align_shifted_pages_detailed_empty_has_diagnostic_schema():
+    # no content match -> empty frame, but with the detailed schema so callers
+    # can rely on the columns existing
+    pages_df, zip_pages_df = _make_shifted_frames([1, 2], [1, 2], ["aaa", "bbb"])
+    # overwrite with non-matching zip text
+    zip_pages_df = zip_pages_df.with_columns(text=pl.lit("no shared content here"))
+
+    result = align_shifted_pages(pages_df, zip_pages_df, detailed=True)
+
+    assert result.is_empty()
+    assert {"is_anchor", "is_matched", "aligned_order"} <= set(result.columns)
+
+
+def test_review_alignment_from_pages_and_zip(tmp_path):
+    # review_alignment accepts page dicts + a zip path and returns the detailed frame
+    seeds = [f"chapter-{i}-unique-content" for i in range(4)]
+    pages = [
+        {"id": f"work.{o:08d}", "order": o, "text": _long_text(seeds[o - 1])}
+        for o in range(1, 5)
+    ]
+    zip_files = {f"{10 + o:08d}.txt": _long_text(seeds[o - 1]) for o in range(1, 5)}
+    zip_path = make_zip(tmp_path, zip_files)
+
+    result = review_alignment("work", pages, zip_path)
+
+    assert result["is_matched"].all()
+    # uniform +10 shift recovered
+    assert (result["aligned_order"] - result["order"]).unique().to_list() == [10]
+
+
+def test_review_alignment_derives_order_when_missing(tmp_path):
+    # when pages lack an explicit order column, it is derived from the id suffix
+    seeds = [f"chapter-{i}-unique-content" for i in range(3)]
+    pages = [
+        {"id": f"work.{o:08d}", "text": _long_text(seeds[o - 1])} for o in range(1, 4)
+    ]
+    zip_files = {f"{10 + o:08d}.txt": _long_text(seeds[o - 1]) for o in range(1, 4)}
+    zip_path = make_zip(tmp_path, zip_files)
+
+    result = review_alignment("work", pages, zip_path)
+
+    assert result["order"].to_list() == [1, 2, 3]
+
+
+def test_get_ht_zipfile_path():
+    # path is image_dir/HathiTrust/<encoded>/<suffix>.zip
+    path = get_ht_zipfile_path("htid:test.12345678", Path("/img"))
+    assert path.parts[-3] == "HathiTrust"
+    assert path.suffix == ".zip"
+    # suffix filename matches the last dotted segment of the encoded id
+    assert path.stem == path.parts[-2].split(".")[-1]
+
+
+def test_plot_alignment_builds_chart():
+    seeds = [f"chapter-{i}-unique-content" for i in range(4)]
+    pages_df, zip_pages_df = _make_shifted_frames(
+        page_orders=[1, 2, 3, 4], zip_orders=[11, 12, 13, 14], seeds=seeds
+    )
+    detailed = align_shifted_pages(pages_df, zip_pages_df, detailed=True)
+
+    chart = plot_alignment(detailed)
+
+    # a valid vega-lite spec with the line + points layers
+    spec = chart.to_dict()
+    assert "layer" in spec
+    assert len(spec["layer"]) == 2
+    # long-form data: an "original" row point per page plus a "mapped zip" row
+    # point per matched page (all 4 match here) -> 8 rows
+    rows = chart.data["row"].to_list()
+    assert rows.count("original") == 4
+    assert rows.count("mapped zip") == 4
+    # hover snippet + length carried into the plot data
+    assert {"snippet", "snippet_len"} <= set(chart.data.columns)
+
+
+def test_plot_alignment_unmatched_pages_have_no_zip_point():
+    # an unmatched page appears only on the original row (no zip point/line)
+    seeds = [f"chapter-{i}-unique-content" for i in range(4)]
+    pages_df = pl.DataFrame(
+        {
+            "id": [f"work.{o:08d}" for o in range(1, 5)],
+            "order": [1, 2, 3, 4],
+            "text": [_long_text(s) for s in seeds],
+        }
+    )
+    # zip only has 3 pages, so one original page can't map -> unmatched
+    zip_pages_df = pl.DataFrame(
+        {
+            "page_filename": ["00000011", "00000012", "00000013"],
+            "order": [11, 12, 13],
+            "text": [_long_text(s) for s in seeds[:3]],
+        }
+    )
+    detailed = align_shifted_pages(pages_df, zip_pages_df, detailed=True)
+    n_matched = int(detailed["is_matched"].sum())
+
+    chart = plot_alignment(detailed)
+    rows = chart.data["row"].to_list()
+
+    # every page has an original-row point; only matched pages get a zip point
+    assert rows.count("original") == detailed.height
+    assert rows.count("mapped zip") == n_matched
+    # unmatched pages have null zip text length
+    assert detailed.filter(~pl.col.is_matched)["zip_text_len"].null_count() == (
+        detailed.height - n_matched
+    )
+
+
+def test_plot_alignment_x_domain_limited_to_plotted_pages():
+    # excerpt-like: only a few corpus pages, but the zip spans the whole volume.
+    # the x-axis domain should track the plotted pages, not the full zip range.
+    seeds = [f"chapter-{i}-unique-content" for i in range(3)]
+    pages_df = pl.DataFrame(
+        {
+            "id": ["work.00000100", "work.00000101", "work.00000250"],
+            "order": [100, 101, 250],
+            "text": [_long_text(s) for s in seeds],
+        }
+    )
+    zip_orders = list(range(1, 301))
+    zip_text = ["junk page"] * 300
+    zip_text[99] = _long_text(seeds[0])
+    zip_text[100] = _long_text(seeds[1])
+    zip_text[249] = _long_text(seeds[2])
+    zip_pages_df = pl.DataFrame(
+        {
+            "page_filename": [f"{o:08d}" for o in zip_orders],
+            "order": zip_orders,
+            "text": zip_text,
+        }
+    )
+    detailed = align_shifted_pages(pages_df, zip_pages_df, detailed=True)
+
+    chart = plot_alignment(detailed)
+    spec = chart.to_dict()
+
+    # x domain should be near [100, 250] (plotted pages), not [1, 300] (full zip)
+    for layer in spec["layer"]:
+        domain = layer["encoding"]["x"]["scale"]["domain"]
+        assert domain[0] >= 95
+        assert domain[1] <= 255
 
 
 # --- main / --continue ---

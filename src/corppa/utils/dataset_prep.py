@@ -123,6 +123,27 @@ MATCH_SCORE_MARGIN = 3
 # a best match at or above this ratio is treated as an unambiguous match and
 # trusted regardless of the runner-up margin (near-exact text match)
 MATCH_SCORE_STRONG = 99
+# max characters of page text to include in the detailed-frame hover snippet
+TEXT_SNIPPET_LEN = 80
+
+
+def _text_snippet_expr(col: str) -> pl.Expr:
+    """Polars expression for a short hover-friendly snippet of a text column:
+    the first non-empty line, whitespace-collapsed and truncated to
+    ``TEXT_SNIPPET_LEN`` characters (with an ellipsis when truncated)."""
+    # first non-empty line: strip leading blank lines, then take up to the next newline
+    first_line = (
+        pl.col(col)
+        .str.replace_all(r"^\s+", "")  # drop leading whitespace/blank lines
+        .str.extract(r"^([^\n]*)")  # everything up to the first newline
+        .str.replace_all(r"\s+", " ")  # collapse internal whitespace
+        .str.strip_chars()
+    )
+    return (
+        pl.when(first_line.str.len_chars() > TEXT_SNIPPET_LEN)
+        .then(first_line.str.slice(0, TEXT_SNIPPET_LEN) + pl.lit("…"))
+        .otherwise(first_line)
+    )
 
 
 def longest_increasing_subseq(values: np.ndarray) -> np.ndarray:
@@ -187,7 +208,9 @@ def longest_increasing_subseq(values: np.ndarray) -> np.ndarray:
     return np.array(result[::-1], dtype=int)
 
 
-def align_shifted_pages(pages_df: pl.DataFrame, zip_pages_df: pl.DataFrame):
+def align_shifted_pages(
+    pages_df: pl.DataFrame, zip_pages_df: pl.DataFrame, detailed: bool = False
+):
     """Align corpus pages to zip page filenames when page order has shifted
     between versions. Shifts are determined by matching pages with sufficient text
     in the first dataframe to pages in the zip file using normalized indel similarity
@@ -197,11 +220,38 @@ def align_shifted_pages(pages_df: pl.DataFrame, zip_pages_df: pl.DataFrame):
 
     Returns a DataFrame with ``id`` and ``page_filename`` columns where each row
     is the determined alignment; returns an empty dataframe if alignment could not be determined.
-    ."""
+
+    When ``detailed`` is True, the returned frame instead includes the per-page
+    diagnostic columns useful for reviewing/visualizing an alignment:
+    ``id``, ``order`` (original page order), ``aligned_order`` (mapped zip order),
+    ``page_filename``, ``match_score`` (fuzz ratio for the resolved match, 0-100),
+    ``shift`` (trusted anchor shift, null for filled pages), ``inferred_shift``
+    (shift actually applied), ``is_anchor`` (page anchored the shift),
+    ``is_matched`` (resolved to a real zip page), ``text_len`` (original page
+    character count), and ``zip_text_len`` (matched zip page character count).
+    """
     # empty mapping frame, used as the early-return value when no long pages
-    # clear the filter or no reliable shift can be determined
+    # clear the filter or no reliable shift can be determined. detailed callers
+    # get the diagnostic schema; the pipeline gets the minimal id/filename schema.
+    detailed_schema = {
+        "id": pl.String,
+        "order": pl.Int64,
+        "aligned_order": pl.Int64,
+        "page_filename": pl.String,
+        "match_score": pl.Float64,
+        "shift": pl.Float64,
+        "inferred_shift": pl.Float64,
+        "is_anchor": pl.Boolean,
+        "is_matched": pl.Boolean,
+        "text_len": pl.UInt32,
+        "zip_text_len": pl.UInt32,
+        "text_snippet": pl.String,
+        "zip_text_snippet": pl.String,
+    }
     empty_mapping_df = pl.DataFrame(
-        schema={"id": pl.String, "page_filename": pl.String}
+        schema=detailed_schema
+        if detailed
+        else {"id": pl.String, "page_filename": pl.String}
     )
 
     # sort by order and keep the full (unfiltered) set; short pages still need
@@ -412,6 +462,31 @@ def align_shifted_pages(pages_df: pl.DataFrame, zip_pages_df: pl.DataFrame):
     if aligned.len() > 1 and not (aligned.diff().drop_nulls() > 0).all():
         logger.warning("aligned page order is not monotonic (pages out of order)")
 
+    if detailed:
+        # build the diagnostic frame for notebook review/visualization. match_score
+        # only exists when the dedup block ran (>=1 match); default it otherwise.
+        if "match_score" not in page_mapping_df.columns:
+            page_mapping_df = page_mapping_df.with_columns(
+                match_score=pl.lit(None, dtype=pl.Float64)
+            )
+        return (
+            page_mapping_df.with_columns(
+                # a page is an anchor if it contributed a trusted (non-null) shift;
+                # is_matched reflects the final (post-dedup) filename assignment
+                is_anchor=pl.col.shift.is_not_null(),
+                is_matched=pl.col.page_filename.is_not_null(),
+                # character counts for the original page and its matched zip page
+                # (zip_text is null for unmatched pages, so its length is null too)
+                text_len=pl.col.text.str.len_chars(),
+                zip_text_len=pl.col.zip_text.str.len_chars(),
+                # short first-line snippets for hover text (zip is null if unmatched)
+                text_snippet=_text_snippet_expr("text"),
+                zip_text_snippet=_text_snippet_expr("zip_text"),
+            )
+            .select(list(detailed_schema.keys()))
+            .sort("order")
+        )
+
     return page_mapping_df.select(["id", "page_filename"])
 
 
@@ -470,6 +545,156 @@ def align_pages(work_id: str, pages_df: pl.DataFrame, zipfile: ZipFile) -> dict:
     }
 
 
+def review_alignment(
+    work_id: str,
+    pages: pl.DataFrame | list[dict],
+    zipfile: ZipFile | Path | str,
+) -> pl.DataFrame:
+    """Run the shifted-page alignment for a single work and return the detailed
+    per-page frame for review/visualization (see ``align_shifted_pages`` for the
+    columns). Intended for notebook use.
+
+    ``pages`` may be a page DataFrame (with ``id``, ``order``/``text`` columns) or
+    a list of page dicts; ``zipfile`` may be an open ``ZipFile`` or a path to one.
+    """
+    pages_df = pages if isinstance(pages, pl.DataFrame) else pl.DataFrame(pages)
+    # add an order column (numeric trailing page id) if the caller didn't supply one
+    if "order" not in pages_df.columns:
+        pages_df = pages_df.with_columns(
+            order=pl.col.id.str.extract(r"([0-9]+$)").cast(pl.Int64)
+        )
+
+    # accept an open ZipFile or a path; open+close our own handle for a path
+    if isinstance(zipfile, ZipFile):
+        zip_pages_df = get_zipfile_pages(zipfile)
+    else:
+        with ZipFile(zipfile) as zf:
+            zip_pages_df = get_zipfile_pages(zf)
+
+    logger.info("reviewing alignment for %s (%d pages)", work_id, pages_df.height)
+    return align_shifted_pages(pages_df, zip_pages_df, detailed=True)
+
+
+def plot_alignment(review_df: pl.DataFrame):
+    """Visualize a detailed alignment frame (from ``review_alignment`` or
+    ``align_shifted_pages(..., detailed=True)``) as an Altair chart.
+
+    Original pages are drawn on one row and their mapped zip pages on a second
+    row, both positioned by page order along x. A line connects each original
+    page to the zip page it maps to, so the horizontal offset of that line is the
+    shift; parallel lines mean a consistent shift, and crossings/gaps stand out.
+    Points are colored by alignment status (anchor / inferred / unmatched) and
+    sized by match score. Hover shows the page ids, orders, score, and text
+    lengths. Unmatched pages have no zip point or connecting line.
+
+    Requires ``altair`` (install the ``notebooks`` extra).
+    """
+    try:
+        import altair as alt
+    except ImportError as err:  # pragma: no cover - notebook-only dependency
+        raise ImportError(
+            "plot_alignment requires altair; install the 'notebooks' extra "
+            "(pip install 'corppa[notebooks]')"
+        ) from err
+
+    # readable status for color/legend
+    prepared = review_df.with_columns(
+        status=pl.when(~pl.col.is_matched)
+        .then(pl.lit("unmatched"))
+        .when(pl.col.is_anchor)
+        .then(pl.lit("anchor"))
+        .otherwise(pl.lit("inferred"))
+    )
+
+    # reshape to long form: two points per page, one on the "original" row (x =
+    # original order) and one on the "mapped zip" row (x = aligned order). Sharing
+    # the page id lets a line connect them; the horizontal gap is the shift.
+    orig_points = prepared.select(
+        pl.col.id,
+        row=pl.lit("original"),
+        x=pl.col.order,
+        status=pl.col.status,
+        match_score=pl.col.match_score,
+        # snippet/length reflect this row's own text (original page)
+        snippet=pl.col.text_snippet,
+        snippet_len=pl.col.text_len,
+        page_order=pl.col.order,
+        mapped_order=pl.col.aligned_order,
+    )
+    # only matched pages get a mapped-zip point / connecting line
+    zip_points = prepared.filter(pl.col.is_matched).select(
+        pl.col.id,
+        row=pl.lit("mapped zip"),
+        x=pl.col.aligned_order,
+        status=pl.col.status,
+        match_score=pl.col.match_score,
+        # snippet/length reflect this row's own text (matched zip page)
+        snippet=pl.col.zip_text_snippet,
+        snippet_len=pl.col.zip_text_len,
+        page_order=pl.col.order,
+        mapped_order=pl.col.aligned_order,
+    )
+    plot_df = pl.concat([orig_points, zip_points])
+
+    status_scale = alt.Scale(
+        domain=["anchor", "inferred", "unmatched"],
+        range=["#1b9e77", "#7570b3", "#d95f02"],
+    )
+    # keep the two rows in a fixed top/bottom order
+    row_scale = alt.Scale(domain=["original", "mapped zip"])
+
+    # constrain the x-axis to the pages actually plotted. For excerpts the zip
+    # holds the whole volume while only a few excerpt pages are present, so an
+    # auto-domain would stretch across the full volume and squash the points;
+    # derive the domain from the plotted orders (both rows) with a little padding.
+    x_vals = plot_df["x"].drop_nulls()
+    x_min, x_max = x_vals.min(), x_vals.max()
+    pad = max(1, round((x_max - x_min) * 0.02))
+    x_scale = alt.Scale(domain=[x_min - pad, x_max + pad], nice=False)
+
+    tooltip = [
+        alt.Tooltip("id:N", title="page id"),
+        alt.Tooltip("row:N", title="side"),
+        alt.Tooltip("page_order:Q", title="orig order"),
+        alt.Tooltip("mapped_order:Q", title="mapped zip order"),
+        alt.Tooltip("match_score:Q", title="match score", format=".1f"),
+        alt.Tooltip("status:N", title="status"),
+        alt.Tooltip("snippet_len:Q", title="text len"),
+        alt.Tooltip("snippet:N", title="text"),
+    ]
+
+    # altair 5+ accepts a polars DataFrame directly via the dataframe interchange
+    # protocol, so no pandas conversion is needed
+    base = alt.Chart(plot_df)
+
+    # connecting line between each page's two points (drawn only for matched pages,
+    # which are the only ones with both endpoints)
+    lines = base.mark_line(opacity=0.4).encode(
+        x=alt.X("x:Q", title="page order", scale=x_scale),
+        y=alt.Y("row:N", scale=row_scale, title=None),
+        detail="id:N",
+        color=alt.Color("status:N", scale=status_scale, title="alignment"),
+    )
+    points = base.mark_circle().encode(
+        x=alt.X("x:Q", title="page order", scale=x_scale),
+        y=alt.Y("row:N", scale=row_scale, title=None),
+        color=alt.Color("status:N", scale=status_scale, title="alignment"),
+        size=alt.Size(
+            "match_score:Q", title="match score", scale=alt.Scale(range=[20, 200])
+        ),
+        tooltip=tooltip,
+    )
+    return (
+        (lines + points)
+        .properties(
+            width=700,
+            height=200,
+            title="page alignment (original vs mapped zip order)",
+        )
+        .interactive()
+    )
+
+
 def process_work(
     work_id: str, pages: list[dict], image_dir: Path, tar: tarfile.TarFile
 ) -> Iterator[dict]:
@@ -516,14 +741,22 @@ def process_gale_work(
         yield from pages
 
 
+def get_ht_zipfile_path(work_id: str, image_dir: Path) -> Path:
+    """Return the expected HathiTrust zip path for a work under ``image_dir``.
+    The zip is named from the (encoded) HathiTrust id without institution prefix."""
+    htid = get_volume_id(work_id)
+    # must be encoded to convert ark style ids to a file-safe format
+    encoded = encode_htid(htid)
+    htid_suffix = encoded.split(".")[-1]
+    return image_dir / "HathiTrust" / encoded / f"{htid_suffix}.zip"
+
+
 def process_ht_work(
     work_id: str, pages: list[dict], image_dir: Path, tar: tarfile.TarFile
 ) -> Iterator[dict]:
     htid = get_volume_id(work_id)
-    # zip file is named based on id without institution prefix
-    # must be encoded to convert ark style ids to file safe format
     htid_suffix = encode_htid(htid).split(".")[-1]
-    zipfile_path = image_dir / "HathiTrust" / encode_htid(htid) / f"{htid_suffix}.zip"
+    zipfile_path = get_ht_zipfile_path(work_id, image_dir)
     if not zipfile_path.exists():
         # logger.warning("zipfile %s does not exist, omitting images", zipfile_path)
         # yield pages without image paths
