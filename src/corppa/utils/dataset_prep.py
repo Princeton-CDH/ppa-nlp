@@ -78,6 +78,9 @@ def get_zipfile_pages(zipfile) -> pl.DataFrame:
             order=pl.col.page_id.cast(pl.Int64),
             text_len=pl.col.text.str.len_chars(),
         )
+        .sort(
+            "order"
+        )  # ensure pages are sorted in logical order, since zipfile does not guarantee this
     )
 
 
@@ -147,8 +150,12 @@ def _text_snippet_expr(col: str) -> pl.Expr:
 
 
 def longest_increasing_subseq(values: np.ndarray) -> np.ndarray:
-    """Return the indices (into ``values``) of a longest *strictly* increasing
-    subsequence, keeping the earliest such subsequence when several tie in length.
+    """Return the indices (into ``values``) of the longest *strictly* increasing
+    subsequence; return the first sequence when there is a tie for longest subsequence.
+
+    Used to by `align_shifted_pages` to filter high-confidence mapping to
+    a set of "anchor" matches to enforce sequential alignment while allowing
+    for gaps on either side.
 
     We use this to reduce a set of candidate page matches down to a monotonic,
     conflict-free set of "anchors". Each confident match pairs an original page
@@ -310,40 +317,36 @@ def align_shifted_pages(
         (best_score >= MATCH_SCORE_STRONG)
         | ((best_score - second_score) >= MATCH_SCORE_MARGIN)
     )
+    if not confident.any():
+        # bail out if no long page produced a confident, unambiguous match
+        logger.warning("No high-confidence matches found; cannot determine page shift")
+        return empty_mapping_df
 
-    # confident matches are only *candidate* anchors: taken independently, two
-    # original pages can still claim the same zip page (e.g. repeated boilerplate)
-    # or a spurious match can point backwards. Keep only a monotonic, conflict-free
-    # subset before trusting any shifts.
-    # long_pages_df is sorted by order, so positions are already in original-page
-    # order; conf_pos are the row indices of confident matches, conf_cols their
-    # matched zip-page column indices in that same order.
-    conf_pos = np.flatnonzero(confident)
-    conf_cols = best_idx[conf_pos]
-    # keep only a strictly-increasing run of zip columns: guarantees anchors stay
-    # in sequence and each zip page is claimed at most once (see helper docstring)
-    keep = longest_increasing_subseq(conf_cols)
-    trusted_pos = conf_pos[keep]
+    # Treat confident as candidate anchors, then filter to a strictly increasing sequence
+    # to remove duplicate and out-of-order mappings.
+    conf_pos = np.flatnonzero(confident)  # row indices of high-confidence matches
+    conf_zip_cols = best_idx[conf_pos]  # matrix columns for high-confidence matches
 
-    # shift is defined as zip order minus original order, so the aligned zip
-    # order for a page is recovered by original order + shift. Only the surviving
-    # anchors get a trusted shift; every other page is filled from its neighbors.
+    # Now filter zip page orders for high-confidence matches to strictly-increasing subset;
+    # this results in a set of anchor mappings that follow sequence
+    anchors = longest_increasing_subseq(zip_orders[conf_zip_cols])
+    trusted_pos = conf_pos[anchors]
+
+    # shift = zip order - original order
+    # aligned order = original order + shift.
+    # Use high-confidence sequential anchors to calculate an array of trusted shifts
     trusted_shift = np.full(scores.shape[0], np.nan)
     trusted_shift[trusted_pos] = (
         zip_orders[best_idx[trusted_pos]] - long_orders[trusted_pos]
     )
 
     long_shift_df = long_pages_df.select("order").with_columns(
-        # NaN marks pages without confident matches; convert to nulls so we can forward/back fill
+        # shift for pages without trusted shift is NaN; convert to null to set up forward/back fill
         shift=pl.Series(trusted_shift).fill_nan(None)
     )
-    if long_shift_df["shift"].drop_nulls().is_empty():
-        # no long page produced a confident, unambiguous match
-        logger.warning("No high-confidence matches found; cannot determine page shift")
-        return empty_mapping_df
 
-    # combine the high-confidence alignment shift values into the full page dataframe;
-    # left join to keep all pages; shift is null for short pages & low-confidence matches
+    # pull the trusted shift shift values into the full page dataframe;
+    # use a left join to keep all pages; shift is null for all but high-confidence sequential anchor pages
     pages_shift_df = orig_pages_df.join(
         long_shift_df, on="order", how="left"
     ).with_columns(
@@ -365,7 +368,10 @@ def align_shifted_pages(
         how="left",
     )
 
-    # summarize the shift for logging output when info-level is enabled; done
+    # Summarize the shift for logging output when info-level is enabled.
+    # Filter by pages with matched filenames to omit any pages with shift values
+    # that don't correspond to actual pages (i.e., negative shift values for missing start pages).
+    #
     # after the join so we can report the mapped (zip) page range that actually
     # matched. A non-null page_filename means aligned_order joined to a real zip
     # page, so filtering on it excludes raw aligned_orders that fall outside the
@@ -379,15 +385,16 @@ def align_shifted_pages(
                 n_pages=pl.len(),
                 orders=pl.col.order,
                 mapped_orders=pl.col.aligned_order,
-                # first original page in each group, to sort shifts into reading order
+                # first original page in each group, for sorting
                 first_order=pl.col.order.min(),
             )
-            # sort by first page so shift groups read in sequential page order
+            # sort by first page so groups will be output in sequential page order
             .sort("first_order")
         )
-        # count how many alignments were inferred
+        # count how many alignments were inferred (inferred shift but no shift)
         num_inferred = page_mapping_df.filter(pl.col.shift.is_null()).height
         pct_inferred = f"{num_inferred / pages_df.height:.1%}"
+        num_unmatched = page_mapping_df.filter(pl.col.page_filename.is_null()).height
         # use intspan to combine the list of pages into a readable format;
         # report both the original page range and the mapped (zip) page range
         shift_summary = "; ".join(
@@ -397,13 +404,15 @@ def align_shifted_pages(
             for row in shift_summary_df.iter_rows(named=True)
         )
         logger.info(
-            "page shift: %s \t%d alignment%s inferred (%s)",
+            "page shift: %s \t%d alignment%s inferred (%s); %d page%s unmatched",
             shift_summary,
             num_inferred,
-            ""
-            if num_inferred == 1
-            else "s",  # conditionallypluralize inferred alignment
+            # conditionally pluralize inferred alignment
+            "" if num_inferred == 1 else "s",
             pct_inferred,
+            num_unmatched,
+            # conditionally pluralize number of unmatched pages
+            "" if num_unmatched == 1 else "s",
         )
 
     # Enforce a strict 1:1 mapping: the forward/back-fill of shifts can make two
