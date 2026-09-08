@@ -231,7 +231,7 @@ def align_shifted_pages(
     When ``detailed`` is True, the returned frame instead includes the per-page
     diagnostic columns useful for reviewing/visualizing an alignment:
     ``id``, ``order`` (original page order), ``aligned_order`` (mapped zip order),
-    ``page_filename``, ``match_score`` (fuzz ratio for the resolved match, 0-100),
+    ``page_filename``, ``match_score`` (fuzz ratio for the resolved match, 0-1),
     ``shift`` (trusted anchor shift, null for filled pages), ``inferred_shift``
     (shift actually applied), ``is_anchor`` (page anchored the shift),
     ``is_matched`` (resolved to a real zip page), ``text_len`` (original page
@@ -368,14 +368,45 @@ def align_shifted_pages(
         how="left",
     )
 
+    # Check for and resolve any duplicate file mappings.
+    # The forward/back-fill based on anchor shifts can make result in two adjacent
+    # pages mapping to the *same* aligned zip page at a shift boundary,
+    # since LIS only dedupes anchors.
+    # If there are any non-null duplicate filenames, use rapidfuzz to choose
+    # which page to match and which page to leave unmatched.
+    is_dupe = pl.col.page_filename.is_not_null() & pl.col.page_filename.is_duplicated()
+    if page_mapping_df.select(is_dupe.any()).item():
+        page_mapping_df = page_mapping_df.with_columns(
+            # score only the duplicate claimants against their zip page; unique
+            # matches keep their filename regardless, so they need no score.
+            # parallel=False: keep single-threaded (see align_pages note).
+            match_score=pl.when(is_dupe)
+            .then(pds.str_fuzz("text", "zip_text", parallel=False))
+            .otherwise(None)
+        ).with_columns(
+            # Among the pages claiming the same filename, keep the best-scoring
+            # (order as deterministic tiebreak) and clear the filename on the rest.
+            # rank("ordinal") must be ascending (rank 1 = smallest); negate
+            # match_score to make the *highest* score rank 1; order is already ascending
+            # so the earliest page wins ties.
+            page_filename=pl.when(
+                ~is_dupe
+                | (
+                    pl.struct(score=-pl.col.match_score, order=pl.col.order)
+                    .rank("ordinal")
+                    .over("page_filename")
+                    == 1
+                )
+            )
+            .then(pl.col.page_filename)
+            .otherwise(None)
+        )
+
     # Summarize the shift for logging output when info-level is enabled.
-    # Filter by pages with matched filenames to omit any pages with shift values
-    # that don't correspond to actual pages (i.e., negative shift values for missing start pages).
-    #
-    # after the join so we can report the mapped (zip) page range that actually
-    # matched. A non-null page_filename means aligned_order joined to a real zip
-    # page, so filtering on it excludes raw aligned_orders that fall outside the
-    # zip range (e.g. negative) for over-extended inferred shifts.
+    # A non-null page_filename means aligned_order joined to a real zip page, so
+    # filtering on it reports the mapped (zip) page range that actually matched
+    # and excludes raw aligned_orders that fall outside the zip range (e.g.
+    # negative) for over-extended inferred shifts or pages dropped by dedup above.
     if logger.isEnabledFor(logging.INFO):
         shift_summary_df = (
             # only pages that joined to a real zip page contribute a mapped order
@@ -415,40 +446,6 @@ def align_shifted_pages(
             "" if num_unmatched == 1 else "s",
         )
 
-    # Enforce a strict 1:1 mapping: the forward/back-fill of shifts can make two
-    # adjacent original pages resolve to the *same* aligned zip page at a shift
-    # boundary (LIS only dedupes anchors, not filled pages). When that happens,
-    # keep the page whose text actually matches the zip page best and drop the
-    # filename from the rest so no zip image is assigned to more than one page.
-    if page_mapping_df.filter(pl.col.page_filename.is_not_null()).height:
-        page_mapping_df = (
-            page_mapping_df.with_columns(
-                # actual similarity between each page's text and the zip page it
-                # resolved to; null (no filename) rows score null and never win.
-                # parallel=False: keep single-threaded (see align_pages note).
-                match_score=pl.when(pl.col.page_filename.is_not_null())
-                .then(pds.str_fuzz("text", "zip_text", parallel=False))
-                .otherwise(None)
-            )
-            .with_columns(
-                # rank claimants of the same zip filename by score (desc), then by
-                # original order (asc) as a deterministic tiebreak. rank is null
-                # for unmapped pages, which we treat as "keep" (nothing to dedupe).
-                claim_rank=pl.struct(score=-pl.col.match_score, order=pl.col.order)
-                .rank("ordinal")
-                .over("page_filename"),
-            )
-            .with_columns(
-                # only the top-ranked (rank == 1) claimant keeps the filename;
-                # losing duplicates have their filename cleared
-                page_filename=pl.when(
-                    pl.col.page_filename.is_null() | (pl.col.claim_rank == 1)
-                )
-                .then(pl.col.page_filename)
-                .otherwise(None)
-            )
-        )
-
     # sanity-check the alignment; warn (but don't fail) on anything suspicious so
     # a questionable mapping is surfaced without halting the whole run.
     matched = page_mapping_df.filter(pl.col.page_filename.is_not_null())
@@ -472,12 +469,14 @@ def align_shifted_pages(
         logger.warning("aligned page order is not monotonic (pages out of order)")
 
     if detailed:
-        # build the diagnostic frame for notebook review/visualization. match_score
-        # only exists when the dedup block ran (>=1 match); default it otherwise.
-        if "match_score" not in page_mapping_df.columns:
-            page_mapping_df = page_mapping_df.with_columns(
-                match_score=pl.lit(None, dtype=pl.Float64)
-            )
+        # build the diagnostic frame for notebook review/visualization. the dedup
+        # step only scores duplicate claimants, but review wants a score for every
+        # matched page (e.g. to size plot points), so (re)compute it for all here.
+        page_mapping_df = page_mapping_df.with_columns(
+            match_score=pl.when(pl.col.page_filename.is_not_null())
+            .then(pds.str_fuzz("text", "zip_text", parallel=False))
+            .otherwise(None)
+        )
         return (
             page_mapping_df.with_columns(
                 # a page is an anchor if it contributed a trusted (non-null) shift;

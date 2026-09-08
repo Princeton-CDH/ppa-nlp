@@ -702,6 +702,20 @@ def test_align_shifted_pages_fill_boundary_duplicate_resolved():
     assert mapping["work.00000004"] == "00000013"
 
 
+def test_align_shifted_pages_skips_scoring_when_no_duplicates():
+    # dedup only needs to score pages that share a zip filename; when the mapping
+    # is already 1:1, str_fuzz should not be called at all (non-detailed path).
+    seeds = [f"chapter-{i}-unique-content" for i in range(4)]
+    pages_df, zip_pages_df = _make_shifted_frames(
+        page_orders=[1, 2, 3, 4], zip_orders=[11, 12, 13, 14], seeds=seeds
+    )
+
+    with patch("corppa.utils.dataset_prep.pds.str_fuzz") as mock_fuzz:
+        align_shifted_pages(pages_df, zip_pages_df)
+
+    mock_fuzz.assert_not_called()
+
+
 def test_align_shifted_pages_includes_head_pages():
     # Pages before the first anchor are typically short pages that got
     # filtered out. They must still be included in the mapping via the
