@@ -508,7 +508,7 @@ def align_pages(work_id: str, pages_df: pl.DataFrame, zipfile: ZipFile) -> dict:
     # as a way to check the overall alignment between the two sets of pages
     avg = pages_join_df["text_match"].mean()
     logger.info(
-        f"{work_id: <30} {pages_df.height:> 4,} pages; average indel similarity score: {avg:.3f}"
+        f"{work_id: <30} {pages_df.height:> 5,} pages; average indel similarity score: {avg:.3f}"
     )
     # at least one 0.87 is visibly correct alignment; use same cutoff as for the
     # shift alignment, but adjust for the 0-1 score rather than 1-100 like cdist
