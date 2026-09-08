@@ -153,15 +153,15 @@ def longest_increasing_subseq(values: np.ndarray) -> np.ndarray:
     """Return the indices (into ``values``) of the longest *strictly* increasing
     subsequence; return the first sequence when there is a tie for longest subsequence.
 
-    Used to by `align_shifted_pages` to filter high-confidence mapping to
-    a set of "anchor" matches to enforce sequential alignment while allowing
-    for gaps on either side.
+    Used by `align_shifted_pages` to filter high-confidence mappings down to a
+    set of "anchor" matches that enforce sequential alignment while allowing for
+    gaps on either side.
 
     We use this to reduce a set of candidate page matches down to a monotonic,
     conflict-free set of "anchors". Each confident match pairs an original page
-    with a zip page (identified by its column index in the score matrix). Reading
-    those zip-page indices in original-page order, a valid alignment must be
-    strictly increasing: later original pages can only map to later zip pages,
+    with a zip page (identified by its ``order``, the digital page sequence).
+    Reading those zip page orders in original-page order, a valid alignment must
+    be strictly increasing: later original pages can only map to later zip pages,
     and each zip page may be claimed at most once (strict increase => no repeats).
     Any confident match that would break that ordering - e.g. repeated boilerplate
     pages that all matched the same zip page, or a match that jumps backwards - is

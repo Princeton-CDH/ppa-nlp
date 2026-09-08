@@ -20,6 +20,7 @@ from corppa.utils.dataset_prep import (
     align_shifted_pages,
     get_ht_zipfile_path,
     get_zip_textfiles,
+    get_zipfile_pages,
     longest_increasing_subseq,
     main,
     plot_alignment,
@@ -127,6 +128,25 @@ def test_get_zip_textfiles_utf8_content(tmp_path):
     content = "café naïve résumé"
     with ZipFile(make_zip(tmp_path, {"00000001.txt": content})) as zf:
         assert list(get_zip_textfiles(zf)) == [("00000001", content)]
+
+
+# --- get_zipfile_pages ---
+
+
+def test_get_zipfile_pages_sorted_by_order(tmp_path):
+    # zip entry order (namelist) is not guaranteed to be page order; non-padded
+    # names like 2/10/11/100 also sort differently by string than by number.
+    # get_zipfile_pages must return rows sorted ascending by numeric order.
+    files = {
+        "100.txt": "page one hundred",
+        "2.txt": "page two",
+        "11.txt": "page eleven",
+        "10.txt": "page ten",
+    }
+    with ZipFile(make_zip(tmp_path, files)) as zf:
+        df = get_zipfile_pages(zf)
+
+    assert df["order"].to_list() == [2, 10, 11, 100]
 
 
 # --- add_zip_file_to_tar ---
@@ -863,12 +883,16 @@ def test_align_shifted_pages_logs_unmatched_pages(caplog):
 
 
 def test_align_shifted_pages_non_monotonic_warns(caplog):
-    # later original pages align to earlier zip pages: sorting by original order,
-    # aligned_order goes backwards (11,12 then 3,4) -> should warn.
-    seeds = [f"chapter-{i}-unique-content" for i in range(4)]
+    # LIS filters anchors to a strictly increasing (by zip order) run, so a purely
+    # backwards tail (e.g. 11,12 then 3,4) is now dropped rather than aligned.
+    # A non-monotonic *matched* result can still slip through fill/dedup when the
+    # tail zip orders decrease within an otherwise-increasing anchor set; here
+    # 10,11,12 then 15,14,13 leaves later pages aligning to earlier zip pages,
+    # which the monotonic sanity-check should warn about.
+    seeds = [f"chapter-{i}-unique-content" for i in range(6)]
     pages_df, zip_pages_df = _make_shifted_frames(
-        page_orders=[1, 2, 3, 4],
-        zip_orders=[11, 12, 3, 4],
+        page_orders=[1, 2, 3, 4, 5, 6],
+        zip_orders=[10, 11, 12, 15, 14, 13],
         seeds=seeds,
     )
 
@@ -876,6 +900,34 @@ def test_align_shifted_pages_non_monotonic_warns(caplog):
         align_shifted_pages(pages_df, zip_pages_df)
 
     assert "aligned page order is not monotonic" in caplog.text
+
+
+def test_align_shifted_pages_independent_of_zip_row_order():
+    # Regression: LIS anchoring must depend on zip page *order* values, not on the
+    # row position of the zip pages in the dataframe. Non-zero-padded page orders
+    # (2, 10, 11, 100) sort differently by filename string than by number, so
+    # feeding the zip rows in filename (lexicographic) order previously corrupted
+    # the anchor selection. The mapping must be identical regardless of row order.
+    seeds = [f"chapter-{i}-unique-content" for i in range(4)]
+    page_orders = [1, 2, 3, 4]
+    zip_orders = [2, 10, 11, 100]
+    pages_df, zip_asc = _make_shifted_frames(page_orders, zip_orders, seeds)
+    # scramble the zip rows into filename (lexicographic) order: 10, 100, 11, 2
+    zip_lex = zip_asc.sort("page_filename")
+
+    result_asc = align_shifted_pages(pages_df, zip_asc)
+    result_lex = align_shifted_pages(pages_df, zip_lex)
+
+    mapping_asc = dict(result_asc.select(["id", "page_filename"]).iter_rows())
+    mapping_lex = dict(result_lex.select(["id", "page_filename"]).iter_rows())
+    # both row orders produce the same, fully-aligned mapping
+    assert mapping_asc == mapping_lex
+    assert mapping_asc == {
+        "work.00000001": "00000002",
+        "work.00000002": "00000010",
+        "work.00000003": "00000011",
+        "work.00000004": "00000100",
+    }
 
 
 def test_align_pages_underscore_page_id(aligned_zip):
