@@ -127,25 +127,23 @@ MATCH_SCORE_MARGIN = 3
 # trusted regardless of the runner-up margin (near-exact text match)
 MATCH_SCORE_STRONG = 99
 # max characters of page text to include in the detailed-frame hover snippet
-TEXT_SNIPPET_LEN = 80
+TEXT_SNIPPET_LEN = 140
 
 
 def _text_snippet_expr(col: str) -> pl.Expr:
     """Polars expression for a short hover-friendly snippet of a text column:
-    the first non-empty line, whitespace-collapsed and truncated to
-    ``TEXT_SNIPPET_LEN`` characters (with an ellipsis when truncated)."""
-    # first non-empty line: strip leading blank lines, then take up to the next newline
-    first_line = (
+    all whitespace (including newlines) collapsed to single spaces, then
+    truncated to ``TEXT_SNIPPET_LEN`` characters (with an ellipsis when
+    truncated). Newlines are ignored so the snippet reads as one line."""
+    consolidated = (
         pl.col(col)
-        .str.replace_all(r"^\s+", "")  # drop leading whitespace/blank lines
-        .str.extract(r"^([^\n]*)")  # everything up to the first newline
-        .str.replace_all(r"\s+", " ")  # collapse internal whitespace
+        .str.replace_all(r"\s+", " ")  # collapse all whitespace (incl. newlines)
         .str.strip_chars()
     )
     return (
-        pl.when(first_line.str.len_chars() > TEXT_SNIPPET_LEN)
-        .then(first_line.str.slice(0, TEXT_SNIPPET_LEN) + pl.lit("…"))
-        .otherwise(first_line)
+        pl.when(consolidated.str.len_chars() > TEXT_SNIPPET_LEN)
+        .then(consolidated.str.slice(0, TEXT_SNIPPET_LEN) + pl.lit("…"))
+        .otherwise(consolidated)
     )
 
 
@@ -231,29 +229,33 @@ def align_shifted_pages(
     When ``detailed`` is True, the returned frame instead includes the per-page
     diagnostic columns useful for reviewing/visualizing an alignment:
     ``id``, ``order`` (original page order), ``aligned_order`` (mapped zip order),
-    ``page_filename``, ``match_score`` (fuzz ratio for the resolved match, 0-1),
-    ``shift`` (trusted anchor shift, null for filled pages), ``inferred_shift``
-    (shift actually applied), ``is_anchor`` (page anchored the shift),
-    ``is_matched`` (resolved to a real zip page), ``text_len`` (original page
-    character count), and ``zip_text_len`` (matched zip page character count).
+    ``page_filename``, ``cdist_best_score`` (best rapidfuzz.cdist score, 0-100,
+    for every scored/long page; null for short pages), ``shift`` (trusted anchor
+    shift, null for filled pages), ``inferred_shift`` (shift actually applied),
+    and the raw ``text`` / ``zip_text`` for each page. Derived review fields
+    (``is_anchor``/``is_matched`` flags, text lengths, snippets, extra scoring)
+    are added by ``review_alignment`` rather than here.
     """
     # empty mapping frame, used as the early-return value when no long pages
     # clear the filter or no reliable shift can be determined. detailed callers
     # get the diagnostic schema; the pipeline gets the minimal id/filename schema.
+    # Columns returned when detailed=True. This frame carries the raw alignment
+    # data plus the original and matched-zip page text, so callers (e.g.
+    # review_alignment) can derive any additional review fields themselves.
     detailed_schema = {
         "id": pl.String,
         "order": pl.Int64,
         "aligned_order": pl.Int64,
         "page_filename": pl.String,
-        "match_score": pl.Float64,
+        # best rapidfuzz.cdist score (0-100) for every scored (long) page against
+        # any zip page; null for short pages that were not scored
+        "cdist_best_score": pl.Float64,
         "shift": pl.Float64,
         "inferred_shift": pl.Float64,
-        "is_anchor": pl.Boolean,
-        "is_matched": pl.Boolean,
-        "text_len": pl.UInt32,
-        "zip_text_len": pl.UInt32,
-        "text_snippet": pl.String,
-        "zip_text_snippet": pl.String,
+        # raw text for the original page and its matched zip page (null if
+        # unmatched); review/visualization helpers derive lengths, snippets, etc.
+        "text": pl.String,
+        "zip_text": pl.String,
     }
     empty_mapping_df = pl.DataFrame(
         schema=detailed_schema
@@ -339,10 +341,12 @@ def align_shifted_pages(
     trusted_shift[trusted_pos] = (
         zip_orders[best_idx[trusted_pos]] - long_orders[trusted_pos]
     )
-
     long_shift_df = long_pages_df.select("order").with_columns(
         # shift for pages without trusted shift is NaN; convert to null to set up forward/back fill
-        shift=pl.Series(trusted_shift).fill_nan(None)
+        shift=pl.Series(trusted_shift).fill_nan(None),
+        # best cdist score (0-100) for every long page; short pages (not scored)
+        # get null via the left join below
+        cdist_best_score=pl.Series(best_score, dtype=pl.Float64),
     )
 
     # pull the trusted shift shift values into the full page dataframe;
@@ -459,31 +463,10 @@ def align_shifted_pages(
         logger.warning("aligned page order is not monotonic (pages out of order)")
 
     if detailed:
-        # build the diagnostic frame for notebook review/visualization. the dedup
-        # step only scores duplicate claimants, but review wants a score for every
-        # matched page (e.g. to size plot points), so (re)compute it for all here.
-        page_mapping_df = page_mapping_df.with_columns(
-            match_score=pl.when(pl.col.page_filename.is_not_null())
-            .then(pds.str_fuzz("text", "zip_text", parallel=False))
-            .otherwise(None)
-        )
-        return (
-            page_mapping_df.with_columns(
-                # a page is an anchor if it contributed a trusted (non-null) shift;
-                # is_matched reflects the final (post-dedup) filename assignment
-                is_anchor=pl.col.shift.is_not_null(),
-                is_matched=pl.col.page_filename.is_not_null(),
-                # character counts for the original page and its matched zip page
-                # (zip_text is null for unmatched pages, so its length is null too)
-                text_len=pl.col.text.str.len_chars(),
-                zip_text_len=pl.col.zip_text.str.len_chars(),
-                # short first-line snippets for hover text (zip is null if unmatched)
-                text_snippet=_text_snippet_expr("text"),
-                zip_text_snippet=_text_snippet_expr("zip_text"),
-            )
-            .select(list(detailed_schema.keys()))
-            .sort("order")
-        )
+        # return the raw alignment frame (incl. page text) for review/visualization;
+        # derived fields (anchor/matched flags, lengths, snippets, extra scoring)
+        # are left to the caller
+        return page_mapping_df.select(list(detailed_schema.keys())).sort("order")
 
     return page_mapping_df.select(["id", "page_filename"])
 
@@ -548,9 +531,16 @@ def review_alignment(
     pages: pl.DataFrame | list[dict],
     zipfile: ZipFile | Path | str,
 ) -> pl.DataFrame:
-    """Run the shifted-page alignment for a single work and return the detailed
-    per-page frame for review/visualization (see ``align_shifted_pages`` for the
-    columns). Intended for notebook use.
+    """Run the shifted-page alignment for a single work and return a per-page
+    frame for review/visualization. Intended for notebook use.
+
+    Builds on ``align_shifted_pages(detailed=True)`` and adds derived review
+    columns: ``is_anchor`` / ``is_matched`` (flags inferred from ``shift`` /
+    ``page_filename``), ``text_len`` / ``zip_text_len`` (character counts),
+    ``text_snippet`` / ``zip_text_snippet`` (first-line hover snippets), and
+    ``match_score`` (the rapidfuzz.fuzz.ratio, 0-100, between each matched page
+    and its *actual* aligned zip page) so it can be compared against
+    ``cdist_best_score`` (the best score against *any* zip page).
 
     ``pages`` may be a page DataFrame (with ``id``, ``order``/``text`` columns) or
     a list of page dicts; ``zipfile`` may be an open ``ZipFile`` or a path to one.
@@ -570,22 +560,41 @@ def review_alignment(
             zip_pages_df = get_zipfile_pages(zf)
 
     logger.info("reviewing alignment for %s (%d pages)", work_id, pages_df.height)
-    return align_shifted_pages(pages_df, zip_pages_df, detailed=True)
+    detailed_df = align_shifted_pages(pages_df, zip_pages_df, detailed=True)
+
+    # add derived review fields inferred from the raw alignment columns
+    return detailed_df.with_columns(
+        # a page is an anchor if it contributed a trusted (non-null) shift;
+        # is_matched reflects the final (post-dedup) filename assignment
+        is_anchor=pl.col.shift.is_not_null(),
+        is_matched=pl.col.page_filename.is_not_null(),
+        # character counts (zip_text is null for unmatched pages -> null length)
+        text_len=pl.col.text.str.len_chars(),
+        zip_text_len=pl.col.zip_text.str.len_chars(),
+        # first-line snippets for hover text
+        text_snippet=_text_snippet_expr("text"),
+        zip_text_snippet=_text_snippet_expr("zip_text"),
+        # similarity of each matched page against its *actual* aligned zip page
+        # (0-100), to compare against cdist_best_score (best against any zip page)
+        match_score=pl.when(pl.col.page_filename.is_not_null())
+        .then(pds.str_fuzz("text", "zip_text", parallel=False) * 100)
+        .otherwise(None),
+    )
 
 
 def plot_alignment(review_df: pl.DataFrame):
-    """Visualize a detailed alignment frame (from ``review_alignment`` or
-    ``align_shifted_pages(..., detailed=True)``) as an Altair chart.
+    """Visualize a review frame from ``review_alignment`` as an Altair chart.
 
     Original pages are drawn on one row and their mapped zip pages on a second
     row, both positioned by page order along x. A line connects each original
     page to the zip page it maps to, so the horizontal offset of that line is the
     shift; parallel lines mean a consistent shift, and crossings/gaps stand out.
     Points are colored by alignment status (anchor / inferred / unmatched) and
-    sized by match score. Hover shows the page ids, orders, score, and text
-    lengths. Unmatched pages have no zip point or connecting line.
+    sized by match score. Hover shows a compact mapping/score line (e.g.
+    "page 24 -> zip 12 | best 100 | aligned 100") and a text snippet.
 
-    Requires ``altair`` (install the ``notebooks`` extra).
+    Expects the derived columns added by ``review_alignment`` (snippets,
+    ``match_score``). Requires ``altair`` (install the ``notebooks`` extra).
     """
     try:
         import altair as alt
@@ -595,13 +604,30 @@ def plot_alignment(review_df: pl.DataFrame):
             "(pip install 'corppa[notebooks]')"
         ) from err
 
-    # readable status for color/legend
+    # readable status for color/legend, plus a single "info" line summarizing the
+    # order mapping (orig -> zip) and scores, so the hover card stays compact
     prepared = review_df.with_columns(
         status=pl.when(~pl.col.is_matched)
         .then(pl.lit("unmatched"))
         .when(pl.col.is_anchor)
         .then(pl.lit("anchor"))
-        .otherwise(pl.lit("inferred"))
+        .otherwise(pl.lit("inferred")),
+        info=(
+            pl.format(
+                "page {} → zip {}",
+                pl.col.order,
+                pl.when(pl.col.is_matched)
+                .then(pl.col.aligned_order.cast(pl.String))
+                .otherwise(pl.lit("—")),
+            )
+            # append scores when available (nulls are shown as blanks)
+            + pl.when(pl.col.cdist_best_score.is_not_null())
+            .then(pl.format(" | best {}", pl.col.cdist_best_score.round(1)))
+            .otherwise(pl.lit(""))
+            + pl.when(pl.col.match_score.is_not_null())
+            .then(pl.format(" | aligned {}", pl.col.match_score.round(1)))
+            .otherwise(pl.lit(""))
+        ),
     )
 
     # reshape to long form: two points per page, one on the "original" row (x =
@@ -612,12 +638,14 @@ def plot_alignment(review_df: pl.DataFrame):
         row=pl.lit("original"),
         x=pl.col.order,
         status=pl.col.status,
-        match_score=pl.col.match_score,
-        # snippet/length reflect this row's own text (original page)
+        # drives point size; coalesce null (unmatched/unscored) to 0 so the point
+        # still renders (a null size value would drop the mark entirely)
+        match_score=pl.col.match_score.fill_null(0.0),
+        # whether the page has a positive aligned-match score (filled vs hollow)
+        has_match=pl.col.match_score.fill_null(0.0) > 0,
+        info=pl.col.info,
+        # snippet reflects this row's own text (original page)
         snippet=pl.col.text_snippet,
-        snippet_len=pl.col.text_len,
-        page_order=pl.col.order,
-        mapped_order=pl.col.aligned_order,
     )
     # only matched pages get a mapped-zip point / connecting line
     zip_points = prepared.filter(pl.col.is_matched).select(
@@ -625,18 +653,27 @@ def plot_alignment(review_df: pl.DataFrame):
         row=pl.lit("mapped zip"),
         x=pl.col.aligned_order,
         status=pl.col.status,
-        match_score=pl.col.match_score,
-        # snippet/length reflect this row's own text (matched zip page)
+        match_score=pl.col.match_score.fill_null(0.0),
+        has_match=pl.col.match_score.fill_null(0.0) > 0,
+        info=pl.col.info,
+        # snippet reflects this row's own text (matched zip page)
         snippet=pl.col.zip_text_snippet,
-        snippet_len=pl.col.zip_text_len,
-        page_order=pl.col.order,
-        mapped_order=pl.col.aligned_order,
     )
     plot_df = pl.concat([orig_points, zip_points])
 
+    # PPA palette: anchor = french-blue (trusted), inferred = seafoam-blue
+    # (softer/derived), unmatched = rosy-pink (needs attention)
     status_scale = alt.Scale(
         domain=["anchor", "inferred", "unmatched"],
-        range=["#1b9e77", "#7570b3", "#d95f02"],
+        range=["#4661ac", "#57c4c4", "#f05b69"],
+    )
+    status_color = alt.Color(
+        "status:N",
+        scale=status_scale,
+        title="alignment",
+        # pin the legend swatch size/opacity so it stays visible independent of
+        # the size (match score) encoding, which otherwise shrinks the swatches
+        legend=alt.Legend(symbolType="circle", symbolSize=120, symbolOpacity=1.0),
     )
     # keep the two rows in a fixed top/bottom order
     row_scale = alt.Scale(domain=["original", "mapped zip"])
@@ -651,13 +688,7 @@ def plot_alignment(review_df: pl.DataFrame):
     x_scale = alt.Scale(domain=[x_min - pad, x_max + pad], nice=False)
 
     tooltip = [
-        alt.Tooltip("id:N", title="page id"),
-        alt.Tooltip("row:N", title="side"),
-        alt.Tooltip("page_order:Q", title="orig order"),
-        alt.Tooltip("mapped_order:Q", title="mapped zip order"),
-        alt.Tooltip("match_score:Q", title="match score", format=".1f"),
-        alt.Tooltip("status:N", title="status"),
-        alt.Tooltip("snippet_len:Q", title="text len"),
+        alt.Tooltip("info:N", title="mapping"),
         alt.Tooltip("snippet:N", title="text"),
     ]
 
@@ -666,27 +697,39 @@ def plot_alignment(review_df: pl.DataFrame):
     base = alt.Chart(plot_df)
 
     # connecting line between each page's two points (drawn only for matched pages,
-    # which are the only ones with both endpoints)
+    # which are the only ones with both endpoints). Uses the same color encoding
+    # as the points so the shared color legend merges cleanly (a per-layer
+    # legend=None here would suppress the merged legend entirely).
     lines = base.mark_line(opacity=0.4).encode(
         x=alt.X("x:Q", title="page order", scale=x_scale),
         y=alt.Y("row:N", scale=row_scale, title=None),
         detail="id:N",
-        color=alt.Color("status:N", scale=status_scale, title="alignment"),
+        color=status_color,
     )
-    points = base.mark_circle().encode(
+    # circular points sized by aligned-match score. filled=True so the single
+    # color encoding fills the dot and drives a proper (filled-swatch) legend;
+    # fillOpacity is toggled so scored pages read as solid dots and zero-/no-score
+    # pages read as hollow rings (still visible) instead of disappearing.
+    points = base.mark_point(shape="circle", strokeWidth=1.5, filled=True).encode(
         x=alt.X("x:Q", title="page order", scale=x_scale),
         y=alt.Y("row:N", scale=row_scale, title=None),
-        color=alt.Color("status:N", scale=status_scale, title="alignment"),
+        color=status_color,
+        # solid fill when there is a positive match score, hollow (transparent) at 0
+        fillOpacity=alt.condition("datum.has_match", alt.value(1.0), alt.value(0.0)),
         size=alt.Size(
-            "match_score:Q", title="match score", scale=alt.Scale(range=[20, 200])
+            "match_score:Q",
+            title="match score",
+            # floor the size range so a zero score still has a visible ring
+            scale=alt.Scale(range=[60, 300]),
         ),
         tooltip=tooltip,
     )
     return (
         (lines + points)
+        .resolve_scale(size="independent")
         .properties(
             width=700,
-            height=200,
+            height=220,
             title="page alignment (original vs mapped zip order)",
         )
         .interactive()
