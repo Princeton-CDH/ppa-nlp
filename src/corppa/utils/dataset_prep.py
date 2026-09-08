@@ -53,6 +53,33 @@ def get_zip_textfiles(zipfile: ZipFile) -> Iterator[tuple[str, str]]:
             yield (Path(filename).stem, txtfile.read().decode("utf-8"))
 
 
+def get_zipfile_pages(zipfile) -> pl.DataFrame:
+    """Load text files from a HathiTrust zipfile into a polars dataframe.
+    Returned dataframe has the following columns:
+        - page_filename
+        - text : full text contents of the page
+        - page_id : numeric portion extracted from page_filename
+        - order : numeric version of `page_id`
+        - text_len : number of characters in `text`
+    """
+    return (
+        pl.DataFrame(
+            data=get_zip_textfiles(zipfile),
+            schema=["page_filename", "text"],
+        )
+        .with_columns(
+            # extract the numeric page id for joining with page data
+            # some works have filenames like OSU_32435051461309_00000602 ; others are simply numeric
+            page_id=pl.col.page_filename.str.extract(r"_?([0-9]+$)")
+        )
+        .with_columns(
+            # make an order field to match page id so we can calculate size of shift
+            order=pl.col.page_id.cast(pl.Int64),
+            text_len=pl.col.text.str.len_chars(),
+        )
+    )
+
+
 def add_zip_file_to_tar(
     zipfile: ZipFile,
     zip_filename: str,
@@ -258,22 +285,7 @@ def align_shifted_pages(pages_df: pl.DataFrame, zip_pages_df: pl.DataFrame):
 def align_pages(work_id: str, pages_df: pl.DataFrame, zipfile: ZipFile) -> dict:
     expected_page_count = pages_df.height
     # load text files from zipfile into a polars dataframe
-    zip_pages_df = (
-        pl.DataFrame(
-            data=get_zip_textfiles(zipfile),
-            schema=["page_filename", "text"],
-        )
-        .with_columns(
-            # extract the numeric page id for joining with page data
-            # some works have filenames like OSU_32435051461309_00000602 ; others are simply numeric
-            page_id=pl.col.page_filename.str.extract(r"_?([0-9]+$)")
-        )
-        .with_columns(
-            # make an order field to match page id so we can calculate size of shift
-            order=pl.col.page_id.cast(pl.Int64),
-            text_len=pl.col.text.str.len_chars(),
-        )
-    )
+    zip_pages_df = get_zipfile_pages(zipfile)
 
     # NOTE: for excerpt, page count is not expected to match but should be >= total
     zip_count_mismatch = zip_pages_df.height < expected_page_count
