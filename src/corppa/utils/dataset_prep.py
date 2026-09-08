@@ -301,29 +301,6 @@ def align_shifted_pages(pages_df: pl.DataFrame, zip_pages_df: pl.DataFrame):
         # to determine shift for pages without alignment
         inferred_shift=pl.col.shift.forward_fill().backward_fill()
     )
-    # summarize the shift for logging output when info-level is enabled
-    if logger.isEnabledFor(logging.INFO):
-        shift_summary_df = pages_shift_df.group_by("inferred_shift").agg(
-            n_pages=pl.len(), orders=pl.col.order
-        )
-        # count how many alignments were inferred
-        num_inferred = pages_shift_df.filter(pl.col.shift.is_null()).height
-        pct_inferred = f"{num_inferred / pages_df.height:.1%}"
-        # use intspan to combine the list of pages into a readable format
-        shift_summary = "; ".join(
-            f"{int(row['inferred_shift']):+d} ({intspan(row['orders'])}, {row['n_pages']:,} pages)"
-            for row in shift_summary_df.iter_rows(named=True)
-        )
-        logger.info(
-            "page shift: %s \t%d alignment%s inferred (%s)",
-            shift_summary,
-            num_inferred,
-            ""
-            if num_inferred == 1
-            else "s",  # conditionallypluralize inferred alignment
-            pct_inferred,
-        )
-
     # single join for the whole work: shift each page's order and look up the
     # zip page filename at the aligned order. Pull the zip page text along too
     # (as zip_text) so we can score each mapping and break duplicate claims below.
@@ -337,6 +314,47 @@ def align_shifted_pages(pages_df: pl.DataFrame, zip_pages_df: pl.DataFrame):
         right_on="order",
         how="left",
     )
+
+    # summarize the shift for logging output when info-level is enabled; done
+    # after the join so we can report the mapped (zip) page range that actually
+    # matched. A non-null page_filename means aligned_order joined to a real zip
+    # page, so filtering on it excludes raw aligned_orders that fall outside the
+    # zip range (e.g. negative) for over-extended inferred shifts.
+    if logger.isEnabledFor(logging.INFO):
+        shift_summary_df = (
+            # only pages that joined to a real zip page contribute a mapped order
+            page_mapping_df.filter(pl.col.page_filename.is_not_null())
+            .group_by("inferred_shift")
+            .agg(
+                n_pages=pl.len(),
+                orders=pl.col.order,
+                mapped_orders=pl.col.aligned_order,
+                # first original page in each group, to sort shifts into reading order
+                first_order=pl.col.order.min(),
+            )
+            # sort by first page so shift groups read in sequential page order
+            .sort("first_order")
+        )
+        # count how many alignments were inferred
+        num_inferred = page_mapping_df.filter(pl.col.shift.is_null()).height
+        pct_inferred = f"{num_inferred / pages_df.height:.1%}"
+        # use intspan to combine the list of pages into a readable format;
+        # report both the original page range and the mapped (zip) page range
+        shift_summary = "; ".join(
+            f"{int(row['inferred_shift']):+d} "
+            f"({intspan(row['orders'])}:{intspan(row['mapped_orders'])}; "
+            f"{row['n_pages']:,} pages)"
+            for row in shift_summary_df.iter_rows(named=True)
+        )
+        logger.info(
+            "page shift: %s \t%d alignment%s inferred (%s)",
+            shift_summary,
+            num_inferred,
+            ""
+            if num_inferred == 1
+            else "s",  # conditionallypluralize inferred alignment
+            pct_inferred,
+        )
 
     # Enforce a strict 1:1 mapping: the forward/back-fill of shifts can make two
     # adjacent original pages resolve to the *same* aligned zip page at a shift
