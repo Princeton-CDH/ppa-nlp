@@ -2,7 +2,6 @@
 import argparse
 import bisect
 import logging
-import re
 import signal
 import sys
 import tarfile
@@ -31,11 +30,6 @@ from corppa.utils.path_utils import (
 
 logger = logging.getLogger(__name__)
 
-# HathiTrust volumes published in this year or later are a small subset (~34
-# 1930s volumes) whose zip files contain page images only (no OCR text). They
-# use a different internal structure and cannot/need not be text-aligned, so
-# their pages are mapped directly to images by numeric page id.
-HT_IMAGE_ONLY_MIN_YEAR = 1930
 
 # set when an interrupt/termination signal is received so the main loop can
 # stop cleanly at the next work boundary (avoids partial-work output)
@@ -768,13 +762,13 @@ def find_corpus_file(corpus_dir: Path, filenames: list[str]) -> Path:
     )
 
 
-def load_image_only_work_ids(metadata_path: Path) -> set[str]:
-    """Load work-level metadata and return the set of ``work_id`` values for
-    HathiTrust volumes published in or after :data:`HT_IMAGE_ONLY_MIN_YEAR`.
+def get_ht1930_work_ids(metadata_path: Path) -> dict[str, str | None]:
+    """Load work-level metadata and return a dictionary of ``work_id`` values for
+    HathiTrust volumes published in 1930, with their corresponding
+    digital page range (excerpts only).
 
-    These volumes have image-only zip files (no OCR text) and are handled
-    specially. The metadata file may be CSV or JSON and must include
-    ``work_id`` and ``pub_year`` columns.
+    These volumes have zip files with different naming convention and structure
+    and must be handled differently.
     """
     if metadata_path.suffix == ".csv":
         meta_df = pl.read_csv(metadata_path)
@@ -785,17 +779,14 @@ def load_image_only_work_ids(metadata_path: Path) -> set[str]:
             f"Unsupported metadata format {metadata_path.suffix!r}; expected .csv or .json"
         )
 
-    for required in ("work_id", "pub_year"):
-        if required not in meta_df.columns:
-            raise ValueError(
-                f"Metadata file {metadata_path} is missing required {required!r} column"
-            )
-
-    image_only_df = meta_df.select("work_id", "pub_year").filter(
-        # drop rows with missing/non-numeric years, then apply the year cutoff
-        pl.col("pub_year").cast(pl.Int64, strict=False).ge(HT_IMAGE_ONLY_MIN_YEAR)
-    )
-    return set(image_only_df.get_column("work_id"))
+    return {
+        row["work_id"]: row["pages_digital"]
+        for row in meta_df.select("work_id", "pub_year", "source", "pages_digital")
+        .filter(pl.col.source.eq("HathiTrust"))
+        .filter(pl.col("pub_year").cast(pl.Int64, strict=False).eq(1930))
+        .select("work_id", "pages_digital")
+        .iter_rows(named=True)
+    }
 
 
 def process_work(
@@ -803,10 +794,10 @@ def process_work(
     pages: list[dict],
     image_dir: Path,
     tar: tarfile.TarFile,
-    image_only_work_ids: Optional[set[str]] = None,
+    ht1930_work_ids: Optional[dict[str, str | None]] = None,
 ) -> Iterator[dict]:
     # generic process work method, which calls appropriate source-specific method
-    image_only_work_ids = image_only_work_ids or set()
+    ht1930_work_ids = ht1930_work_ids or {}
     source = get_ppa_source(work_id)
     match source:
         case "Gale":
@@ -814,8 +805,14 @@ def process_work(
         case "HathiTrust":
             # a small subset of (1930s) HathiTrust volumes have image-only zip
             # files that cannot be text-aligned; map images by page id instead
-            if work_id in image_only_work_ids:
-                yield from process_ht_imageonly_work(work_id, pages, image_dir, tar)
+            if work_id in ht1930_work_ids:
+                yield from process_ht1930_work(
+                    work_id,
+                    pages,
+                    image_dir,
+                    tar,
+                    digital_pages=ht1930_work_ids[work_id],
+                )
             else:
                 yield from process_ht_work(work_id, pages, image_dir, tar)
         case "EEBO-TCP":
@@ -927,44 +924,69 @@ def process_ht_work(
                     yield page
 
 
-def _zip_image_map(zipfile: ZipFile) -> dict[int, str]:
-    """Map numeric page id -> image filename within a HathiTrust zip.
+def zip_image_filenames(zipfile: ZipFile) -> dict[int, str]:
+    """Map numeric digital page sequence number to -> image filename within
+    a HathiTrust zip.
 
-    Used for image-only volumes whose zip files hold page images named by page
-    number (no OCR text to align against). The numeric page id is the trailing
-    number of the image filename stem (matching the convention used elsewhere
-    for zip page files), so a leading institution/volume prefix is tolerated.
+    Used for image-only volumes zip files. Images are TIF or JPG only;
+    base filename is numeric with leading zeros.
     """
-    image_exts = {".tif", ".jpg", ".jpeg", ".jp2"}
+    #
+    image_exts = {".tif", ".jpg"}
     image_map: dict[int, str] = {}
     for filename in zipfile.namelist():
         file_path = Path(filename)
-        if file_path.suffix.lower() not in image_exts:
-            continue
-        match = re.search(r"([0-9]+)$", file_path.stem)
-        if match is None:
-            continue
-        image_map[int(match.group(1))] = filename
+        if file_path.suffix.lower() in image_exts:
+            image_map[int(file_path.stem)] = filename
+
     return image_map
 
 
-def process_ht_imageonly_work(
-    work_id: str, pages: list[dict], image_dir: Path, tar: tarfile.TarFile
+def process_ht1930_work(
+    work_id: str,
+    pages: list[dict],
+    image_dir: Path,
+    tar: tarfile.TarFile,
+    digital_pages: str | None = None,
 ) -> Iterator[dict]:
-    """Process a HathiTrust work whose zip file contains page images only
-    (no OCR text). Pages are mapped directly to images by numeric page id
-    instead of using text alignment; every page is yielded whether or not an
-    image was found so no pages are dropped from the output corpus."""
+    """
+    Images for HathiTrust works published in 1930 and imported manually in 2026
+    were downloaded manually from the HT web interface. The zip files only contain
+    images (no text files, no nested directories) and were downloaded close to
+    when the works were imported, so they do not require page re-alignment.
+
+    Find and load the zip file, and map images to pages based on filename.
+    """
     htid = get_volume_id(work_id)
-    zipfile_path = get_ht_zipfile_path(work_id, image_dir)
-    if not zipfile_path.exists():
-        # yield pages without image paths
+    ht_1930_image_dir = image_dir / "HathiTrust-1930"
+    zipfile_prefix = htid.replace(".", "-").replace("$", "-")
+    # for excerpts, zipfiles are based on page ranges; filename includes digital page range
+    if work_id == "mdp.39015030593423-p165":
+        # special case: the first section of pages is missing in the digital scan so the excerpt starts at 193
+        zipfile_prefix += "-193"
+    elif digital_pages:
+        first_page = list(intspan(digital_pages))[0]
+        zipfile_prefix += f"-{first_page}"
+
+    expected_path = ht_1930_image_dir / f"{zipfile_prefix}*.zip"
+    logging.debug(
+        "%s : expected zipfile=%s : %d pages", work_id, expected_path, len(pages)
+    )
+    zip_matches = list(ht_1930_image_dir.glob(zipfile_prefix + "*.zip"))
+    if len(zip_matches) != 1:
+        logger.error(
+            "Unable to find zipfile for %s; expected at %s", work_id, zipfile_prefix
+        )
+        #  yield from pages to avoid omitting any cnotent... but we expect to find all zip files
         yield from pages
         return
 
+    zipfile_path = zip_matches[0]
+
+    # TODO: add context processor from alignment notebook
     with ZipFile(zipfile_path) as ht_zip:
         # map numeric page id -> image filename in the zip
-        image_map = _zip_image_map(ht_zip)
+        image_map = zip_image_filenames(ht_zip)
         if not image_map:
             logger.warning(
                 "no images found in image-only zipfile for work %s, omitting images",
@@ -974,17 +996,17 @@ def process_ht_imageonly_work(
             return
 
         for page in pages:
-            page_id = page["id"]
-            # extract the trailing numeric page id used to match the zip image
-            id_match = re.search(r"[._]([0-9]+)$", page_id)
-            page_num = int(id_match.group(1)) if id_match else None
-            zip_image_path = image_map.get(page_num) if page_num is not None else None
+            # digital sequence number is in page order  field
+            page_id = page["id"]  # needed for output filename
+            page_order = page["order"]  # needed for mapping
+            zip_image_path = image_map.get(page_order)
             if zip_image_path is not None:
                 img_ext = Path(zip_image_path).suffix
+                # set destination name based on volume and page id, but preserve existing extension
                 tar_image_path = f"{encode_htid(htid)}/{page_id}{img_ext}"
                 try:
                     add_zip_file_to_tar(ht_zip, zip_image_path, tar, tar_image_path)
-                    # if adding succeeded, record the image path for output
+                    # if adding succeeded, include the image path in the output page data
                     page["image_path"] = tar_image_path
                 except KeyError:
                     logger.warning(
@@ -1072,12 +1094,11 @@ def main():
         logger.error("%s", err)
         sys.exit(-1)
 
-    # determine the set of image-only (1930s) HathiTrust works to handle specially
-    image_only_work_ids = load_image_only_work_ids(metadata_path)
+    # get the list of image-only (1930s) HathiTrust works for alternate zipfile logic
+    ht1930_work_ids = get_ht1930_work_ids(metadata_path)
     logger.info(
-        "%s image-only HathiTrust work(s) (pub_year >= %d) from %s",
-        f"{len(image_only_work_ids):,}",
-        HT_IMAGE_ONLY_MIN_YEAR,
+        "Identified %s image-only HathiTrust 1930 work(s) in %s",
+        f"{len(ht1930_work_ids):,}",
         metadata_path.name,
     )
 
@@ -1177,7 +1198,7 @@ def main():
                                 pages,
                                 args.image_dir,
                                 tar,
-                                image_only_work_ids,
+                                ht1930_work_ids,
                             )
                         )
                         orjsonl.extend(output_pages_path, pages)
@@ -1213,7 +1234,7 @@ def main():
                         pages,
                         args.image_dir,
                         tar,
-                        image_only_work_ids,
+                        ht1930_work_ids,
                     )
                 )
                 orjsonl.extend(output_pages_path, pages)
