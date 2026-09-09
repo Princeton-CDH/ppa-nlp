@@ -149,7 +149,11 @@ def _text_snippet_expr(col: str) -> pl.Expr:
 
 def longest_increasing_subseq(values: np.ndarray) -> np.ndarray:
     """Return the indices (into ``values``) of the longest *strictly* increasing
-    subsequence; return the first sequence when there is a tie for longest subsequence.
+    subsequence. When several subsequences tie for longest, one is returned
+    deterministically (same input always yields the same result); which of the
+    tied subsequences is chosen is not part of the contract, since downstream
+    alignment depends only on the derived shifts and the rapidfuzz-based dedup,
+    not on the specific anchor set.
 
     Used by `align_shifted_pages` to filter high-confidence mappings down to a
     set of "anchor" matches that enforce sequential alignment while allowing for
