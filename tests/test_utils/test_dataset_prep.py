@@ -25,6 +25,7 @@ from corppa.utils.dataset_prep import (
     get_zipfile_pages,
     longest_increasing_subseq,
     main,
+    open_ht_zipfile,
     plot_alignment,
     process_gale_work,
     process_ht1930_work,
@@ -298,6 +299,28 @@ def test_process_gale_work_missing_image_file_omits_path(tmp_path):
 
     assert len(result) == 1
     assert "image_path" not in result[0]
+
+
+# --- open_ht_zipfile ---
+
+
+def test_open_ht_zipfile_opens_existing(tmp_path):
+    zip_path = tmp_path / "vol.zip"
+    with ZipFile(zip_path, "w") as zf:
+        zf.writestr("00000001.tif", b"a")
+    with open_ht_zipfile(zip_path) as ht_zip:
+        assert ht_zip is not None
+        assert ht_zip.namelist() == ["00000001.tif"]
+
+
+def test_open_ht_zipfile_missing_path_yields_none(tmp_path):
+    with open_ht_zipfile(tmp_path / "does-not-exist.zip") as ht_zip:
+        assert ht_zip is None
+
+
+def test_open_ht_zipfile_none_path_yields_none():
+    with open_ht_zipfile(None) as ht_zip:
+        assert ht_zip is None
 
 
 # --- process_ht_work ---
@@ -1383,6 +1406,12 @@ def test_review_alignment_from_pages_and_zip(tmp_path):
     assert result["is_matched"].all()
     # uniform +10 shift recovered
     assert (result["aligned_order"] - result["order"]).unique().to_list() == [10]
+
+
+def test_review_alignment_missing_zip_raises(tmp_path):
+    pages = [{"id": "work.00000001", "order": 1, "text": "hi"}]
+    with pytest.raises(FileNotFoundError, match="zip file not found"):
+        review_alignment("work", pages, tmp_path / "missing.zip")
 
 
 def test_review_alignment_adds_derived_fields(tmp_path):

@@ -7,6 +7,7 @@ import sys
 import tarfile
 from collections import defaultdict
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from time import mktime, perf_counter
 from typing import Optional
@@ -531,7 +532,7 @@ def align_pages(work_id: str, pages_df: pl.DataFrame, zipfile: ZipFile) -> dict:
 def review_alignment(
     work_id: str,
     pages: pl.DataFrame | list[dict],
-    zipfile: ZipFile | Path | str,
+    zipfile_path: Path | str,
 ) -> pl.DataFrame:
     """Run the shifted-page alignment for a single work and return a per-page
     frame for review/visualization. Intended for notebook use.
@@ -545,7 +546,7 @@ def review_alignment(
     ``cdist_best_score`` (the best score against *any* zip page).
 
     ``pages`` may be a page DataFrame (with ``id``, ``order``/``text`` columns) or
-    a list of page dicts; ``zipfile`` may be an open ``ZipFile`` or a path to one.
+    a list of page dicts; ``zipfile_path`` is a path to the work's zip file.
     """
     pages_df = pages if isinstance(pages, pl.DataFrame) else pl.DataFrame(pages)
     # add an order column (numeric trailing page id) if the caller didn't supply one
@@ -554,12 +555,10 @@ def review_alignment(
             order=pl.col.id.str.extract(r"([0-9]+$)").cast(pl.Int64)
         )
 
-    # accept an open ZipFile or a path; open+close our own handle for a path
-    if isinstance(zipfile, ZipFile):
-        zip_pages_df = get_zipfile_pages(zipfile)
-    else:
-        with ZipFile(zipfile) as zf:
-            zip_pages_df = get_zipfile_pages(zf)
+    with open_ht_zipfile(Path(zipfile_path)) as ht_zip:
+        if ht_zip is None:
+            raise FileNotFoundError(f"zip file not found: {zipfile_path}")
+        zip_pages_df = get_zipfile_pages(ht_zip)
 
     logger.info("reviewing alignment for %s (%d pages)", work_id, pages_df.height)
     detailed_df = align_shifted_pages(pages_df, zip_pages_df, detailed=True)
@@ -862,67 +861,78 @@ def get_ht_zipfile_path(work_id: str, image_dir: Path) -> Path:
     return image_dir / "HathiTrust" / encoded / f"{htid_suffix}.zip"
 
 
+@contextmanager
+def open_ht_zipfile(zipfile_path: Optional[Path]) -> Iterator[Optional[ZipFile]]:
+    """Open a HathiTrust image zip file, yielding the open :class:`~zipfile.ZipFile`.
+    Yields ``None`` (without raising) when ``zipfile_path`` is ``None`` or does
+    not exist, so callers can uniformly skip works whose zip is missing."""
+    if zipfile_path is None or not zipfile_path.exists():
+        yield None
+    else:
+        with ZipFile(zipfile_path) as ht_zip:
+            yield ht_zip
+
+
 def process_ht_work(
     work_id: str, pages: list[dict], image_dir: Path, tar: tarfile.TarFile
 ) -> Iterator[dict]:
     htid = get_volume_id(work_id)
     htid_suffix = encode_htid(htid).split(".")[-1]
     zipfile_path = get_ht_zipfile_path(work_id, image_dir)
-    if not zipfile_path.exists():
-        # logger.warning("zipfile %s does not exist, omitting images", zipfile_path)
-        # yield pages without image paths
-        yield from pages
-    else:
-        with ZipFile(zipfile_path) as ht_zip:
-            page_mapping = align_pages(work_id, pl.DataFrame(pages), ht_zip)
-            if not page_mapping:
-                logger.warning(
-                    "no page mapping found for work %s, omitting images",
-                    work_id,
-                )
-                # yield pages without image paths
-                yield from pages
-            else:
-                # when image mapping was returned, add images to tar file and image paths to page data
-                img_exts = get_zip_imgexts(ht_zip)
-                for page in pages:
-                    page_id = page["id"]  # .split(".")[-1]
-                    # get the corresponding image from the zip, add to the tar file with appropriate name,
-                    # and add the image path to the page record for output
-                    page_basename = page_mapping.get(page_id)
+    with open_ht_zipfile(zipfile_path) as ht_zip:
+        if ht_zip is None:
+            # zipfile does not exist; yield pages without image paths
+            yield from pages
+            return
 
-                    # add the image from the corresponding path in the zipfile to the
-                    # appropriate path for this page in the tarfile
-                    file_namelist = ht_zip.namelist()
-                    if page_basename is not None:
-                        zip_image_basepath = f"{htid_suffix}/{page_basename}"
-                        for img_ext in img_exts:
-                            zip_image_path = f"{zip_image_basepath}{img_ext}"
-                            if zip_image_path in file_namelist:
-                                break
-                        tar_image_path = f"{encode_htid(htid)}/{page_id}{img_ext}"
-                        try:
-                            add_zip_file_to_tar(
-                                ht_zip, zip_image_path, tar, tar_image_path
-                            )
-                            # if adding succeeded, add the image path in the page record for output
-                            page["image_path"] = tar_image_path
+        page_mapping = align_pages(work_id, pl.DataFrame(pages), ht_zip)
+        if not page_mapping:
+            logger.warning(
+                "no page mapping found for work %s, omitting images",
+                work_id,
+            )
+            # yield pages without image paths
+            yield from pages
+            return
 
-                        except KeyError:
-                            has_text = page["text"].strip() != ""
-                            if has_text:
-                                logger.warning(
-                                    "image %s not found in zipfile but page has text; skipping",
-                                    zip_image_path,
-                                )
-                            logger.debug(
-                                "matching filenames: %s",
-                                [f for f in file_namelist if page_basename in f],
-                            )
+        # when image mapping was returned, add images to tar file and image paths to page data
+        img_exts = get_zip_imgexts(ht_zip)
+        for page in pages:
+            page_id = page["id"]  # .split(".")[-1]
+            # get the corresponding image from the zip, add to the tar file with appropriate name,
+            # and add the image path to the page record for output
+            page_basename = page_mapping.get(page_id)
 
-                    # yield every page whether or not an image was aligned/added,
-                    # so no pages are dropped from the output corpus
-                    yield page
+            # add the image from the corresponding path in the zipfile to the
+            # appropriate path for this page in the tarfile
+            file_namelist = ht_zip.namelist()
+            if page_basename is not None:
+                zip_image_basepath = f"{htid_suffix}/{page_basename}"
+                for img_ext in img_exts:
+                    zip_image_path = f"{zip_image_basepath}{img_ext}"
+                    if zip_image_path in file_namelist:
+                        break
+                tar_image_path = f"{encode_htid(htid)}/{page_id}{img_ext}"
+                try:
+                    add_zip_file_to_tar(ht_zip, zip_image_path, tar, tar_image_path)
+                    # if adding succeeded, add the image path in the page record for output
+                    page["image_path"] = tar_image_path
+
+                except KeyError:
+                    has_text = page["text"].strip() != ""
+                    if has_text:
+                        logger.warning(
+                            "image %s not found in zipfile but page has text; skipping",
+                            zip_image_path,
+                        )
+                    logger.debug(
+                        "matching filenames: %s",
+                        [f for f in file_namelist if page_basename in f],
+                    )
+
+            # yield every page whether or not an image was aligned/added,
+            # so no pages are dropped from the output corpus
+            yield page
 
 
 # HathiTrust 1930 excerpts whose zip filename first-page number cannot be
@@ -1012,7 +1022,13 @@ def process_ht1930_work(
 
     zipfile_path = zip_matches[0]
 
-    with ZipFile(zipfile_path) as ht_zip:
+    with open_ht_zipfile(zipfile_path) as ht_zip:
+        # zipfile_path came from a glob match above, so ht_zip should be non-None;
+        # guard for the race where the file disappears between glob and open
+        if ht_zip is None:
+            yield from pages
+            return
+
         # map numeric page id -> image filename in the zip
         image_map = zip_image_filenames(ht_zip)
         if not image_map:
