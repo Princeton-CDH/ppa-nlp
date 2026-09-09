@@ -253,9 +253,9 @@ def align_shifted_pages(
         "page_filename": pl.String,
         # best rapidfuzz.cdist score (0-100) for every scored (long) page against
         # any zip page; null for short pages that were not scored
-        "cdist_best_score": pl.Float64,
-        "shift": pl.Float64,
-        "inferred_shift": pl.Float64,
+        "cdist_best_score": pl.Int64,
+        "shift": pl.Int64,
+        "inferred_shift": pl.Int64,
         # raw text for the original page and its matched zip page (null if
         # unmatched); review/visualization helpers derive lengths, snippets, etc.
         "text": pl.String,
@@ -328,11 +328,10 @@ def align_shifted_pages(
         logger.warning("No high-confidence matches found; cannot determine page shift")
         return empty_mapping_df
 
-    # Treat confident as candidate anchors, then filter to a strictly increasing sequence
-    # to remove duplicate and out-of-order mappings.
+    # Treat confident matches as candidate anchors, which will be filtered to a
+    # trictly increasing sequence to remove duplicate and out-of-order mappings.
     conf_pos = np.flatnonzero(confident)  # row indices of high-confidence matches
     conf_zip_cols = best_idx[conf_pos]  # matrix columns for high-confidence matches
-
     # Now filter zip page orders for high-confidence matches to strictly-increasing subset;
     # this results in a set of anchor mappings that follow sequence
     anchors = longest_increasing_subseq(zip_orders[conf_zip_cols])
@@ -582,7 +581,8 @@ def review_alignment(
         text_snippet=_text_snippet_expr("text"),
         zip_text_snippet=_text_snippet_expr("zip_text"),
         # similarity of each matched page against its *actual* aligned zip page
-        # (0-100), to compare against cdist_best_score (best against any zip page)
+        # (str_fuzz returns 0-1; multiple by 100 to compare against cdist_best_score
+        # (best against any zip page)
         match_score=pl.when(pl.col.page_filename.is_not_null())
         .then(pds.str_fuzz("text", "zip_text", parallel=False) * 100)
         .otherwise(None),
