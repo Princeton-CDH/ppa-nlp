@@ -350,9 +350,12 @@ def align_shifted_pages(
     )
 
     # pull the trusted shift shift values into the full page dataframe;
-    # use a left join to keep all pages; shift is null for all but high-confidence sequential anchor pages
+    # use a left join to keep all pages; shift is null for all but high-confidence sequential anchor pages.
+    # maintain_order="left" is required: the forward/back-fill below propagates
+    # each page's shift from its nearest sorted neighbor, so rows must stay in
+    # original page order. Polars does not guarantee join row order otherwise.
     pages_shift_df = orig_pages_df.join(
-        long_shift_df, on="order", how="left"
+        long_shift_df, on="order", how="left", maintain_order="left"
     ).with_columns(
         # determine shift for all pages; use nearest high-confidence match (preceding page, then following)
         # to determine shift for pages without alignment

@@ -748,6 +748,76 @@ def test_align_shifted_pages_includes_head_pages():
     assert mapping["work.00000006"] == "00000016"
 
 
+def test_align_shifted_pages_input_row_order_independent():
+    # The shift forward/back-fill is order-dependent and must operate on pages
+    # sorted by `order`. align_shifted_pages sorts internally, so the result must
+    # be identical regardless of the input row order. This guards the join that
+    # feeds the fill (which needs maintain_order="left"): if rows were allowed to
+    # scramble, short pages at a shift boundary would inherit a neighbor's shift
+    # from the wrong row.
+    #
+    # Uses two different shifts (a boundary) so the fill outcome genuinely
+    # depends on row order: pages 1-3 map at +10, pages 4-6 at +20, with short
+    # (non-anchor) pages 3 and 4 straddling the boundary. If the fill ran on
+    # scrambled rows, pages 3/4 would inherit the wrong shift.
+    seeds = [f"chapter-{i}-unique-content" for i in range(6)]
+    # zip has pages at 11-13 (for the +10 block) and 24-26 (for the +20 block)
+    zip_orders = [11, 12, 13, 24, 25, 26]
+
+    def build(order):
+        zip_pages_df = pl.DataFrame(
+            {
+                "page_filename": [f"{z:08d}" for z in zip_orders],
+                "order": zip_orders,
+                "text": [_long_text(s) for s in seeds],
+            }
+        )
+        # pages 3 and 4 are short (filtered out, so non-anchor); anchors 1,2 fix
+        # the +10 shift and anchors 5,6 fix the +20 shift. short page 3 must take
+        # the preceding (+10) shift, short page 4 must take the preceding (+20).
+        texts = {
+            1: _long_text(seeds[0]),
+            2: _long_text(seeds[1]),
+            3: "short page three",
+            4: "short page four",
+            5: _long_text(seeds[4]),
+            6: _long_text(seeds[5]),
+        }
+        pages_df = pl.DataFrame(
+            {
+                "id": [f"work.{o:08d}" for o in order],
+                "order": order,
+                "text": [texts[o] for o in order],
+            }
+        )
+        return pages_df, zip_pages_df
+
+    # the sorted result is the ground truth (short page 3 inherits the +10 block;
+    # the algorithm's dedup/fill behavior at the boundary is exercised here). The
+    # key invariant is that shuffled input yields the *same* mapping.
+    sorted_pages, zip_df = build([1, 2, 3, 4, 5, 6])
+    expected = dict(
+        align_shifted_pages(sorted_pages, zip_df)
+        .select(["id", "page_filename"])
+        .iter_rows()
+    )
+    # sanity: the +10 block anchors and the inferred short page all resolved
+    assert expected["work.00000001"] == "00000011"
+    assert expected["work.00000003"] == "00000013"
+    assert expected["work.00000005"] == "00000025"
+
+    # shuffled input must produce an identical mapping
+    shuffled_pages, zip_df = build([4, 1, 6, 3, 5, 2])
+    assert (
+        dict(
+            align_shifted_pages(shuffled_pages, zip_df)
+            .select(["id", "page_filename"])
+            .iter_rows()
+        )
+        == expected
+    )
+
+
 def test_align_shifted_pages_returns_id_and_filename_columns():
     seeds = [f"page-{i}-content" for i in range(3)]
     pages_df, zip_pages_df = _make_shifted_frames([1, 2, 3], [5, 6, 7], seeds)
