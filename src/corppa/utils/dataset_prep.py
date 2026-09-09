@@ -273,7 +273,7 @@ def align_shifted_pages(
     empty_mapping_df = pl.DataFrame(
         schema=detailed_schema
         if detailed
-        else {"id": pl.String, "page_filename": pl.String}  # TODO: new text
+        else {"id": pl.String, "page_filename": pl.String, "new_ocr": pl.String}
     )
 
     # sort by order and keep the full (unfiltered) set; short pages still need
@@ -497,8 +497,12 @@ def align_shifted_pages(
     return page_mapping_df.select(["id", "page_filename", "new_ocr"])
 
 
-# determine alignment between pages in different versions of hathitrust
 def align_pages(work_id: str, pages_df: pl.DataFrame, zipfile: ZipFile) -> dict:
+    """Determine alignment between pages in different versions of a HathiTrust
+    work. Returns a dict mapping each page id to a ``(page_filename, new_ocr)``
+    tuple, where ``new_ocr`` is the zip page text when it differs from the
+    original page text and ``None`` otherwise. Returns an empty dict if no
+    alignment could be determined."""
     expected_page_count = pages_df.height
     # load text files from zipfile into a polars dataframe
     zip_pages_df = get_zipfile_pages(zipfile)

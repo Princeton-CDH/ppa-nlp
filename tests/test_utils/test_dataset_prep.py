@@ -268,8 +268,8 @@ def test_align_pages_prefixed_filenames(tmp_path):
 
 
 def test_align_pages_new_ocr(tmp_path, pages_df):
-    # Zip is missing one page -> join count mismatch is warned about but the
-    # partial mapping for the pages that did join is still returned.
+    # Two pages have OCR text that differs from the original; new ocr should be
+    # returned for those and None for the page whose text matches.
     variant_texts = [
         "quick brown fox jumps over lazy dog.",
         # "To be or not is the question.",
@@ -1161,7 +1161,7 @@ def test_align_shifted_pages_consistent_shift():
 
 
 def test_align_shifted_pages_new_ocr():
-    # adapt consistent shift test above to test modified text is passed through as new_oc r
+    # adapt consistent shift test above to test modified text is passed through as new_ocr
     seeds = [f"chapter-{i}-unique-content" for i in range(5)]
     pages_df, zip_pages_df = _make_shifted_frames(
         page_orders=list(range(1, 6)),
@@ -1172,7 +1172,6 @@ def test_align_shifted_pages_new_ocr():
     new_texts = list(PAGE_TEXTS.values()) + zip_pages_df["text"].to_list()[-2:]
     zip_pages_df = zip_pages_df.with_columns(text=pl.Series(new_texts))
 
-    zip_pages_df = zip_pages_df.with_columns()
     result = align_shifted_pages(pages_df, zip_pages_df)
 
     new_ocr_mapping = dict(result.select(["id", "new_ocr"]).iter_rows())
