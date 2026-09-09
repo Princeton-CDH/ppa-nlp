@@ -762,7 +762,7 @@ def find_corpus_file(corpus_dir: Path, filenames: list[str]) -> Path:
     )
 
 
-def get_ht1930_work_ids(metadata_path: Path) -> dict[str, str | None]:
+def get_ht1930_work_ids(metadata_path: Path) -> dict[str, Optional[str]]:
     """Load work-level metadata and return a dictionary of ``work_id`` values for
     HathiTrust volumes published in 1930, with their corresponding
     digital page range (excerpts only).
@@ -794,7 +794,7 @@ def process_work(
     pages: list[dict],
     image_dir: Path,
     tar: tarfile.TarFile,
-    ht1930_work_ids: Optional[dict[str, str | None]] = None,
+    ht1930_work_ids: Optional[dict[str, Optional[str]]] = None,
 ) -> Iterator[dict]:
     # generic process work method, which calls appropriate source-specific method
     ht1930_work_ids = ht1930_work_ids or {}
@@ -804,7 +804,8 @@ def process_work(
             yield from process_gale_work(work_id, pages, image_dir, tar)
         case "HathiTrust":
             # a small subset of (1930s) HathiTrust volumes have image-only zip
-            # files that cannot be text-aligned; map images by page id instead
+            # files that cannot be text-aligned; map images to pages by digital
+            # page sequence (order) instead
             if work_id in ht1930_work_ids:
                 yield from process_ht1930_work(
                     work_id,
@@ -924,20 +925,31 @@ def process_ht_work(
                     yield page
 
 
+# HathiTrust 1930 excerpts whose zip filename first-page number cannot be
+# derived from the digital page range in metadata; maps work id -> first page
+# number to use in the zip filename prefix. (For this excerpt the first section
+# of pages is missing from the digital scan, so the excerpt starts at 193.)
+HT1930_EXCERPT_FIRST_PAGE_OVERRIDES = {"mdp.39015030593423-p165": 193}
+
+
 def zip_image_filenames(zipfile: ZipFile) -> dict[int, str]:
-    """Map numeric digital page sequence number to -> image filename within
+    """Map numeric digital page sequence number to image filename within
     a HathiTrust zip.
 
-    Used for image-only volumes zip files. Images are TIF or JPG only;
-    base filename is numeric with leading zeros.
+    Used for image-only volume zip files. Images are TIF or JPG only;
+    base filename is numeric with leading zeros. Files with a non-numeric
+    stem (e.g. stray cover/metadata images) are skipped.
     """
-    #
     image_exts = {".tif", ".jpg"}
     image_map: dict[int, str] = {}
     for filename in zipfile.namelist():
         file_path = Path(filename)
-        if file_path.suffix.lower() in image_exts:
-            image_map[int(file_path.stem)] = filename
+        if file_path.suffix.lower() not in image_exts:
+            continue
+        if not file_path.stem.isdigit():
+            logger.debug("skipping non-numeric image filename %s", filename)
+            continue
+        image_map[int(file_path.stem)] = filename
 
     return image_map
 
@@ -947,7 +959,7 @@ def process_ht1930_work(
     pages: list[dict],
     image_dir: Path,
     tar: tarfile.TarFile,
-    digital_pages: str | None = None,
+    digital_pages: Optional[str] = None,
 ) -> Iterator[dict]:
     """
     Images for HathiTrust works published in 1930 and imported manually in 2026
@@ -959,31 +971,47 @@ def process_ht1930_work(
     """
     htid = get_volume_id(work_id)
     ht_1930_image_dir = image_dir / "HathiTrust-1930"
-    zipfile_prefix = htid.replace(".", "-").replace("$", "-")
-    # for excerpts, zipfiles are based on page ranges; filename includes digital page range
-    if work_id == "mdp.39015030593423-p165":
-        # special case: the first section of pages is missing in the digital scan so the excerpt starts at 193
-        zipfile_prefix += "-193"
+    # zip filenames use the htid with '.' (and '$', which appears in some htids)
+    # replaced by '-'. every name ends with an unpredictable HT-assigned id, e.g.
+    #   full work: inu-39000005925032-1788450816.zip
+    #   excerpt:   mdp-39015002669052-338-339-1788473798.zip
+    #              (htid, first page, last page, HT id)
+    htid_prefix = htid.replace(".", "-").replace("$", "-")
+
+    # excerpt names include the first digital page after the htid, which we know,
+    # so match "{htid}-{first_page}-*.zip". full works have no page segment, so
+    # match "{htid}-*.zip"; a full work and its excerpts never both appear in the
+    # corpus, so the full-work glob cannot ambiguously match an excerpt zip.
+    if work_id in HT1930_EXCERPT_FIRST_PAGE_OVERRIDES:
+        first_page = HT1930_EXCERPT_FIRST_PAGE_OVERRIDES[work_id]
+        zip_glob = f"{htid_prefix}-{first_page}-*.zip"
     elif digital_pages:
         first_page = list(intspan(digital_pages))[0]
-        zipfile_prefix += f"-{first_page}"
-
-    expected_path = ht_1930_image_dir / f"{zipfile_prefix}*.zip"
-    logging.debug(
-        "%s : expected zipfile=%s : %d pages", work_id, expected_path, len(pages)
+        zip_glob = f"{htid_prefix}-{first_page}-*.zip"
+    else:
+        # full work: htid prefix plus an unknown trailing HT id
+        zip_glob = f"{htid_prefix}-*.zip"
+    logger.debug(
+        "%s : expected zipfile=%s : %d pages",
+        work_id,
+        ht_1930_image_dir / zip_glob,
+        len(pages),
     )
-    zip_matches = list(ht_1930_image_dir.glob(zipfile_prefix + "*.zip"))
+    zip_matches = list(ht_1930_image_dir.glob(zip_glob))
     if len(zip_matches) != 1:
         logger.error(
-            "Unable to find zipfile for %s; expected at %s", work_id, zipfile_prefix
+            "Expected exactly one zipfile for %s (matching %s); found %d",
+            work_id,
+            zip_glob,
+            len(zip_matches),
         )
-        #  yield from pages to avoid omitting any cnotent... but we expect to find all zip files
+        # yield pages to avoid omitting any content, though we expect to find
+        # exactly one zip file for every 1930 work
         yield from pages
         return
 
     zipfile_path = zip_matches[0]
 
-    # TODO: add context processor from alignment notebook
     with ZipFile(zipfile_path) as ht_zip:
         # map numeric page id -> image filename in the zip
         image_map = zip_image_filenames(ht_zip)
@@ -995,6 +1023,7 @@ def process_ht1930_work(
             yield from pages
             return
 
+        matched_count = 0
         for page in pages:
             # digital sequence number is in page order  field
             page_id = page["id"]  # needed for output filename
@@ -1008,6 +1037,7 @@ def process_ht1930_work(
                     add_zip_file_to_tar(ht_zip, zip_image_path, tar, tar_image_path)
                     # if adding succeeded, include the image path in the output page data
                     page["image_path"] = tar_image_path
+                    matched_count += 1
                 except KeyError:
                     logger.warning(
                         "image %s not found in zipfile for work %s; skipping",
@@ -1022,6 +1052,19 @@ def process_ht1930_work(
                 )
             # yield every page whether or not an image was added
             yield page
+
+        # the zip had images but none matched a page order: a strong signal that
+        # the zip image numbering does not line up with page order (e.g. relative
+        # vs. absolute digital sequence). surface it rather than silently dropping
+        # every image for the work.
+        if matched_count == 0:
+            logger.warning(
+                "zipfile %s for work %s has %d image(s) but none matched a page "
+                "order; no images added",
+                zipfile_path.name,
+                work_id,
+                len(image_map),
+            )
 
 
 def main():
@@ -1094,10 +1137,11 @@ def main():
         logger.error("%s", err)
         sys.exit(-1)
 
-    # get the list of image-only (1930s) HathiTrust works for alternate zipfile logic
+    # get the list of HathiTrust 1930 works, which use manually-downloaded
+    # image zips with a different structure and alternate zipfile logic
     ht1930_work_ids = get_ht1930_work_ids(metadata_path)
     logger.info(
-        "Identified %s image-only HathiTrust 1930 work(s) in %s",
+        "Identified %s HathiTrust 1930 work(s) with manual image zips in %s",
         f"{len(ht1930_work_ids):,}",
         metadata_path.name,
     )

@@ -19,18 +19,19 @@ from corppa.utils.dataset_prep import (
     align_pages,
     align_shifted_pages,
     find_corpus_file,
+    get_ht1930_work_ids,
     get_ht_zipfile_path,
     get_zip_textfiles,
     get_zipfile_pages,
-    load_image_only_work_ids,
     longest_increasing_subseq,
     main,
     plot_alignment,
     process_gale_work,
-    process_ht_imageonly_work,
+    process_ht1930_work,
     process_ht_work,
     process_work,
     review_alignment,
+    zip_image_filenames,
 )
 
 WORK_ID = "htid:test.12345678"
@@ -533,90 +534,141 @@ def test_process_work_unknown_source_warns_and_yields(tmp_path, caplog):
     assert "unknown source 'SomethingElse'" in caplog.text
 
 
-def test_process_work_imageonly_dispatch(tmp_path):
-    # a HathiTrust work in the image-only set dispatches to the image-only path
-    # instead of the (text-aligning) process_ht_work
+def test_process_work_ht1930_dispatch(tmp_path):
+    # a HathiTrust 1930 work dispatches to the 1930-specific path instead of
+    # the (text-aligning) process_ht_work, passing along its digital page range
     work_id = "test.12345678"
-    pages = [{"work_id": work_id, "id": f"{work_id}.0001", "text": "p1"}]
+    pages = [{"work_id": work_id, "id": f"{work_id}.0001", "order": 1, "text": "p1"}]
     with (
         patch(
-            "corppa.utils.dataset_prep.process_ht_imageonly_work",
+            "corppa.utils.dataset_prep.process_ht1930_work",
             return_value=iter(pages),
-        ) as mock_imageonly,
+        ) as mock_ht1930,
         patch("corppa.utils.dataset_prep.process_ht_work") as mock_ht,
     ):
         with tarfile.open(tmp_path / "out.tar", "w") as tar:
             result = list(
                 process_work(
-                    work_id, pages, tmp_path, tar, image_only_work_ids={work_id}
+                    work_id,
+                    pages,
+                    tmp_path,
+                    tar,
+                    ht1930_work_ids={work_id: "1-10"},
                 )
             )
-    mock_imageonly.assert_called_once_with(work_id, pages, tmp_path, tar)
+    mock_ht1930.assert_called_once_with(
+        work_id, pages, tmp_path, tar, digital_pages="1-10"
+    )
     mock_ht.assert_not_called()
     assert result == pages
 
 
-def test_process_work_hathitrust_not_in_imageonly_uses_ht_work(tmp_path):
-    # a HathiTrust work NOT in the image-only set uses the standard path even
-    # when other works are flagged image-only
+def test_process_work_hathitrust_not_1930_uses_ht_work(tmp_path):
+    # a HathiTrust work NOT in the 1930 set uses the standard path even when
+    # other works are flagged as 1930
     work_id = "test.12345678"
-    pages = [{"work_id": work_id, "id": f"{work_id}.0001", "text": "p1"}]
+    pages = [{"work_id": work_id, "id": f"{work_id}.0001", "order": 1, "text": "p1"}]
     with (
         patch(
             "corppa.utils.dataset_prep.process_ht_work",
             return_value=iter(pages),
         ) as mock_ht,
-        patch("corppa.utils.dataset_prep.process_ht_imageonly_work") as mock_imageonly,
+        patch("corppa.utils.dataset_prep.process_ht1930_work") as mock_ht1930,
     ):
         with tarfile.open(tmp_path / "out.tar", "w") as tar:
             result = list(
                 process_work(
-                    work_id, pages, tmp_path, tar, image_only_work_ids={"other.99"}
+                    work_id,
+                    pages,
+                    tmp_path,
+                    tar,
+                    ht1930_work_ids={"other.99": None},
                 )
             )
     mock_ht.assert_called_once_with(work_id, pages, tmp_path, tar)
-    mock_imageonly.assert_not_called()
+    mock_ht1930.assert_not_called()
     assert result == pages
 
 
-# --- process_ht_imageonly_work ---
+# --- zip_image_filenames ---
 
 
-def _make_ht_imageonly_zip(tmp_path, htid_suffix, page_nums, ext=".jp2"):
-    """Build an image-only HathiTrust zip (page images named by page number,
-    no OCR text) at the path process_ht_imageonly_work expects."""
-    from corppa.utils.path_utils import encode_htid
+def test_zip_image_filenames_maps_numeric_stem(tmp_path):
+    zip_path = tmp_path / "vol.zip"
+    with ZipFile(zip_path, "w") as zf:
+        zf.writestr("00000001.tif", b"a")
+        zf.writestr("00000002.jpg", b"b")
+        # non-image files are ignored
+        zf.writestr("00000003.txt", b"text")
+        zf.writestr("notes.xml", b"meta")
+    with ZipFile(zip_path) as zf:
+        result = zip_image_filenames(zf)
+    assert result == {1: "00000001.tif", 2: "00000002.jpg"}
 
-    htid = f"test.{htid_suffix}"
-    zip_dir = tmp_path / "HathiTrust" / encode_htid(htid)
-    zip_dir.mkdir(parents=True)
-    zip_path = zip_dir / f"{htid_suffix}.zip"
+
+def test_zip_image_filenames_skips_non_numeric_stem(tmp_path):
+    # a stray image with a non-numeric filename must be skipped, not crash
+    zip_path = tmp_path / "vol.zip"
+    with ZipFile(zip_path, "w") as zf:
+        zf.writestr("00000001.tif", b"a")
+        zf.writestr("cover.jpg", b"cover")
+    with ZipFile(zip_path) as zf:
+        result = zip_image_filenames(zf)
+    assert result == {1: "00000001.tif"}
+
+
+# --- process_ht1930_work ---
+
+
+def _make_ht1930_zip(tmp_path, zip_name, page_nums, ext=".tif"):
+    """Build an image-only HathiTrust-1930 zip (flat, numeric image filenames,
+    no OCR text) under the image_dir/HathiTrust-1930/ directory."""
+    ht1930_dir = tmp_path / "HathiTrust-1930"
+    ht1930_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = ht1930_dir / zip_name
     with ZipFile(zip_path, "w") as zf:
         for num in page_nums:
             name = f"{num:08d}"
-            zf.writestr(f"{htid_suffix}/{name}{ext}", b"img-" + name.encode())
-    return htid
+            zf.writestr(f"{name}{ext}", b"img-" + name.encode())
+    return zip_path
 
 
-def test_process_ht_imageonly_no_zip_yields_pages_unchanged(tmp_path):
-    htid_suffix = "12345678"
-    work_id = f"test.{htid_suffix}"
-    pages = [{"work_id": work_id, "id": f"{work_id}.00000001", "text": ""}]
-    with tarfile.open(tmp_path / "out.tar", "w") as tar:
-        result = list(process_ht_imageonly_work(work_id, pages, tmp_path, tar))
+def _ht1930_pages(work_id, orders):
+    """Build page dicts with id + order for a 1930 full work."""
+    return [
+        {
+            "work_id": work_id,
+            "id": f"{work_id}.{n:08d}",
+            "order": n,
+            "text": "",
+        }
+        for n in orders
+    ]
+
+
+def test_process_ht1930_no_zip_yields_pages_unchanged(tmp_path, caplog):
+    work_id = "test.12345678"
+    pages = _ht1930_pages(work_id, [1])
+    # HathiTrust-1930 dir exists but has no matching zip
+    (tmp_path / "HathiTrust-1930").mkdir()
+    with (
+        caplog.at_level("ERROR", logger="corppa.utils.dataset_prep"),
+        tarfile.open(tmp_path / "out.tar", "w") as tar,
+    ):
+        result = list(process_ht1930_work(work_id, pages, tmp_path, tar))
     assert result == pages
     assert "image_path" not in result[0]
+    assert "Expected exactly one zipfile" in caplog.text
 
 
-def test_process_ht_imageonly_maps_images_by_page_id(tmp_path):
-    htid_suffix = "12345678"
-    work_id = f"test.{htid_suffix}"
-    _make_ht_imageonly_zip(tmp_path, htid_suffix, [1, 2, 3])
-    pages = [
-        {"work_id": work_id, "id": f"{work_id}.{n:08d}", "text": ""} for n in (1, 2, 3)
-    ]
+def test_process_ht1930_maps_images_by_order(tmp_path):
+    work_id = "test.12345678"
+    # full-work zip names are "{htid-dashes}-{HT id}.zip" (trailing number is an
+    # unrelated HT-assigned id), matched by a wildcard on the htid prefix
+    _make_ht1930_zip(tmp_path, "test-12345678-1788450816.zip", [1, 2, 3])
+    pages = _ht1930_pages(work_id, [1, 2, 3])
     with tarfile.open(tmp_path / "out.tar", "w") as tar:
-        result = list(process_ht_imageonly_work(work_id, pages, tmp_path, tar))
+        result = list(process_ht1930_work(work_id, pages, tmp_path, tar))
         tar_names = tar.getnames()
     # every page gets an image path pointing into the tar
     assert len(result) == len(pages)
@@ -624,44 +676,115 @@ def test_process_ht_imageonly_maps_images_by_page_id(tmp_path):
     from corppa.utils.path_utils import encode_htid
 
     encoded = encode_htid(work_id)
-    assert result[0]["image_path"] == f"{encoded}/{work_id}.00000001.jp2"
-    assert f"{encoded}/{work_id}.00000001.jp2" in tar_names
+    assert result[0]["image_path"] == f"{encoded}/{work_id}.00000001.tif"
+    assert f"{encoded}/{work_id}.00000001.tif" in tar_names
 
 
-def test_process_ht_imageonly_does_not_drop_unmatched_pages(tmp_path):
-    htid_suffix = "12345678"
-    work_id = f"test.{htid_suffix}"
-    # zip has images for pages 1 and 2 only
-    _make_ht_imageonly_zip(tmp_path, htid_suffix, [1, 2])
-    pages = [
-        {"work_id": work_id, "id": f"{work_id}.{n:08d}", "text": ""} for n in (1, 2, 99)
-    ]
+def test_process_ht1930_excerpt_uses_first_digital_page_in_name(tmp_path):
+    # excerpt zip names are "{htid}-{first_page}-{last_page}-{HT id}.zip"; the
+    # first digital page is matched, the trailing segments are wildcarded
+    work_id = "test.12345678-p5"
+    _make_ht1930_zip(tmp_path, "test-12345678-5-6-1788473798.zip", [5, 6])
+    pages = _ht1930_pages("test.12345678", [5, 6])
     with tarfile.open(tmp_path / "out.tar", "w") as tar:
-        result = list(process_ht_imageonly_work(work_id, pages, tmp_path, tar))
-    # page 99 (no matching image) is still yielded, without an image_path
+        result = list(
+            process_ht1930_work(work_id, pages, tmp_path, tar, digital_pages="5-6")
+        )
+    assert all("image_path" in p for p in result)
+
+
+def test_process_ht1930_does_not_drop_unmatched_pages(tmp_path):
+    work_id = "test.12345678"
+    # zip has images for orders 1 and 2 only
+    _make_ht1930_zip(tmp_path, "test-12345678-1788450816.zip", [1, 2])
+    pages = _ht1930_pages(work_id, [1, 2, 99])
+    with tarfile.open(tmp_path / "out.tar", "w") as tar:
+        result = list(process_ht1930_work(work_id, pages, tmp_path, tar))
+    # page with order 99 (no matching image) is still yielded, without an image_path
     result_ids = [p["id"] for p in result]
     assert f"{work_id}.00000099" in result_ids
     unmatched = next(p for p in result if p["id"] == f"{work_id}.00000099")
     assert "image_path" not in unmatched
 
 
-def test_process_ht_imageonly_no_images_yields_pages_unchanged(tmp_path, caplog):
-    htid_suffix = "12345678"
-    work_id = f"test.{htid_suffix}"
+def test_process_ht1930_no_images_yields_pages_unchanged(tmp_path, caplog):
+    work_id = "test.12345678"
     # build a zip with no image files (empty page list)
-    _make_ht_imageonly_zip(tmp_path, htid_suffix, [])
-    pages = [{"work_id": work_id, "id": f"{work_id}.00000001", "text": ""}]
+    _make_ht1930_zip(tmp_path, "test-12345678-1788450816.zip", [])
+    pages = _ht1930_pages(work_id, [1])
     with (
         caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
         tarfile.open(tmp_path / "out.tar", "w") as tar,
     ):
-        result = list(process_ht_imageonly_work(work_id, pages, tmp_path, tar))
+        result = list(process_ht1930_work(work_id, pages, tmp_path, tar))
     assert result == pages
     assert all("image_path" not in p for p in result)
     assert "no images found in image-only zipfile" in caplog.text
 
 
-# --- find_corpus_file / load_image_only_work_ids ---
+def test_process_ht1930_warns_when_no_page_order_matches(tmp_path, caplog):
+    # zip has images, but their numbering does not line up with any page order
+    # (e.g. relative vs absolute digital sequence); warn instead of silently
+    # dropping every image
+    work_id = "test.12345678"
+    _make_ht1930_zip(tmp_path, "test-12345678-1788450816.zip", [1, 2, 3])
+    # pages are numbered 101-103, which do not exist in the zip
+    pages = _ht1930_pages(work_id, [101, 102, 103])
+    with (
+        caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
+        tarfile.open(tmp_path / "out.tar", "w") as tar,
+    ):
+        result = list(process_ht1930_work(work_id, pages, tmp_path, tar))
+    assert result == pages
+    assert all("image_path" not in p for p in result)
+    assert "none matched a page order" in caplog.text
+
+
+def test_process_ht1930_full_work_prefix_not_confused_with_other_volume(tmp_path):
+    # the htid-prefix wildcard for a full work must not match a different
+    # volume whose htid happens to start with the same characters
+    work_id = "test.12345678"
+    _make_ht1930_zip(tmp_path, "test-12345678-1788450816.zip", [1, 2])
+    # a different, longer htid that shares a leading substring
+    _make_ht1930_zip(tmp_path, "test-123456789999-42.zip", [1, 2])
+    pages = _ht1930_pages(work_id, [1, 2])
+    with tarfile.open(tmp_path / "out.tar", "w") as tar:
+        result = list(process_ht1930_work(work_id, pages, tmp_path, tar))
+    # exactly the matching volume zip is selected; images are added
+    assert all("image_path" in p for p in result)
+
+
+def test_process_ht1930_ambiguous_zip_match_yields_pages(tmp_path, caplog):
+    # if the htid-prefix wildcard matches more than one zip, we can't safely
+    # choose; pages are yielded without images and an error is logged
+    work_id = "test.12345678"
+    _make_ht1930_zip(tmp_path, "test-12345678-1788450816.zip", [1, 2])
+    _make_ht1930_zip(tmp_path, "test-12345678-9999999999.zip", [1, 2])
+    pages = _ht1930_pages(work_id, [1, 2])
+    with (
+        caplog.at_level("ERROR", logger="corppa.utils.dataset_prep"),
+        tarfile.open(tmp_path / "out.tar", "w") as tar,
+    ):
+        result = list(process_ht1930_work(work_id, pages, tmp_path, tar))
+    assert all("image_path" not in p for p in result)
+    assert "Expected exactly one zipfile" in caplog.text
+
+
+def test_process_ht1930_excerpt_first_page_override(tmp_path):
+    # the known excerpt override supplies a first-page number that cannot be
+    # derived from the digital page range (missing pages in the scan)
+    work_id = "mdp.39015030593423-p165"
+    _make_ht1930_zip(tmp_path, "mdp-39015030593423-193-194-1788473798.zip", [193, 194])
+    pages = _ht1930_pages("mdp.39015030593423", [193, 194])
+    with tarfile.open(tmp_path / "out.tar", "w") as tar:
+        result = list(
+            # digital_pages here would derive 165, but the override forces 193
+            process_ht1930_work(work_id, pages, tmp_path, tar, digital_pages="165-166")
+        )
+    assert all("image_path" in p for p in result)
+
+
+# --- find_corpus_file / get_ht1930_work_ids ---
 
 
 def test_find_corpus_file_prefers_first_existing(tmp_path):
@@ -682,37 +805,37 @@ def test_find_corpus_file_missing_raises(tmp_path):
         find_corpus_file(tmp_path, ["ppa_pages.jsonl"])
 
 
-def test_load_image_only_work_ids_csv(tmp_path):
+def test_get_ht1930_work_ids_csv(tmp_path):
     meta = tmp_path / "ppa_metadata.csv"
     meta.write_text(
-        "work_id,pub_year\nold.1,1850\nnew.1,1930\nnew.2,1935\nedge.1,1929\n"
+        "work_id,pub_year,source,pages_digital\n"
+        "ht.old,1850,HathiTrust,\n"
+        "ht.new,1930,HathiTrust,\n"
+        "ht.excerpt,1930,HathiTrust,5-10\n"
+        "gale.new,1930,Gale,\n"
+        "ht.1931,1931,HathiTrust,\n"
     )
-    result = load_image_only_work_ids(meta)
-    assert result == {"new.1", "new.2"}
+    result = get_ht1930_work_ids(meta)
+    # only HathiTrust works published in 1930; value is the digital page range
+    assert result == {"ht.new": None, "ht.excerpt": "5-10"}
 
 
-def test_load_image_only_work_ids_json(tmp_path):
+def test_get_ht1930_work_ids_json(tmp_path):
     meta = tmp_path / "ppa_metadata.json"
     meta.write_text(
-        '[{"work_id": "old.1", "pub_year": 1899},'
-        ' {"work_id": "new.1", "pub_year": 1931}]'
+        '[{"work_id": "ht.old", "pub_year": 1899, "source": "HathiTrust", "pages_digital": null},'
+        ' {"work_id": "ht.new", "pub_year": 1930, "source": "HathiTrust", "pages_digital": null},'
+        ' {"work_id": "gale.new", "pub_year": 1930, "source": "Gale", "pages_digital": null}]'
     )
-    result = load_image_only_work_ids(meta)
-    assert result == {"new.1"}
+    result = get_ht1930_work_ids(meta)
+    assert result == {"ht.new": None}
 
 
-def test_load_image_only_work_ids_missing_column(tmp_path):
-    meta = tmp_path / "ppa_metadata.csv"
-    meta.write_text("work_id\nnew.1\n")
-    with pytest.raises(ValueError, match="missing required 'pub_year' column"):
-        load_image_only_work_ids(meta)
-
-
-def test_load_image_only_work_ids_unsupported_format(tmp_path):
+def test_get_ht1930_work_ids_unsupported_format(tmp_path):
     meta = tmp_path / "ppa_metadata.txt"
-    meta.write_text("work_id,pub_year\nnew.1,1930\n")
+    meta.write_text("work_id,pub_year,source,pages_digital\nht.new,1930,HathiTrust,\n")
     with pytest.raises(ValueError, match="Unsupported metadata format"):
-        load_image_only_work_ids(meta)
+        get_ht1930_work_ids(meta)
 
 
 # --- longest_increasing_subseq ---
@@ -1419,7 +1542,7 @@ def _restore_signal_state():
     dataset_prep._stop_requested = False
 
 
-def _pages_through(work_id, pages, image_dir, tar, image_only_work_ids=None):
+def _pages_through(work_id, pages, image_dir, tar, ht1930_work_ids=None):
     """Stand-in for process_work that yields pages unchanged (no images)."""
     yield from pages
 
@@ -1430,9 +1553,10 @@ def _write_corpus(path: Path, page_records: list[dict]) -> None:
 
 
 def _write_metadata(corpus_dir: Path, work_ids: list[str]) -> None:
-    """Write a minimal ppa_metadata.csv with a pub_year for each work id."""
-    lines = ["work_id,pub_year"]
-    lines += [f"{work_id},1850" for work_id in work_ids]
+    """Write a minimal ppa_metadata.csv with the columns get_ht1930_work_ids
+    needs (work_id, pub_year, source, pages_digital) for each work id."""
+    lines = ["work_id,pub_year,source,pages_digital"]
+    lines += [f"{work_id},1850,Gale," for work_id in work_ids]
     (corpus_dir / "ppa_metadata.csv").write_text("\n".join(lines) + "\n")
 
 
@@ -1697,7 +1821,7 @@ def test_main_stops_cleanly_after_current_work(tmp_path, corpus_input):
 
     # simulate a signal arriving while the first work is being processed:
     # request a stop after workA is handled, so workB is never started
-    def stop_after_first(work_id, pages, image_dir, tar, image_only_work_ids=None):
+    def stop_after_first(work_id, pages, image_dir, tar, ht1930_work_ids=None):
         if work_id == "workA":
             dataset_prep._request_stop(signal.SIGTERM, None)
         yield from pages
@@ -1762,7 +1886,7 @@ def test_main_reports_page_image_counts(tmp_path, corpus_input, caplog):
     output_dir = tmp_path / "out"
 
     # simulate process_work adding an image path to one page per work
-    def add_one_image(work_id, pages, image_dir, tar, image_only_work_ids=None):
+    def add_one_image(work_id, pages, image_dir, tar, ht1930_work_ids=None):
         for i, page in enumerate(pages):
             if i == 0:
                 page["image_path"] = f"{work_id}/{page['id']}.jpg"
@@ -1821,7 +1945,7 @@ def test_main_reports_interrupted_counts(tmp_path, corpus_input, caplog):
     output_dir = tmp_path / "out"
 
     # request a stop after workA so workB is never processed
-    def stop_after_first(work_id, pages, image_dir, tar, image_only_work_ids=None):
+    def stop_after_first(work_id, pages, image_dir, tar, ht1930_work_ids=None):
         if work_id == "workA":
             dataset_prep._request_stop(signal.SIGTERM, None)
         yield from pages
