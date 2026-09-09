@@ -568,10 +568,10 @@ def review_alignment(
     # add derived review fields inferred from the raw alignment columns
     return detailed_df.with_columns(
         # a page is an anchor if it contributed a trusted (non-null) shift;
-        # is_matched reflects the final (post-dedup) filename assignment
         is_anchor=pl.col.shift.is_not_null(),
+        # is_matched reflects the final (post-dedup) filename assignment
         is_matched=pl.col.page_filename.is_not_null(),
-        # character counts (zip_text is null for unmatched pages -> null length)
+        # character counts (zip_text is null for unmatched pages)
         text_len=pl.col.text.str.len_chars(),
         zip_text_len=pl.col.zip_text.str.len_chars(),
         # first-line snippets for hover text
