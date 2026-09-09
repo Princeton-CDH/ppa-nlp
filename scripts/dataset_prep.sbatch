@@ -47,11 +47,16 @@ INPUT=/scratch/network/<USER>/corppa/ppa_pages.jsonl.gz
 IMAGE_DIR=/scratch/network/<USER>/corppa/images
 OUTPUT_DIR=/scratch/network/<USER>/corppa/dataset
 
-# run in the foreground as the final command so slurm's early-warning SIGTERM
-# is delivered to the python process, whose handler stops at a work boundary.
+# Use `exec` so python REPLACES the batch shell and inherits its PID. This is
+# required for the `#SBATCH --signal=B:SIGTERM` directive above to work: `B:`
+# sends the signal to the batch shell, and bash does NOT forward SIGTERM to a
+# child it is waiting on. With `exec`, python *is* that process, so slurm's
+# early-warning SIGTERM reaches python's handler directly and it stops cleanly
+# at the next work boundary. (Without `exec`, bash catches the SIGTERM and dies
+# without ever notifying python, so the clean-stop/--continue logic never runs.)
 # --no-progress suppresses the tqdm bar in the non-interactive batch log;
 # add --continue to resume a previously interrupted run.
-python -m corppa.utils.dataset_prep \
+exec python -m corppa.utils.dataset_prep \
     --no-progress \
     --log-level info \
     --log-file "dataset_prep_${SLURM_JOB_ID}.log" \

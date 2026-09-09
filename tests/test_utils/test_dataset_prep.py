@@ -1870,6 +1870,58 @@ def test_main_stops_cleanly_after_current_work(tmp_path, corpus_input):
     assert [p["id"] for p in written] == ["workA.0001", "workA.0002"]
 
 
+def test_main_input_stream_close_error_is_suppressed(tmp_path, corpus_input, caplog):
+    # Regression: for compressed input, orjsonl.stream decompresses via an xopen
+    # subprocess. On ctrl-c the SIGINT kills that subprocess (exit code -2), so
+    # tearing down the stream generator raises a spurious OSError/BrokenPipeError.
+    # main() must stop cleanly and suppress that shutdown-only error rather than
+    # let it propagate (previously surfaced as "BrokenPipeError: [Errno 32]").
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    output_dir = tmp_path / "out"
+
+    real_pages = list(orjsonl.stream(corpus_input / "ppa_pages.jsonl"))
+
+    def failing_stream(_path):
+        """Yield pages, but when the generator is closed early (as happens when
+        the main loop breaks on a stop signal), raise on teardown to mimic the
+        killed decompressor subprocess being closed after a ctrl-c."""
+        try:
+            yield from real_pages
+        except GeneratorExit:
+            # close() throws GeneratorExit in; the real bug is the xopen
+            # subprocess close raising during this teardown
+            raise OSError("b'' (exit code -2)")
+
+    # request a stop while processing the first work so the loop breaks mid-stream
+    # and main() closes the (still-open) generator, triggering the teardown error
+    def stop_after_first(work_id, pages, image_dir, tar, ht1930_work_ids=None):
+        if work_id == "workA":
+            dataset_prep._request_stop(signal.SIGINT, None)
+        yield from pages
+
+    argv = ["dataset_prep.py", str(corpus_input), str(image_dir), str(output_dir)]
+    with (
+        patch("sys.argv", argv),
+        patch(
+            "corppa.utils.dataset_prep.process_work",
+            side_effect=stop_after_first,
+        ),
+        patch(
+            "corppa.utils.dataset_prep.orjsonl.stream",
+            side_effect=failing_stream,
+        ),
+        caplog.at_level("DEBUG", logger="corppa.utils.dataset_prep"),
+    ):
+        # must not raise despite the stream teardown error
+        main()
+
+    # the completed work (workA) was written before the clean stop
+    written = list(orjsonl.stream(output_dir / "ppa_pages.jsonl"))
+    assert [p["id"] for p in written] == ["workA.0001", "workA.0002"]
+    assert "ignoring input stream close error during shutdown" in caplog.text
+
+
 def test_main_stop_flag_reset_between_runs(tmp_path, corpus_input):
     image_dir = tmp_path / "images"
     image_dir.mkdir()
