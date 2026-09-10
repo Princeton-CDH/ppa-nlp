@@ -2,8 +2,8 @@
 #SBATCH --job-name=ppa-dataset-prep  # job short name
 #SBATCH --nodes=1                # node count
 #SBATCH --ntasks=1               # total number of tasks across all nodes
-#SBATCH --cpus-per-task=8        # cpu-cores per task
-#SBATCH --mem-per-cpu=4G         # memory per cpu-core
+#SBATCH --cpus-per-task=4        # cpu-cores per task
+#SBATCH --mem-per-cpu=1G         # memory per cpu-core
 #SBATCH --time=24:00:00          # total run time limit (HH:MM:SS)
 #SBATCH --mail-type=begin        # send email when job begins
 #SBATCH --mail-type=end          # send email when job ends
@@ -47,11 +47,12 @@ INPUT=/scratch/network/<USER>/corppa/ppa_pages.jsonl.gz
 IMAGE_DIR=/scratch/network/<USER>/corppa/images
 OUTPUT_DIR=/scratch/network/<USER>/corppa/dataset
 
-# run in the foreground as the final command so slurm's early-warning SIGTERM
-# is delivered to the python process, whose handler stops at a work boundary.
-# --no-progress suppresses the tqdm bar in the non-interactive batch log;
-# add --continue to resume a previously interrupted run.
-python -m corppa.utils.dataset_prep \
+# Use `exec` so requested slurm SIGTERM signal will propagate to
+# the python script, so the script can finish processing the current
+# work pages before exiting cleaning, to support resuming with --continue flag.
+# Using --no-progress to suppress the tqdm progress bar in output log file.
+# Add --continue to resume a previously interrupted run.
+exec python -m corppa.utils.dataset_prep \
     --no-progress \
     --log-level info \
     --log-file "dataset_prep_${SLURM_JOB_ID}.log" \

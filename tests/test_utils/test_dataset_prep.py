@@ -4,6 +4,7 @@
 import re
 import signal
 import tarfile
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 from zipfile import ZipFile
@@ -19,16 +20,21 @@ from corppa.utils.dataset_prep import (
     add_zip_file_to_tar,
     align_pages,
     align_shifted_pages,
+    find_corpus_file,
+    get_ht1930_work_ids,
     get_ht_zipfile_path,
     get_zip_textfiles,
     get_zipfile_pages,
     longest_increasing_subseq,
     main,
+    open_ht_zipfile,
     plot_alignment,
     process_gale_work,
+    process_ht1930_work,
     process_ht_work,
     process_work,
     review_alignment,
+    zip_image_filenames,
 )
 
 WORK_ID = "htid:test.12345678"
@@ -207,6 +213,33 @@ def test_align_pages_join_mismatch_returns_partial(tmp_path, pages_df):
         }
 
 
+def test_align_pages_join_count_mismatch_warns_when_zip_count_ok(
+    tmp_path, pages_df, caplog
+):
+    # The zip has as many pages as the corpus (so the zip-count shortfall is not
+    # flagged), but one corpus page is absent from the zip, so the join count
+    # still differs from expected; the mismatch is warned about and the partial
+    # mapping for the pages that did join is returned.
+    zip_path = make_zip(
+        tmp_path,
+        {
+            "00000001.txt": PAGE_TEXTS["00000001"],
+            "00000002.txt": PAGE_TEXTS["00000002"],
+            "00000004.txt": "some other page",  # page 3 has no zip counterpart
+        },
+    )
+    with (
+        caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
+        ZipFile(zip_path) as zf,
+    ):
+        assert align_pages(WORK_ID, pages_df, zf) == {
+            "work.00000001": "00000001",
+            "work.00000002": "00000002",
+        }
+    assert "joined pages" in caplog.text
+    assert "does not match expected page count" in caplog.text
+
+
 def test_align_pages_insufficient_zip_pages(tmp_path, pages_df):
     # Zip has only one of the corpus's three pages -> partial mapping returned.
     zip_path = make_zip(tmp_path, {"00000001.txt": PAGE_TEXTS["00000001"]})
@@ -286,6 +319,28 @@ def test_process_gale_work_missing_image_file_omits_path(tmp_path):
 
     assert len(result) == 1
     assert "image_path" not in result[0]
+
+
+# --- open_ht_zipfile ---
+
+
+def test_open_ht_zipfile_opens_existing(tmp_path):
+    zip_path = tmp_path / "vol.zip"
+    with ZipFile(zip_path, "w") as zf:
+        zf.writestr("00000001.tif", b"a")
+    with open_ht_zipfile(zip_path) as ht_zip:
+        assert ht_zip is not None
+        assert ht_zip.namelist() == ["00000001.tif"]
+
+
+def test_open_ht_zipfile_missing_path_yields_none(tmp_path):
+    with open_ht_zipfile(tmp_path / "does-not-exist.zip") as ht_zip:
+        assert ht_zip is None
+
+
+def test_open_ht_zipfile_none_path_yields_none():
+    with open_ht_zipfile(None) as ht_zip:
+        assert ht_zip is None
 
 
 # --- process_ht_work ---
@@ -490,6 +545,25 @@ def test_tally_processed_work_counts_missing_images_for_image_source():
     assert counts["gale_missing_image"] == 0
 
 
+def test_tally_processed_work_counts_missing_images_for_gale():
+    from collections import defaultdict
+
+    from corppa.utils.dataset_prep import _tally_processed_work
+
+    counts: defaultdict[str, int] = defaultdict(int)
+    pages = [
+        {"id": "CB0127060085.0001", "image_path": "CB0127060085/CB0127060085_001.jpg"},
+        {"id": "CB0127060085.0002"},  # no image
+    ]
+    # Gale work id (CB0.../CW0...) -> pages expect images
+    _tally_processed_work("CB0127060085", pages, counts)
+    assert counts["works_processed"] == 1
+    assert counts["pages_processed"] == 2
+    assert counts["page_images"] == 1
+    assert counts["gale_missing_image"] == 1
+    assert counts["ht_missing_image"] == 0
+
+
 def test_tally_processed_work_ignores_missing_images_for_eebo():
     from collections import defaultdict
 
@@ -581,6 +655,353 @@ def test_process_work_unknown_source_warns_and_yields(tmp_path, caplog):
     # pages are not dropped, and the unknown source is surfaced as a warning
     assert result == pages
     assert "unknown source 'SomethingElse'" in caplog.text
+
+
+def test_process_work_ht1930_dispatch(tmp_path):
+    # a HathiTrust 1930 work dispatches to the 1930-specific path instead of
+    # the (text-aligning) process_ht_work, passing along its digital page range
+    work_id = "test.12345678"
+    pages = [{"work_id": work_id, "id": f"{work_id}.0001", "order": 1, "text": "p1"}]
+    with (
+        patch(
+            "corppa.utils.dataset_prep.process_ht1930_work",
+            return_value=iter(pages),
+        ) as mock_ht1930,
+        patch("corppa.utils.dataset_prep.process_ht_work") as mock_ht,
+    ):
+        with tarfile.open(tmp_path / "out.tar", "w") as tar:
+            result = list(
+                process_work(
+                    work_id,
+                    pages,
+                    tmp_path,
+                    tar,
+                    ht1930_work_ids={work_id: "1-10"},
+                )
+            )
+    mock_ht1930.assert_called_once_with(
+        work_id, pages, tmp_path, tar, digital_page_range="1-10"
+    )
+    mock_ht.assert_not_called()
+    assert result == pages
+
+
+def test_process_work_hathitrust_not_1930_uses_ht_work(tmp_path):
+    # a HathiTrust work NOT in the 1930 set uses the standard path even when
+    # other works are flagged as 1930
+    work_id = "test.12345678"
+    pages = [{"work_id": work_id, "id": f"{work_id}.0001", "order": 1, "text": "p1"}]
+    with (
+        patch(
+            "corppa.utils.dataset_prep.process_ht_work",
+            return_value=iter(pages),
+        ) as mock_ht,
+        patch("corppa.utils.dataset_prep.process_ht1930_work") as mock_ht1930,
+    ):
+        with tarfile.open(tmp_path / "out.tar", "w") as tar:
+            result = list(
+                process_work(
+                    work_id,
+                    pages,
+                    tmp_path,
+                    tar,
+                    ht1930_work_ids={"other.99": None},
+                )
+            )
+    mock_ht.assert_called_once_with(work_id, pages, tmp_path, tar)
+    mock_ht1930.assert_not_called()
+    assert result == pages
+
+
+# --- zip_image_filenames ---
+
+
+def test_zip_image_filenames_maps_numeric_stem(tmp_path):
+    zip_path = tmp_path / "vol.zip"
+    with ZipFile(zip_path, "w") as zf:
+        zf.writestr("00000001.tif", b"a")
+        zf.writestr("00000002.jpg", b"b")
+        # non-image files are ignored
+        zf.writestr("00000003.txt", b"text")
+        zf.writestr("notes.xml", b"meta")
+    with ZipFile(zip_path) as zf:
+        result = zip_image_filenames(zf)
+    assert result == {1: "00000001.tif", 2: "00000002.jpg"}
+
+
+def test_zip_image_filenames_skips_non_numeric_stem(tmp_path):
+    # a stray image with a non-numeric filename must be skipped, not crash
+    zip_path = tmp_path / "vol.zip"
+    with ZipFile(zip_path, "w") as zf:
+        zf.writestr("00000001.tif", b"a")
+        zf.writestr("cover.jpg", b"cover")
+    with ZipFile(zip_path) as zf:
+        result = zip_image_filenames(zf)
+    assert result == {1: "00000001.tif"}
+
+
+# --- process_ht1930_work ---
+
+
+def _make_ht1930_zip(tmp_path, zip_name, page_nums, ext=".tif"):
+    """Build an image-only HathiTrust-1930 zip (flat, numeric image filenames,
+    no OCR text) under the image_dir/HathiTrust-1930/ directory."""
+    ht1930_dir = tmp_path / "HathiTrust-1930"
+    ht1930_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = ht1930_dir / zip_name
+    with ZipFile(zip_path, "w") as zf:
+        for num in page_nums:
+            name = f"{num:08d}"
+            zf.writestr(f"{name}{ext}", b"img-" + name.encode())
+    return zip_path
+
+
+def _ht1930_pages(work_id, orders):
+    """Build page dicts with id + order for a 1930 full work."""
+    return [
+        {
+            "work_id": work_id,
+            "id": f"{work_id}.{n:08d}",
+            "order": n,
+            "text": "",
+        }
+        for n in orders
+    ]
+
+
+def test_process_ht1930_no_zip_yields_pages_unchanged(tmp_path, caplog):
+    work_id = "test.12345678"
+    pages = _ht1930_pages(work_id, [1])
+    # HathiTrust-1930 dir exists but has no matching zip
+    (tmp_path / "HathiTrust-1930").mkdir()
+    with (
+        caplog.at_level("ERROR", logger="corppa.utils.dataset_prep"),
+        tarfile.open(tmp_path / "out.tar", "w") as tar,
+    ):
+        result = list(process_ht1930_work(work_id, pages, tmp_path, tar))
+    assert result == pages
+    assert "image_path" not in result[0]
+    assert "Expected exactly one zipfile" in caplog.text
+
+
+def test_process_ht1930_maps_images_by_order(tmp_path):
+    work_id = "test.12345678"
+    # full-work zip names are "{htid-dashes}-{HT id}.zip" (trailing number is an
+    # unrelated HT-assigned id), matched by a wildcard on the htid prefix
+    _make_ht1930_zip(tmp_path, "test-12345678-1788450816.zip", [1, 2, 3])
+    pages = _ht1930_pages(work_id, [1, 2, 3])
+    with tarfile.open(tmp_path / "out.tar", "w") as tar:
+        result = list(process_ht1930_work(work_id, pages, tmp_path, tar))
+        tar_names = tar.getnames()
+    # every page gets an image path pointing into the tar
+    assert len(result) == len(pages)
+    assert all("image_path" in p for p in result)
+    from corppa.utils.path_utils import encode_htid
+
+    encoded = encode_htid(work_id)
+    assert result[0]["image_path"] == f"{encoded}/{work_id}.00000001.tif"
+    assert f"{encoded}/{work_id}.00000001.tif" in tar_names
+
+
+def test_process_ht1930_missing_image_in_zip_warns(tmp_path, caplog):
+    # The image filename came from the zip namelist, but add_zip_file_to_tar can
+    # still raise KeyError (e.g. the entry disappeared); warn and skip the page's
+    # image rather than failing the whole work.
+    work_id = "test.12345678"
+    _make_ht1930_zip(tmp_path, "test-12345678-1788450816.zip", [1, 2])
+    pages = _ht1930_pages(work_id, [1, 2])
+    with (
+        patch(
+            "corppa.utils.dataset_prep.add_zip_file_to_tar",
+            side_effect=KeyError("missing image"),
+        ),
+        caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
+        tarfile.open(tmp_path / "out.tar", "w") as tar,
+    ):
+        result = list(process_ht1930_work(work_id, pages, tmp_path, tar))
+    # every page is still yielded, none with an image path, and both pages warn
+    assert [p["id"] for p in result] == [p["id"] for p in pages]
+    assert all("image_path" not in p for p in result)
+    assert caplog.text.count("image 00000001.tif not found in zipfile") == 1
+    assert caplog.text.count("image 00000002.tif not found in zipfile") == 1
+
+
+def test_process_ht1930_zip_disappears_between_glob_and_open(tmp_path):
+    # The zip matched by glob() may be deleted before it is opened; open_ht_zipfile
+    # then yields None and pages pass through unchanged rather than crashing.
+    work_id = "test.12345678"
+    _make_ht1930_zip(tmp_path, "test-12345678-1788450816.zip", [1, 2])
+    pages = _ht1930_pages(work_id, [1, 2])
+    with (
+        patch(
+            "corppa.utils.dataset_prep.open_ht_zipfile",
+            return_value=nullcontext(None),
+        ),
+        tarfile.open(tmp_path / "out.tar", "w") as tar,
+    ):
+        result = list(process_ht1930_work(work_id, pages, tmp_path, tar))
+    assert result == pages
+    assert all("image_path" not in p for p in result)
+
+
+def test_process_ht1930_excerpt_uses_first_digital_page_in_name(tmp_path):
+    # excerpt zip names are "{htid}-{first_page}-{last_page}-{HT id}.zip"; the
+    # first digital page is matched, the trailing segments are wildcarded
+    work_id = "test.12345678-p5"
+    _make_ht1930_zip(tmp_path, "test-12345678-5-6-1788473798.zip", [5, 6])
+    pages = _ht1930_pages("test.12345678", [5, 6])
+    with tarfile.open(tmp_path / "out.tar", "w") as tar:
+        result = list(
+            process_ht1930_work(work_id, pages, tmp_path, tar, digital_page_range="5-6")
+        )
+    assert all("image_path" in p for p in result)
+
+
+def test_process_ht1930_does_not_drop_unmatched_pages(tmp_path):
+    work_id = "test.12345678"
+    # zip has images for orders 1 and 2 only
+    _make_ht1930_zip(tmp_path, "test-12345678-1788450816.zip", [1, 2])
+    pages = _ht1930_pages(work_id, [1, 2, 99])
+    with tarfile.open(tmp_path / "out.tar", "w") as tar:
+        result = list(process_ht1930_work(work_id, pages, tmp_path, tar))
+    # page with order 99 (no matching image) is still yielded, without an image_path
+    result_ids = [p["id"] for p in result]
+    assert f"{work_id}.00000099" in result_ids
+    unmatched = next(p for p in result if p["id"] == f"{work_id}.00000099")
+    assert "image_path" not in unmatched
+
+
+def test_process_ht1930_no_images_yields_pages_unchanged(tmp_path, caplog):
+    work_id = "test.12345678"
+    # build a zip with no image files (empty page list)
+    _make_ht1930_zip(tmp_path, "test-12345678-1788450816.zip", [])
+    pages = _ht1930_pages(work_id, [1])
+    with (
+        caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
+        tarfile.open(tmp_path / "out.tar", "w") as tar,
+    ):
+        result = list(process_ht1930_work(work_id, pages, tmp_path, tar))
+    assert result == pages
+    assert all("image_path" not in p for p in result)
+    assert "no images found in image-only zipfile" in caplog.text
+
+
+def test_process_ht1930_warns_when_no_page_order_matches(tmp_path, caplog):
+    # zip has images, but their numbering does not line up with any page order
+    # (e.g. relative vs absolute digital sequence); warn instead of silently
+    # dropping every image
+    work_id = "test.12345678"
+    _make_ht1930_zip(tmp_path, "test-12345678-1788450816.zip", [1, 2, 3])
+    # pages are numbered 101-103, which do not exist in the zip
+    pages = _ht1930_pages(work_id, [101, 102, 103])
+    with (
+        caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
+        tarfile.open(tmp_path / "out.tar", "w") as tar,
+    ):
+        result = list(process_ht1930_work(work_id, pages, tmp_path, tar))
+    assert result == pages
+    assert all("image_path" not in p for p in result)
+    assert "none matched a page order" in caplog.text
+
+
+def test_process_ht1930_full_work_prefix_not_confused_with_other_volume(tmp_path):
+    # the htid-prefix wildcard for a full work must not match a different
+    # volume whose htid happens to start with the same characters
+    work_id = "test.12345678"
+    _make_ht1930_zip(tmp_path, "test-12345678-1788450816.zip", [1, 2])
+    # a different, longer htid that shares a leading substring
+    _make_ht1930_zip(tmp_path, "test-123456789999-42.zip", [1, 2])
+    pages = _ht1930_pages(work_id, [1, 2])
+    with tarfile.open(tmp_path / "out.tar", "w") as tar:
+        result = list(process_ht1930_work(work_id, pages, tmp_path, tar))
+    # exactly the matching volume zip is selected; images are added
+    assert all("image_path" in p for p in result)
+
+
+def test_process_ht1930_ambiguous_zip_match_yields_pages(tmp_path, caplog):
+    # if the htid-prefix wildcard matches more than one zip, we can't safely
+    # choose; pages are yielded without images and an error is logged
+    work_id = "test.12345678"
+    _make_ht1930_zip(tmp_path, "test-12345678-1788450816.zip", [1, 2])
+    _make_ht1930_zip(tmp_path, "test-12345678-9999999999.zip", [1, 2])
+    pages = _ht1930_pages(work_id, [1, 2])
+    with (
+        caplog.at_level("ERROR", logger="corppa.utils.dataset_prep"),
+        tarfile.open(tmp_path / "out.tar", "w") as tar,
+    ):
+        result = list(process_ht1930_work(work_id, pages, tmp_path, tar))
+    assert all("image_path" not in p for p in result)
+    assert "Expected exactly one zipfile" in caplog.text
+
+
+def test_process_ht1930_excerpt_first_page_override(tmp_path):
+    # the known excerpt override supplies a first-page number that cannot be
+    # derived from the digital page range (missing pages in the scan)
+    work_id = "mdp.39015030593423-p165"
+    _make_ht1930_zip(tmp_path, "mdp-39015030593423-193-194-1788473798.zip", [193, 194])
+    pages = _ht1930_pages("mdp.39015030593423", [193, 194])
+    with tarfile.open(tmp_path / "out.tar", "w") as tar:
+        result = list(
+            # digital_pages here would derive 165, but the override forces 193
+            process_ht1930_work(
+                work_id, pages, tmp_path, tar, digital_page_range="165-166"
+            )
+        )
+    assert all("image_path" in p for p in result)
+
+
+# --- find_corpus_file / get_ht1930_work_ids ---
+
+
+def test_find_corpus_file_prefers_first_existing(tmp_path):
+    (tmp_path / "ppa_pages.jsonl.gz").write_text("")
+    # only the compressed file exists; it should be returned
+    assert find_corpus_file(tmp_path, ["ppa_pages.jsonl", "ppa_pages.jsonl.gz"]) == (
+        tmp_path / "ppa_pages.jsonl.gz"
+    )
+    # uncompressed preferred when both exist
+    (tmp_path / "ppa_pages.jsonl").write_text("")
+    assert find_corpus_file(tmp_path, ["ppa_pages.jsonl", "ppa_pages.jsonl.gz"]) == (
+        tmp_path / "ppa_pages.jsonl"
+    )
+
+
+def test_find_corpus_file_missing_raises(tmp_path):
+    with pytest.raises(FileNotFoundError, match="None of the expected files"):
+        find_corpus_file(tmp_path, ["ppa_pages.jsonl"])
+
+
+def test_get_ht1930_work_ids_csv(tmp_path):
+    meta = tmp_path / "ppa_metadata.csv"
+    meta.write_text(
+        "work_id,pub_year,source,pages_digital\n"
+        "ht.old,1850,HathiTrust,\n"
+        "ht.new,1930,HathiTrust,\n"
+        "ht.excerpt,1930,HathiTrust,5-10\n"
+        "gale.new,1930,Gale,\n"
+        "ht.1931,1931,HathiTrust,\n"
+    )
+    result = get_ht1930_work_ids(meta)
+    # only HathiTrust works published in 1930; value is the digital page range
+    assert result == {"ht.new": None, "ht.excerpt": "5-10"}
+
+
+def test_get_ht1930_work_ids_json(tmp_path):
+    meta = tmp_path / "ppa_metadata.json"
+    meta.write_text(
+        '[{"work_id": "ht.old", "pub_year": 1899, "source": "HathiTrust", "pages_digital": null},'
+        ' {"work_id": "ht.new", "pub_year": 1930, "source": "HathiTrust", "pages_digital": null},'
+        ' {"work_id": "gale.new", "pub_year": 1930, "source": "Gale", "pages_digital": null}]'
+    )
+    result = get_ht1930_work_ids(meta)
+    assert result == {"ht.new": None}
+
+
+def test_get_ht1930_work_ids_unsupported_format(tmp_path):
+    meta = tmp_path / "ppa_metadata.txt"
+    meta.write_text("work_id,pub_year,source,pages_digital\nht.new,1930,HathiTrust,\n")
+    with pytest.raises(ValueError, match="Unsupported metadata format"):
+        get_ht1930_work_ids(meta)
 
 
 # --- longest_increasing_subseq ---
@@ -1200,6 +1621,12 @@ def test_review_alignment_from_pages_and_zip(tmp_path):
     assert (result["aligned_order"] - result["order"]).unique().to_list() == [10]
 
 
+def test_review_alignment_missing_zip_raises(tmp_path):
+    pages = [{"id": "work.00000001", "order": 1, "text": "hi"}]
+    with pytest.raises(FileNotFoundError, match="zip file not found"):
+        review_alignment("work", pages, tmp_path / "missing.zip")
+
+
 def test_review_alignment_adds_derived_fields(tmp_path):
     # review_alignment adds lengths, snippets, and an aligned-page match_score
     # (comparable to cdist_best_score) on top of the raw alignment frame
@@ -1357,7 +1784,7 @@ def _restore_signal_state():
     dataset_prep._stop_requested = False
 
 
-def _pages_through(work_id, pages, image_dir, tar):
+def _pages_through(work_id, pages, image_dir, tar, ht1930_work_ids=None):
     """Stand-in for process_work that yields pages unchanged (no images)."""
     yield from pages
 
@@ -1367,12 +1794,31 @@ def _write_corpus(path: Path, page_records: list[dict]) -> None:
     orjsonl.save(path, page_records)
 
 
-def _run_main(input_path, main_dirs, extra_args=None, process_side_effect=None):
-    """Invoke main() with the given input path and (image_dir, output_dir),
+def _write_metadata(corpus_dir: Path, work_ids: list[str]) -> None:
+    """Write a minimal ppa_metadata.csv with the columns get_ht1930_work_ids
+    needs (work_id, pub_year, source, pages_digital) for each work id."""
+    lines = ["work_id,pub_year,source,pages_digital"]
+    lines += [f"{work_id},1850,Gale," for work_id in work_ids]
+    (corpus_dir / "ppa_metadata.csv").write_text("\n".join(lines) + "\n")
+
+
+def _make_corpus_dir(
+    corpus_dir: Path, page_records: list[dict], pages_filename="ppa_pages.jsonl"
+) -> Path:
+    """Create a PPA corpus directory with a page corpus and work metadata."""
+    corpus_dir.mkdir(parents=True, exist_ok=True)
+    _write_corpus(corpus_dir / pages_filename, page_records)
+    work_ids = sorted({p["work_id"] for p in page_records})
+    _write_metadata(corpus_dir, work_ids)
+    return corpus_dir
+
+
+def _run_main(corpus_dir, main_dirs, extra_args=None, process_side_effect=None):
+    """Invoke main() with a corpus dir + (image_dir, output_dir) fixture pair,
     patching process_work with ``process_side_effect`` (defaults to yielding
     pages unchanged, so no image/zip handling is exercised)."""
     image_dir, output_dir = main_dirs
-    argv = ["dataset_prep.py", str(input_path), str(image_dir), str(output_dir)]
+    argv = ["dataset_prep.py", str(corpus_dir), str(image_dir), str(output_dir)]
     if extra_args:
         argv += extra_args
     with (
@@ -1396,10 +1842,9 @@ def main_dirs(tmp_path):
 
 @pytest.fixture
 def corpus_input(tmp_path):
-    """A small two-work corpus with two pages each."""
-    input_path = tmp_path / "input.jsonl"
-    _write_corpus(
-        input_path,
+    """A small two-work corpus (dir with pages + metadata), two pages each."""
+    return _make_corpus_dir(
+        tmp_path / "corpus",
         [
             {"work_id": "work.A", "id": "workA.0001", "text": "a1"},
             {"work_id": "work.A", "id": "workA.0002", "text": "a2"},
@@ -1407,7 +1852,38 @@ def corpus_input(tmp_path):
             {"work_id": "work.B", "id": "workB.0002", "text": "b2"},
         ],
     )
-    return input_path
+
+
+def test_main_missing_corpus_dir_exits(tmp_path, main_dirs, caplog):
+    # a non-existent corpus dir is a fatal (negative exit code) startup error
+    image_dir, output_dir = main_dirs
+    missing = tmp_path / "does-not-exist"
+    argv = ["dataset_prep.py", str(missing), str(image_dir), str(output_dir)]
+    with (
+        patch("sys.argv", argv),
+        pytest.raises(SystemExit) as exc,
+        caplog.at_level("ERROR", logger="corppa.utils.dataset_prep"),
+    ):
+        main()
+    assert exc.value.code == -1
+    assert "corpus directory" in caplog.text
+    assert "does not exist" in caplog.text
+
+
+def test_main_corpus_dir_missing_files_exits(tmp_path, main_dirs, caplog):
+    # a corpus dir without the expected page corpus / metadata files is fatal
+    image_dir, output_dir = main_dirs
+    empty = tmp_path / "empty-corpus"
+    empty.mkdir()
+    argv = ["dataset_prep.py", str(empty), str(image_dir), str(output_dir)]
+    with (
+        patch("sys.argv", argv),
+        pytest.raises(SystemExit) as exc,
+        caplog.at_level("ERROR", logger="corppa.utils.dataset_prep"),
+    ):
+        main()
+    assert exc.value.code == -1
+    assert "None of the expected files" in caplog.text
 
 
 def test_main_progress_bar_enabled_by_default(corpus_input, main_dirs):
@@ -1596,7 +2072,7 @@ def test_main_without_continue_warns_and_overwrites_existing_archive(
 # --- graceful stop on signal ---
 
 
-def _stop_after_first(work_id, pages, image_dir, tar):
+def _stop_after_first(work_id, pages, image_dir, tar, ht1930_work_ids=None):
     """process_work stand-in that requests a stop once workA is handled, so the
     run stops cleanly at the work boundary before workB is started."""
     if work_id == "work.A":
@@ -1612,6 +2088,58 @@ def test_main_stops_cleanly_after_current_work(corpus_input, main_dirs):
     # only the completed work (workA) is written; workB is skipped entirely
     written = list(orjsonl.stream(output_dir / "ppa_pages.jsonl"))
     assert [p["id"] for p in written] == ["workA.0001", "workA.0002"]
+
+
+def test_main_input_stream_close_error_is_suppressed(tmp_path, corpus_input, caplog):
+    # Regression: for compressed input, orjsonl.stream decompresses via an xopen
+    # subprocess. On ctrl-c the SIGINT kills that subprocess (exit code -2), so
+    # tearing down the stream generator raises a spurious OSError/BrokenPipeError.
+    # main() must stop cleanly and suppress that shutdown-only error rather than
+    # let it propagate (previously surfaced as "BrokenPipeError: [Errno 32]").
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    output_dir = tmp_path / "out"
+
+    real_pages = list(orjsonl.stream(corpus_input / "ppa_pages.jsonl"))
+
+    def failing_stream(_path):
+        """Yield pages, but when the generator is closed early (as happens when
+        the main loop breaks on a stop signal), raise on teardown to mimic the
+        killed decompressor subprocess being closed after a ctrl-c."""
+        try:
+            yield from real_pages
+        except GeneratorExit:
+            # close() throws GeneratorExit in; the real bug is the xopen
+            # subprocess close raising during this teardown
+            raise OSError("b'' (exit code -2)")
+
+    # request a stop while processing the first work so the loop breaks mid-stream
+    # and main() closes the (still-open) generator, triggering the teardown error
+    def stop_after_first(work_id, pages, image_dir, tar, ht1930_work_ids=None):
+        if work_id == "work.A":
+            dataset_prep._request_stop(signal.SIGINT, None)
+        yield from pages
+
+    argv = ["dataset_prep.py", str(corpus_input), str(image_dir), str(output_dir)]
+    with (
+        patch("sys.argv", argv),
+        patch(
+            "corppa.utils.dataset_prep.process_work",
+            side_effect=stop_after_first,
+        ),
+        patch(
+            "corppa.utils.dataset_prep.orjsonl.stream",
+            side_effect=failing_stream,
+        ),
+        caplog.at_level("DEBUG", logger="corppa.utils.dataset_prep"),
+    ):
+        # must not raise despite the stream teardown error
+        main()
+
+    # the completed work (workA) was written before the clean stop
+    written = list(orjsonl.stream(output_dir / "ppa_pages.jsonl"))
+    assert [p["id"] for p in written] == ["workA.0001", "workA.0002"]
+    assert "ignoring input stream close error during shutdown" in caplog.text
 
 
 def test_main_stop_flag_reset_between_runs(corpus_input, main_dirs):
@@ -1648,8 +2176,8 @@ def test_main_reports_finished_counts(corpus_input, main_dirs, caplog):
 
 
 def test_main_reports_page_image_counts(corpus_input, main_dirs, caplog):
-    # simulate process_work adding an image path to the first page of each work
-    def add_one_image(work_id, pages, image_dir, tar):
+    # simulate process_work adding an image path to one page per work
+    def add_one_image(work_id, pages, image_dir, tar, ht1930_work_ids=None):
         for i, page in enumerate(pages):
             if i == 0:
                 page["image_path"] = f"{work_id}/{page['id']}.jpg"
@@ -1663,6 +2191,20 @@ def test_main_reports_page_image_counts(corpus_input, main_dirs, caplog):
         "finished: 2 works processed (4 pages, 2 page images), "
         "0 works skipped (0 pages)" in caplog.text
     )
+
+
+def test_main_reports_gale_missing_image_warning(tmp_path, main_dirs, caplog):
+    # a Gale work processed without images is surfaced as a run-level warning
+    # naming the Gale tally (it is not attributed to the HathiTrust tally)
+    corpus_dir = _make_corpus_dir(
+        tmp_path / "gale-corpus",
+        [{"work_id": "CB0127060085", "id": "CB0127060085.0001", "text": "p1"}],
+    )
+    with caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"):
+        _run_main(corpus_dir, main_dirs)
+
+    assert "1 Gale pages missing images" in caplog.text
+    assert "HathiTrust pages missing images" not in caplog.text
 
 
 def test_main_reports_skipped_counts_on_continue(corpus_input, main_dirs, caplog):

@@ -3,9 +3,11 @@ import argparse
 import bisect
 import logging
 import signal
+import sys
 import tarfile
 from collections import defaultdict
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from time import mktime, perf_counter
 from typing import Optional
@@ -28,6 +30,7 @@ from corppa.utils.path_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
 
 # set when an interrupt/termination signal is received so the main loop can
 # stop cleanly at the next work boundary (avoids partial-work output)
@@ -545,7 +548,7 @@ def align_pages(work_id: str, pages_df: pl.DataFrame, zipfile: ZipFile) -> dict:
 def review_alignment(
     work_id: str,
     pages: pl.DataFrame | list[dict],
-    zipfile: ZipFile | Path | str,
+    zipfile_path: Path | str,
 ) -> pl.DataFrame:
     """Run the shifted-page alignment for a single work and return a per-page
     frame for review/visualization. Intended for notebook use.
@@ -559,7 +562,7 @@ def review_alignment(
     ``cdist_best_score`` (the best score against *any* zip page).
 
     ``pages`` may be a page DataFrame (with ``id``, ``order``/``text`` columns) or
-    a list of page dicts; ``zipfile`` may be an open ``ZipFile`` or a path to one.
+    a list of page dicts; ``zipfile_path`` is a path to the work's zip file.
     """
     pages_df = pages if isinstance(pages, pl.DataFrame) else pl.DataFrame(pages)
     # add an order column (numeric trailing page id) if the caller didn't supply one
@@ -568,12 +571,10 @@ def review_alignment(
             order=pl.col.id.str.extract(r"([0-9]+$)").cast(pl.Int64)
         )
 
-    # accept an open ZipFile or a path; open+close our own handle for a path
-    if isinstance(zipfile, ZipFile):
-        zip_pages_df = get_zipfile_pages(zipfile)
-    else:
-        with ZipFile(zipfile) as zf:
-            zip_pages_df = get_zipfile_pages(zf)
+    with open_ht_zipfile(Path(zipfile_path)) as ht_zip:
+        if ht_zip is None:
+            raise FileNotFoundError(f"zip file not found: {zipfile_path}")
+        zip_pages_df = get_zipfile_pages(ht_zip)
 
     logger.info("reviewing alignment for %s (%d pages)", work_id, pages_df.height)
     detailed_df = align_shifted_pages(pages_df, zip_pages_df, detailed=True)
@@ -758,16 +759,79 @@ def plot_alignment(review_df: pl.DataFrame):
     )
 
 
+# candidate filenames for the page corpus within a PPA corpus directory,
+# checked in order (uncompressed preferred)
+PAGES_FILENAMES = ["ppa_pages.jsonl", "ppa_pages.jsonl.gz"]
+# candidate filenames for the work-level metadata within a PPA corpus directory
+METADATA_FILENAMES = ["ppa_metadata.csv", "ppa_metadata.json"]
+
+
+def find_corpus_file(corpus_dir: Path, filenames: list[str]) -> Path:
+    """Return the first existing file in ``corpus_dir`` from ``filenames``
+    (checked in order). Raises :class:`FileNotFoundError` if none exist."""
+    for filename in filenames:
+        candidate = corpus_dir / filename
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(
+        f"None of the expected files {filenames} found in {corpus_dir}"
+    )
+
+
+def get_ht1930_work_ids(metadata_path: Path) -> dict[str, Optional[str]]:
+    """Load work-level metadata and return a dictionary of ``work_id`` values for
+    HathiTrust volumes published in 1930, with their corresponding
+    digital page range (excerpts only).
+
+    These volumes have zip files with different naming convention and structure
+    and must be handled differently.
+    """
+    if metadata_path.suffix == ".csv":
+        meta_df = pl.read_csv(metadata_path)
+    elif metadata_path.suffix == ".json":
+        meta_df = pl.read_json(metadata_path)
+    else:
+        raise ValueError(
+            f"Unsupported metadata format {metadata_path.suffix!r}; expected .csv or .json"
+        )
+
+    return {
+        row["work_id"]: row["pages_digital"]
+        for row in meta_df.select("work_id", "pub_year", "source", "pages_digital")
+        .filter(pl.col.source.eq("HathiTrust"))
+        .filter(pl.col("pub_year").cast(pl.Int64, strict=False).eq(1930))
+        .select("work_id", "pages_digital")
+        .iter_rows(named=True)
+    }
+
+
 def process_work(
-    work_id: str, pages: list[dict], image_dir: Path, tar: tarfile.TarFile
+    work_id: str,
+    pages: list[dict],
+    image_dir: Path,
+    tar: tarfile.TarFile,
+    ht1930_work_ids: Optional[dict[str, Optional[str]]] = None,
 ) -> Iterator[dict]:
     # generic process work method, which calls appropriate source-specific method
+    ht1930_work_ids = ht1930_work_ids or {}
     source = get_ppa_source(work_id)
     match source:
         case "Gale":
             yield from process_gale_work(work_id, pages, image_dir, tar)
         case "HathiTrust":
-            yield from process_ht_work(work_id, pages, image_dir, tar)
+            # a small subset of (1930s) HathiTrust volumes have image-only zip
+            # files that cannot be text-aligned; map images to pages by digital
+            # page sequence (order) instead
+            if work_id in ht1930_work_ids:
+                yield from process_ht1930_work(
+                    work_id,
+                    pages,
+                    image_dir,
+                    tar,
+                    digital_page_range=ht1930_work_ids[work_id],
+                )
+            else:
+                yield from process_ht_work(work_id, pages, image_dir, tar)
         case "EEBO-TCP":
             yield from pages  # no images
         case _:
@@ -814,6 +878,18 @@ def get_ht_zipfile_path(work_id: str, image_dir: Path) -> Path:
     return image_dir / "HathiTrust" / encoded / f"{htid_suffix}.zip"
 
 
+@contextmanager
+def open_ht_zipfile(zipfile_path: Optional[Path]) -> Iterator[Optional[ZipFile]]:
+    """Open a HathiTrust image zip file, yielding the open :class:`~zipfile.ZipFile`.
+    Yields ``None`` (without raising) when ``zipfile_path`` is ``None`` or does
+    not exist, so callers can uniformly skip works whose zip is missing."""
+    if zipfile_path is None or not zipfile_path.exists():
+        yield None
+    else:
+        with ZipFile(zipfile_path) as ht_zip:
+            yield ht_zip
+
+
 def process_ht_work(
     work_id: str, pages: list[dict], image_dir: Path, tar: tarfile.TarFile
 ) -> Iterator[dict]:
@@ -821,78 +897,229 @@ def process_ht_work(
     # a work is an excerpt if its work_id includes with -p; excerpts are not expected to use all pages from the zip file
     is_excerpt = "-p" in work_id
     zipfile_path = get_ht_zipfile_path(work_id, image_dir)
-    if not zipfile_path.exists():
-        # logger.warning("zipfile %s does not exist, omitting images", zipfile_path)
-        # yield pages without image paths
-        yield from pages
+    with open_ht_zipfile(zipfile_path) as ht_zip:
+        if ht_zip is None:
+            # zipfile does not exist; yield pages without image paths
+            yield from pages
+            return
+
+        page_mapping = align_pages(work_id, pl.DataFrame(pages), ht_zip)
+        if not page_mapping:
+            logger.warning(
+                "no page mapping found for work %s, omitting images",
+                work_id,
+            )
+            # yield pages without image paths
+            yield from pages
+            return
+
+        # when image mapping was returned, add images to tar file and image paths to page data
+        zip_image_filenames = get_zip_image_names(ht_zip)
+        encoded_htid = encode_htid(htid)
+        for page in pages:
+            page_id = page["id"]
+            # get the corresponding image from the zip, add to the tar file with appropriate name,
+            # and add the image path to the page record for output
+            page_basename = page_mapping.get(page_id)
+
+            # find the zip image path for this page (if any): the page
+            # must be mapped to a zip basename *and* that basename must
+            # exist under one of the available image extensions.
+            if page_basename is not None:
+                # image filename dict is keyed on basename without extension
+                # so we can get the full image path based on the aligned text page
+                # use pop to remove from the dict so we can handle unused images
+                zip_image_path = zip_image_filenames.pop(page_basename, None)
+
+                # add the image from the corresponding path in the zipfile to
+                # the appropriate path for this page in the tarfile
+                if zip_image_path is not None:
+                    img_ext = Path(zip_image_path).suffix
+                    tar_image_path = f"{encoded_htid}/{page_id}{img_ext}"
+                    add_zip_file_to_tar(ht_zip, zip_image_path, tar, tar_image_path)
+                    page["image_path"] = tar_image_path
+                else:
+                    # warn if there was a mapping but image was not found;
+                    # unmatched images are reported in the align pages
+                    has_text = "" if page.get("text", "").strip() else "no "
+                    logger.warning(
+                        "page %s aligned with text but image not found; page has %stext",
+                        page_id,
+                        has_text,
+                    )
+
+            # yield every page whether or not an image was aligned/added,
+            # so no pages are dropped from the output corpus
+            yield page
+
+        if not is_excerpt and zip_image_filenames:
+            # if this is not an excerpt, warn about any unused images in the zip
+            # and add them to the tar file but marked as unmatched
+            for zip_image_name in zip_image_filenames.values():
+                zip_image_path = Path(zip_image_name)
+                img_ext = zip_image_path.suffix
+                basename = zip_image_path.stem
+                tar_image_path = f"{encoded_htid}/unmatched/{basename}{img_ext}"
+                add_zip_file_to_tar(ht_zip, zip_image_name, tar, tar_image_path)
+
+            logger.info(
+                "work %s has %d unused zip images; added to tar as unmatched",
+                work_id,
+                len(zip_image_filenames),
+            )
+
+
+# HathiTrust 1930 excerpts whose zip filename first-page number cannot be
+# derived from the digital page range in metadata; maps work id -> first page
+# number to use in the zip filename prefix. (For this excerpt the first section
+# of pages is missing from the digital scan, so the excerpt starts at 193.)
+HT1930_EXCERPT_FIRST_PAGE_OVERRIDES = {"mdp.39015030593423-p165": 193}
+
+
+def zip_image_filenames(zipfile: ZipFile) -> dict[int, str]:
+    """Map numeric digital page sequence number to image filename within
+    a HathiTrust zip.
+
+    Used for image-only volume zip files. Images are TIF or JPG only;
+    base filename is numeric with leading zeros. Files with a non-numeric
+    stem (e.g. stray cover/metadata images) are skipped.
+    """
+    image_exts = {".tif", ".jpg"}
+    image_map: dict[int, str] = {}
+    for filename in zipfile.namelist():
+        file_path = Path(filename)
+        if file_path.suffix.lower() not in image_exts:
+            continue
+        if not file_path.stem.isdigit():
+            logger.debug("skipping non-numeric image filename %s", filename)
+            continue
+        image_map[int(file_path.stem)] = filename
+
+    return image_map
+
+
+def process_ht1930_work(
+    work_id: str,
+    pages: list[dict],
+    image_dir: Path,
+    tar: tarfile.TarFile,
+    digital_page_range: Optional[str] = None,
+) -> Iterator[dict]:
+    """
+    Images for HathiTrust works published in 1930 and imported manually in 2026
+    were downloaded manually from the HT web interface. The zip files only contain
+    images (no text files, no nested directories) and were downloaded close to
+    when the works were imported, so they do not require page re-alignment. Pass
+    `digital_page_range` for excerpts to find the correct zipfile, which includes
+    digital page range.
+
+    Find and load the zip file, and map images to pages based on filename.
+    """
+    htid = get_volume_id(work_id)
+    ht_1930_image_dir = image_dir / "HathiTrust-1930"
+    # zip filenames are based on htid with '.' and '$' replaced with '-'
+    # and a timestamp; excerpts include page range. Examples:
+    #
+    #   full work: inu-39000005925032-1788450816.zip
+    #   excerpt:   mdp-39015002669052-338-339-1788473798.zip
+    #              (htid, first page, last page, HT id)
+    htid_prefix = htid.replace(".", "-").replace("$", "-")
+
+    # Since we don't know the timestamp a priori, match based on htid and
+    # first digital page number if specified.
+    # Override one exception where zip file does not match digital page range due to missing scans.
+    if work_id in HT1930_EXCERPT_FIRST_PAGE_OVERRIDES:
+        first_page = HT1930_EXCERPT_FIRST_PAGE_OVERRIDES[work_id]
+        zip_glob = f"{htid_prefix}-{first_page}-*.zip"
+    elif digital_page_range:
+        first_page = list(intspan(digital_page_range))[
+            0
+        ]  # parse page range with intspan, then get first digit
+        zip_glob = f"{htid_prefix}-{first_page}-*.zip"
     else:
-        with ZipFile(zipfile_path) as ht_zip:
-            page_mapping = align_pages(work_id, pl.DataFrame(pages), ht_zip)
-            zip_image_filenames = get_zip_image_names(ht_zip)
-            encoded_htid = encode_htid(htid)
-            if not page_mapping:
-                logger.warning(
-                    "no page mapping found for work %s, omitting images",
-                    work_id,
-                )
-                # yield pages without image paths
-                yield from pages
+        # non-excerpt: htid prefix plus wildcard for timestamp
+        zip_glob = f"{htid_prefix}-*.zip"
+
+    logger.debug(
+        "%s : expected zipfile=%s : %d pages",
+        work_id,
+        ht_1930_image_dir / zip_glob,
+        len(pages),
+    )
+    zip_matches = list(ht_1930_image_dir.glob(zip_glob))
+    if len(zip_matches) != 1:
+        logger.error(
+            "Expected exactly one zipfile for %s (matching %s); found %d",
+            work_id,
+            zip_glob,
+            len(zip_matches),
+        )
+        # yield pages to avoid omitting any content, though we expect to find
+        # exactly one zip file for every 1930 work
+        yield from pages
+        return
+
+    zipfile_path = zip_matches[0]
+
+    with open_ht_zipfile(zipfile_path) as ht_zip:
+        # zipfile_path came from a glob match above, so ht_zip should be non-None;
+        # guard for the race where the file disappears between glob and open
+        if ht_zip is None:
+            yield from pages
+            return
+
+        # map numeric page id -> image filename in the zip
+        image_map = zip_image_filenames(ht_zip)
+        if not image_map:
+            logger.warning(
+                "no images found in image-only zipfile for work %s, omitting images",
+                work_id,
+            )
+            yield from pages
+            return
+
+        matched_count = 0
+        for page in pages:
+            # digital sequence number is in page order  field
+            page_id = page["id"]  # needed for output filename
+            page_order = page["order"]  # needed for mapping
+            zip_image_path = image_map.get(page_order)
+            if zip_image_path is not None:
+                img_ext = Path(zip_image_path).suffix
+                # set destination name based on volume and page id, but preserve existing extension
+                tar_image_path = f"{encode_htid(htid)}/{page_id}{img_ext}"
+                try:
+                    add_zip_file_to_tar(ht_zip, zip_image_path, tar, tar_image_path)
+                    # if adding succeeded, include the image path in the output page data
+                    page["image_path"] = tar_image_path
+                    matched_count += 1
+                except KeyError:
+                    logger.warning(
+                        "image %s not found in zipfile for work %s; skipping",
+                        zip_image_path,
+                        work_id,
+                    )
             else:
-                # when image mapping was returned, add images to tar file and image paths to page data
-                for page in pages:
-                    page_id = page["id"]
-                    # get the corresponding image from the zip, add to the tar file with appropriate name,
-                    # and add the image path to the page record for output
-                    page_basename = page_mapping.get(page_id)
-
-                    # find the zip image path for this page (if any): the page
-                    # must be mapped to a zip basename *and* that basename must
-                    # exist under one of the available image extensions.
-                    if page_basename is not None:
-                        # image filename dict is keyed on basename without extension
-                        # so we can get the full image path based on the aligned text page
-                        # use pop to remove from the dict so we can handle unused images
-                        zip_image_path = zip_image_filenames.pop(page_basename, None)
-
-                        # add the image from the corresponding path in the zipfile to
-                        # the appropriate path for this page in the tarfile
-                        if zip_image_path is not None:
-                            img_ext = Path(zip_image_path).suffix
-                            tar_image_path = f"{encoded_htid}/{page_id}{img_ext}"
-                            add_zip_file_to_tar(
-                                ht_zip, zip_image_path, tar, tar_image_path
-                            )
-                            page["image_path"] = tar_image_path
-                        else:
-                            # warn if there was a mapping but image was not found;
-                            # unmatched images are reported in the align pages
-                            has_text = "" if page.get("text", "").strip() else "no "
-                            logger.warning(
-                                "page %s aligned with text but image not found; page has %stext",
-                                page_id,
-                                has_text,
-                            )
-
-                    # yield every page whether or not an image was aligned/added,
-                    # so no input pages are dropped from the output corpus
-                    yield page
-
-            if not is_excerpt and zip_image_filenames:
-                # if this is not an excerpt, warn about any unused images in the zip
-                # and add them to the tar file but marked as unmatched
-
-                for zip_image_name in zip_image_filenames.values():
-                    zip_image_path = Path(zip_image_name)
-                    img_ext = zip_image_path.suffix
-                    basename = zip_image_path.stem
-                    tar_image_path = f"{encoded_htid}/unmatched/{basename}{img_ext}"
-                    add_zip_file_to_tar(ht_zip, zip_image_name, tar, tar_image_path)
-
-                logger.info(
-                    "work %s has %d unused zip images; added to tar as unmatched",
+                logger.debug(
+                    "no image found for page %s in image-only work %s",
+                    page_id,
                     work_id,
-                    len(zip_image_filenames),
                 )
+            # yield every page whether or not an image was added
+            yield page
+
+        # the zip had images but none matched a page order: a strong signal that
+        # the zip image numbering does not line up with page order (e.g. relative
+        # vs. absolute digital sequence). surface it rather than silently dropping
+        # every image for the work.
+        if matched_count == 0:
+            logger.warning(
+                "zipfile %s for work %s has %d image(s) but none matched a page "
+                "order; no images added",
+                zipfile_path.name,
+                work_id,
+                len(image_map),
+            )
 
 
 def _tally_processed_work(
@@ -924,8 +1151,10 @@ def main():
         description="Prepare PPA full-text dataset for publication by aligning pages and organizing images",
     )
     parser.add_argument(
-        "input",
-        help="PPA full-text corpus; must be a JSONL file (compressed or not)",
+        "corpus_dir",
+        help="PPA full-text corpus directory; must contain a page corpus "
+        "(ppa_pages.jsonl or ppa_pages.jsonl.gz) and work-level metadata "
+        "(ppa_metadata.csv or ppa_metadata.json)",
         type=Path,
     )
     parser.add_argument(
@@ -971,6 +1200,27 @@ def main():
         level=args.log_level.upper(),
         format="%(levelname)s: %(message)s",
         filename=args.log_file,
+    )
+
+    if not args.corpus_dir.is_dir():
+        logger.error("corpus directory %s does not exist", args.corpus_dir)
+        sys.exit(-1)
+    # infer the page corpus and work-level metadata files from the corpus dir
+    try:
+        input_pages_path = find_corpus_file(args.corpus_dir, PAGES_FILENAMES)
+        metadata_path = find_corpus_file(args.corpus_dir, METADATA_FILENAMES)
+        logger.info("input pages=%s \nmetadata=%s", input_pages_path, metadata_path)
+    except FileNotFoundError as err:
+        logger.error("%s", err)
+        sys.exit(-1)
+
+    # get the list of HathiTrust 1930 works, which use manually-downloaded
+    # image zips with a different structure and alternate zipfile logic
+    ht1930_work_ids = get_ht1930_work_ids(metadata_path)
+    logger.info(
+        "Identified %s HathiTrust 1930 work(s) with manual image zips in %s",
+        f"{len(ht1930_work_ids):,}",
+        metadata_path.name,
     )
 
     if not args.output_dir.is_dir():
@@ -1025,7 +1275,7 @@ def main():
 
     # use a polars lazy frame to calculate the total so tqdm can estimate completion
     start_time = perf_counter()
-    total_pages = pl.scan_ndjson(args.input).select(pl.len()).collect().item()
+    total_pages = pl.scan_ndjson(input_pages_path).select(pl.len()).collect().item()
     end_time = perf_counter()
     logger.info(
         "%s total pages (calculated in %0.2fs)",
@@ -1044,54 +1294,90 @@ def main():
     # tally works, pages, and page images handled so we can report totals when
     # the run finishes or is interrupted
     counts: defaultdict[str, int] = defaultdict(int)
+    # Keep an explicit reference to the input stream generator so we can close it
+    # ourselves after the loop. For compressed input, orjsonl.stream delegates to
+    # xopen, which decompresses via an external subprocess. On ctrl-c the SIGINT
+    # is delivered to the whole process group, killing that subprocess (exit code
+    # -2); if we let the generator be torn down implicitly during shutdown, its
+    # cleanup tries to close the already-dead subprocess and raises a spurious
+    # BrokenPipeError/OSError. Closing it in a finally (and swallowing that
+    # shutdown-only error) keeps a clean ctrl-c stop from surfacing a traceback.
+    page_stream = orjsonl.stream(input_pages_path)
     with tarfile.open(output_archive_path, tar_mode) as tar:
         prev_work_id: Optional[str] = None
         pages: list[dict] = []
         # whether the current work should be skipped (already in output)
         skip_work = False
-        for page in tqdm(
-            orjsonl.stream(args.input),
-            desc="Reading pages",
-            total=total_pages,
-            unit_scale=True,
-            disable=not args.progress,
-        ):
-            work_id = page["work_id"]
-            # when work id changes, process the previous work pages and reset for the next
-            if work_id != prev_work_id:
-                if prev_work_id is not None:
-                    if skip_work:
-                        counts["works_skipped"] += 1
-                    else:
-                        pages = list(
-                            process_work(prev_work_id, pages, args.image_dir, tar)
-                        )
-                        orjsonl.extend(output_pages_path, pages)
-                        _tally_processed_work(prev_work_id, pages, counts)
-                # stop here (at a work boundary) if a signal was received, so we
-                # never interrupt a work's tar/jsonl writes partway through; the
-                # tar is still closed cleanly by the context manager
-                if _stop_requested:
-                    logger.warning("stopping cleanly after work %s", prev_work_id)
-                    break
-                prev_work_id = work_id
-                pages = []
-                # skip this work if it is already present in the output
-                skip_work = work_id in completed_work_ids
-            if skip_work:
-                counts["pages_skipped"] += 1
-            else:
-                pages.append(page)
+        try:
+            for page in tqdm(
+                page_stream,
+                desc="Reading pages",
+                total=total_pages,
+                unit_scale=True,
+                disable=not args.progress,
+            ):
+                work_id = page["work_id"]
+                # when work id changes, process the previous work pages and reset for the next
+                if work_id != prev_work_id:
+                    if prev_work_id is not None:
+                        if skip_work:
+                            counts["works_skipped"] += 1
+                        else:
+                            pages = list(
+                                process_work(
+                                    prev_work_id,
+                                    pages,
+                                    args.image_dir,
+                                    tar,
+                                    ht1930_work_ids,
+                                )
+                            )
+                            orjsonl.extend(output_pages_path, pages)
+                            _tally_processed_work(prev_work_id, pages, counts)
+                    # stop here (at a work boundary) if a signal was received, so we
+                    # never interrupt a work's tar/jsonl writes partway through; the
+                    # tar is still closed cleanly by the context manager
+                    if _stop_requested:
+                        logger.warning("stopping cleanly after work %s", prev_work_id)
+                        break
+                    prev_work_id = work_id
+                    pages = []
+                    # skip this work if it is already present in the output
+                    skip_work = work_id in completed_work_ids
+                if skip_work:
+                    counts["pages_skipped"] += 1
+                else:
+                    pages.append(page)
 
-        # handle the pages for the last work at end of loop, unless we broke out
-        # early on a stop signal (that work was already written before the break)
-        if prev_work_id is not None and not _stop_requested:
-            if skip_work:
-                counts["works_skipped"] += 1
-            else:
-                pages = list(process_work(prev_work_id, pages, args.image_dir, tar))
-                orjsonl.extend(output_pages_path, pages)
-                _tally_processed_work(prev_work_id, pages, counts)
+            # handle the pages for the last work at end of loop, unless we broke
+            # out early on a stop signal (that work was already written before
+            # the break)
+            if prev_work_id is not None and not _stop_requested:
+                if skip_work:
+                    counts["works_skipped"] += 1
+                else:
+                    pages = list(
+                        process_work(
+                            prev_work_id,
+                            pages,
+                            args.image_dir,
+                            tar,
+                            ht1930_work_ids,
+                        )
+                    )
+                    orjsonl.extend(output_pages_path, pages)
+                    _tally_processed_work(prev_work_id, pages, counts)
+        finally:
+            # Close the input stream explicitly. When stopping on ctrl-c, the
+            # decompression subprocess spawned by orjsonl/xopen was already killed
+            # by the same SIGINT, so closing the generator can raise a spurious
+            # BrokenPipeError/OSError during its teardown. That only reflects the
+            # in-progress shutdown, so suppress it rather than let it mask the
+            # clean stop.
+            try:
+                page_stream.close()
+            except (BrokenPipeError, OSError):
+                logger.debug("ignoring input stream close error during shutdown")
 
     # report totals whether the run finished normally or stopped early
     logger.info(
