@@ -444,10 +444,10 @@ def align_shifted_pages(
             f"{row['n_pages']:,} pages)"
             for row in shift_summary_df.iter_rows(named=True)
         )
-        # only mention unmatched pages when there are any, so a clean alignment
-        # doesn't report "0 pages unmatched"
+        pluralize = {1: ""}  # use to conditionally pluralize tallies in log output
+        # report if there are any unmatched pages
         unmatched_summary = (
-            f"; {num_unmatched:,} page{'' if num_unmatched == 1 else 's'} unmatched"
+            f"; {num_unmatched:,} page{pluralize.get(num_unmatched, 's')} unmatched"
             if num_unmatched
             else ""
         )
@@ -455,8 +455,7 @@ def align_shifted_pages(
             "page shift: %s \t%d alignment%s inferred (%s)%s",
             shift_summary,
             num_inferred,
-            # conditionally pluralize inferred alignment
-            "" if num_inferred == 1 else "s",
+            pluralize.get(num_inferred, "s"),
             pct_inferred,
             unmatched_summary,
         )
@@ -832,63 +831,44 @@ def process_ht_work(
             else:
                 # when image mapping was returned, add images to tar file and image paths to page data
                 img_exts = get_zip_imgexts(ht_zip)
-                # zip contents are constant for the whole work; compute once
-                # rather than per page
+                # load zip file list once for the whole work and use for each page
                 file_namelist = ht_zip.namelist()
                 for page in pages:
-                    page_id = page["id"]  # .split(".")[-1]
+                    page_id = page["id"]
                     # get the corresponding image from the zip, add to the tar file with appropriate name,
                     # and add the image path to the page record for output
                     page_basename = page_mapping.get(page_id)
 
-                    # add the image from the corresponding path in the zipfile to the
-                    # appropriate path for this page in the tarfile
+                    # find the zip image path for this page (if any): the page
+                    # must be mapped to a zip basename *and* that basename must
+                    # exist under one of the available image extensions.
+                    zip_image_path = None
                     if page_basename is not None:
                         zip_image_basepath = f"{htid_suffix}/{page_basename}"
-                        # look for the mapped image under any of the available
-                        # extensions; the for/else distinguishes "no matching
-                        # image found" from a later add failure
                         for img_ext in img_exts:
-                            zip_image_path = f"{zip_image_basepath}{img_ext}"
-                            if zip_image_path in file_namelist:
+                            candidate = f"{zip_image_basepath}{img_ext}"
+                            if candidate in file_namelist:
+                                zip_image_path = candidate
                                 break
-                        else:
-                            # no image found under any extension for this page
-                            has_text = page["text"].strip() != ""
-                            if has_text:
-                                logger.warning(
-                                    "no image for %s in zipfile but page has text; skipping",
-                                    zip_image_basepath,
-                                )
-                            logger.debug(
-                                "matching filenames: %s",
-                                [f for f in file_namelist if page_basename in f],
-                            )
-                            # yield the page without an image path and move on
-                            yield page
-                            continue
-                        tar_image_path = f"{encode_htid(htid)}/{page_id}{img_ext}"
-                        try:
-                            add_zip_file_to_tar(
-                                ht_zip, zip_image_path, tar, tar_image_path
-                            )
-                            # if adding succeeded, add the image path in the page record for output
-                            page["image_path"] = tar_image_path
 
-                        except KeyError:
-                            has_text = page["text"].strip() != ""
-                            if has_text:
-                                logger.warning(
-                                    "image %s not found in zipfile but page has text; skipping",
-                                    zip_image_path,
-                                )
-                            logger.debug(
-                                "matching filenames: %s",
-                                [f for f in file_namelist if page_basename in f],
-                            )
+                    # add the image from the corresponding path in the zipfile to
+                    # the appropriate path for this page in the tarfile
+                    if zip_image_path is not None:
+                        tar_image_path = f"{encode_htid(htid)}/{page_id}{img_ext}"
+                        add_zip_file_to_tar(ht_zip, zip_image_path, tar, tar_image_path)
+                        page["image_path"] = tar_image_path
+                    elif page_basename is not None:
+                        # warn if there was a mapping but image was not found;
+                        # unmatched images are reported in the align pages
+                        has_text = "" if page.get("text", "").strip() else "no "
+                        logger.warning(
+                            "page %s aligned with text but image not found; page has %stext",
+                            page_id,
+                            has_text,
+                        )
 
                     # yield every page whether or not an image was aligned/added,
-                    # so no pages are dropped from the output corpus
+                    # so no input pages are dropped from the output corpus
                     yield page
 
 
