@@ -4,6 +4,7 @@
 import re
 import signal
 import tarfile
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 from zipfile import ZipFile
@@ -210,6 +211,33 @@ def test_align_pages_join_mismatch_returns_partial(tmp_path, pages_df):
             "work.00000001": "00000001",
             "work.00000002": "00000002",
         }
+
+
+def test_align_pages_join_count_mismatch_warns_when_zip_count_ok(
+    tmp_path, pages_df, caplog
+):
+    # The zip has as many pages as the corpus (so the zip-count shortfall is not
+    # flagged), but one corpus page is absent from the zip, so the join count
+    # still differs from expected; the mismatch is warned about and the partial
+    # mapping for the pages that did join is returned.
+    zip_path = make_zip(
+        tmp_path,
+        {
+            "00000001.txt": PAGE_TEXTS["00000001"],
+            "00000002.txt": PAGE_TEXTS["00000002"],
+            "00000004.txt": "some other page",  # page 3 has no zip counterpart
+        },
+    )
+    with (
+        caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
+        ZipFile(zip_path) as zf,
+    ):
+        assert align_pages(WORK_ID, pages_df, zf) == {
+            "work.00000001": "00000001",
+            "work.00000002": "00000002",
+        }
+    assert "joined pages" in caplog.text
+    assert "does not match expected page count" in caplog.text
 
 
 def test_align_pages_insufficient_zip_pages(tmp_path, pages_df):
@@ -517,6 +545,25 @@ def test_tally_processed_work_counts_missing_images_for_image_source():
     assert counts["gale_missing_image"] == 0
 
 
+def test_tally_processed_work_counts_missing_images_for_gale():
+    from collections import defaultdict
+
+    from corppa.utils.dataset_prep import _tally_processed_work
+
+    counts: defaultdict[str, int] = defaultdict(int)
+    pages = [
+        {"id": "CB0127060085.0001", "image_path": "CB0127060085/CB0127060085_001.jpg"},
+        {"id": "CB0127060085.0002"},  # no image
+    ]
+    # Gale work id (CB0.../CW0...) -> pages expect images
+    _tally_processed_work("CB0127060085", pages, counts)
+    assert counts["works_processed"] == 1
+    assert counts["pages_processed"] == 2
+    assert counts["page_images"] == 1
+    assert counts["gale_missing_image"] == 1
+    assert counts["ht_missing_image"] == 0
+
+
 def test_tally_processed_work_ignores_missing_images_for_eebo():
     from collections import defaultdict
 
@@ -754,6 +801,47 @@ def test_process_ht1930_maps_images_by_order(tmp_path):
     encoded = encode_htid(work_id)
     assert result[0]["image_path"] == f"{encoded}/{work_id}.00000001.tif"
     assert f"{encoded}/{work_id}.00000001.tif" in tar_names
+
+
+def test_process_ht1930_missing_image_in_zip_warns(tmp_path, caplog):
+    # The image filename came from the zip namelist, but add_zip_file_to_tar can
+    # still raise KeyError (e.g. the entry disappeared); warn and skip the page's
+    # image rather than failing the whole work.
+    work_id = "test.12345678"
+    _make_ht1930_zip(tmp_path, "test-12345678-1788450816.zip", [1, 2])
+    pages = _ht1930_pages(work_id, [1, 2])
+    with (
+        patch(
+            "corppa.utils.dataset_prep.add_zip_file_to_tar",
+            side_effect=KeyError("missing image"),
+        ),
+        caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
+        tarfile.open(tmp_path / "out.tar", "w") as tar,
+    ):
+        result = list(process_ht1930_work(work_id, pages, tmp_path, tar))
+    # every page is still yielded, none with an image path, and both pages warn
+    assert [p["id"] for p in result] == [p["id"] for p in pages]
+    assert all("image_path" not in p for p in result)
+    assert caplog.text.count("image 00000001.tif not found in zipfile") == 1
+    assert caplog.text.count("image 00000002.tif not found in zipfile") == 1
+
+
+def test_process_ht1930_zip_disappears_between_glob_and_open(tmp_path):
+    # The zip matched by glob() may be deleted before it is opened; open_ht_zipfile
+    # then yields None and pages pass through unchanged rather than crashing.
+    work_id = "test.12345678"
+    _make_ht1930_zip(tmp_path, "test-12345678-1788450816.zip", [1, 2])
+    pages = _ht1930_pages(work_id, [1, 2])
+    with (
+        patch(
+            "corppa.utils.dataset_prep.open_ht_zipfile",
+            return_value=nullcontext(None),
+        ),
+        tarfile.open(tmp_path / "out.tar", "w") as tar,
+    ):
+        result = list(process_ht1930_work(work_id, pages, tmp_path, tar))
+    assert result == pages
+    assert all("image_path" not in p for p in result)
 
 
 def test_process_ht1930_excerpt_uses_first_digital_page_in_name(tmp_path):
@@ -1764,6 +1852,38 @@ def corpus_input(tmp_path):
     )
 
 
+def test_main_missing_corpus_dir_exits(tmp_path, main_dirs, caplog):
+    # a non-existent corpus dir is a fatal (negative exit code) startup error
+    image_dir, output_dir = main_dirs
+    missing = tmp_path / "does-not-exist"
+    argv = ["dataset_prep.py", str(missing), str(image_dir), str(output_dir)]
+    with (
+        patch("sys.argv", argv),
+        pytest.raises(SystemExit) as exc,
+        caplog.at_level("ERROR", logger="corppa.utils.dataset_prep"),
+    ):
+        main()
+    assert exc.value.code == -1
+    assert "corpus directory" in caplog.text
+    assert "does not exist" in caplog.text
+
+
+def test_main_corpus_dir_missing_files_exits(tmp_path, main_dirs, caplog):
+    # a corpus dir without the expected page corpus / metadata files is fatal
+    image_dir, output_dir = main_dirs
+    empty = tmp_path / "empty-corpus"
+    empty.mkdir()
+    argv = ["dataset_prep.py", str(empty), str(image_dir), str(output_dir)]
+    with (
+        patch("sys.argv", argv),
+        pytest.raises(SystemExit) as exc,
+        caplog.at_level("ERROR", logger="corppa.utils.dataset_prep"),
+    ):
+        main()
+    assert exc.value.code == -1
+    assert "None of the expected files" in caplog.text
+
+
 def test_main_progress_bar_enabled_by_default(corpus_input, main_dirs):
     with patch("corppa.utils.dataset_prep.tqdm", wraps=tqdm) as mock_tqdm:
         _run_main(corpus_input, main_dirs)
@@ -2069,6 +2189,20 @@ def test_main_reports_page_image_counts(corpus_input, main_dirs, caplog):
         "finished: 2 works processed (4 pages, 2 page images), "
         "0 works skipped (0 pages)" in caplog.text
     )
+
+
+def test_main_reports_gale_missing_image_warning(tmp_path, main_dirs, caplog):
+    # a Gale work processed without images is surfaced as a run-level warning
+    # naming the Gale tally (it is not attributed to the HathiTrust tally)
+    corpus_dir = _make_corpus_dir(
+        tmp_path / "gale-corpus",
+        [{"work_id": "CB0127060085", "id": "CB0127060085.0001", "text": "p1"}],
+    )
+    with caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"):
+        _run_main(corpus_dir, main_dirs)
+
+    assert "1 Gale pages missing images" in caplog.text
+    assert "HathiTrust pages missing images" not in caplog.text
 
 
 def test_main_reports_skipped_counts_on_continue(corpus_input, main_dirs, caplog):
