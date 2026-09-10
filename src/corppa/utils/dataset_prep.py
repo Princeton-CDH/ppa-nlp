@@ -102,17 +102,23 @@ def add_zip_file_to_tar(
         tar.addfile(tarinfo, fileobj=f)
 
 
-def get_zip_imgexts(zipfile: ZipFile) -> list[str]:
-    """HathiTrust zip files include images in multiple formats; returns
-    a list of all unique image extensions found in the zip file."""
-    exts = set()
+image_extensions = [".tif", ".jpg", ".jpeg", ".jp2"]
+
+
+def get_zip_image_names(zipfile: ZipFile) -> dict[str, str]:
+    """HathiTrust zip files include images in multiple formats, sometimes
+    mixed even within a single zipfile. Use the ZipFile namelist to
+    generate and return a dictionary of all files with supported image
+    extensions. Dictionary key is the file basename, value is the full path
+    within the zip.
+    """
+    image_filenames = {}
     for filename in zipfile.namelist():
         file_path = Path(filename)
-        # compare case-insensitive but return actual case
-        if file_path.suffix.lower() in [".tif", ".jpg", ".jpeg", ".jp2"]:
-            exts.add(file_path.suffix)
+        if file_path.suffix.lower() in image_extensions:
+            image_filenames[file_path.stem] = filename
 
-    return list(exts)
+    return image_filenames
 
 
 # minimum text length (in characters) for a page to be matched against zip pages
@@ -496,16 +502,16 @@ def align_pages(work_id: str, pages_df: pl.DataFrame, zipfile: ZipFile) -> dict:
             zip_pages_df.height,
             expected_page_count,
         )
+    # extract numeric page id to join with zip pages
+    pages_df = pages_df.with_columns(page_id=pl.col.id.str.extract(r"[._]([0-9]+$)"))
     # join origin pages with zip pages on the numeric page id,
     # and calculate a fuzzy text match score for each page using rapidfuzz fuzz ratio (normalized indel similarity)
     pages_join_df = (
-        pages_df.with_columns(page_id=pl.col.id.str.extract(r"[._]([0-9]+$)"))
-        .join(zip_pages_df, on="page_id")
+        pages_df.join(zip_pages_df, on="page_id")
         # NOTE: if any multiprocessing is added to this script, remove parallel=True argument
         .with_columns(text_match=pds.str_fuzz("text", "text_right", parallel=True))
     )
-    # only warn about the joined page count if we didn't already warn about
-    # the zip page count above, to avoid a redundant warning
+    # warn about count mismatch unless we already warned about zip page count above
     if not zip_count_mismatch and expected_page_count != pages_join_df.height:
         logger.warning(
             "%s joined pages (%d) does not match expected page count (%d)",
@@ -812,7 +818,8 @@ def process_ht_work(
     work_id: str, pages: list[dict], image_dir: Path, tar: tarfile.TarFile
 ) -> Iterator[dict]:
     htid = get_volume_id(work_id)
-    htid_suffix = encode_htid(htid).split(".")[-1]
+    # a work is an excerpt if its work_id includes with -p; excerpts are not expected to use all pages from the zip file
+    is_excerpt = "-p" in work_id
     zipfile_path = get_ht_zipfile_path(work_id, image_dir)
     if not zipfile_path.exists():
         # logger.warning("zipfile %s does not exist, omitting images", zipfile_path)
@@ -821,6 +828,8 @@ def process_ht_work(
     else:
         with ZipFile(zipfile_path) as ht_zip:
             page_mapping = align_pages(work_id, pl.DataFrame(pages), ht_zip)
+            zip_image_filenames = get_zip_image_names(ht_zip)
+            encoded_htid = encode_htid(htid)
             if not page_mapping:
                 logger.warning(
                     "no page mapping found for work %s, omitting images",
@@ -830,9 +839,6 @@ def process_ht_work(
                 yield from pages
             else:
                 # when image mapping was returned, add images to tar file and image paths to page data
-                img_exts = get_zip_imgexts(ht_zip)
-                # load zip file list once for the whole work and use for each page
-                file_namelist = ht_zip.namelist()
                 for page in pages:
                     page_id = page["id"]
                     # get the corresponding image from the zip, add to the tar file with appropriate name,
@@ -842,55 +848,72 @@ def process_ht_work(
                     # find the zip image path for this page (if any): the page
                     # must be mapped to a zip basename *and* that basename must
                     # exist under one of the available image extensions.
-                    zip_image_path = None
                     if page_basename is not None:
-                        zip_image_basepath = f"{htid_suffix}/{page_basename}"
-                        for img_ext in img_exts:
-                            candidate = f"{zip_image_basepath}{img_ext}"
-                            if candidate in file_namelist:
-                                zip_image_path = candidate
-                                break
+                        # image filename dict is keyed on basename without extension
+                        # so we can get the full image path based on the aligned text page
+                        # use pop to remove from the dict so we can handle unused images
+                        zip_image_path = zip_image_filenames.pop(page_basename, None)
 
-                    # add the image from the corresponding path in the zipfile to
-                    # the appropriate path for this page in the tarfile
-                    if zip_image_path is not None:
-                        tar_image_path = f"{encode_htid(htid)}/{page_id}{img_ext}"
-                        add_zip_file_to_tar(ht_zip, zip_image_path, tar, tar_image_path)
-                        page["image_path"] = tar_image_path
-                    elif page_basename is not None:
-                        # warn if there was a mapping but image was not found;
-                        # unmatched images are reported in the align pages
-                        has_text = "" if page.get("text", "").strip() else "no "
-                        logger.warning(
-                            "page %s aligned with text but image not found; page has %stext",
-                            page_id,
-                            has_text,
-                        )
+                        # add the image from the corresponding path in the zipfile to
+                        # the appropriate path for this page in the tarfile
+                        if zip_image_path is not None:
+                            img_ext = Path(zip_image_path).suffix
+                            tar_image_path = f"{encoded_htid}/{page_id}{img_ext}"
+                            add_zip_file_to_tar(
+                                ht_zip, zip_image_path, tar, tar_image_path
+                            )
+                            page["image_path"] = tar_image_path
+                        else:
+                            # warn if there was a mapping but image was not found;
+                            # unmatched images are reported in the align pages
+                            has_text = "" if page.get("text", "").strip() else "no "
+                            logger.warning(
+                                "page %s aligned with text but image not found; page has %stext",
+                                page_id,
+                                has_text,
+                            )
 
                     # yield every page whether or not an image was aligned/added,
                     # so no input pages are dropped from the output corpus
                     yield page
+
+            if not is_excerpt and zip_image_filenames:
+                # if this is not an excerpt, warn about any unused images in the zip
+                # and add them to the tar file but marked as unmatched
+
+                for zip_image_name in zip_image_filenames.values():
+                    zip_image_path = Path(zip_image_name)
+                    img_ext = zip_image_path.suffix
+                    basename = zip_image_path.stem
+                    tar_image_path = f"{encoded_htid}/unmatched/{basename}{img_ext}"
+                    add_zip_file_to_tar(ht_zip, zip_image_name, tar, tar_image_path)
+
+                logger.info(
+                    "work %s has %d unused zip images; added to tar as unmatched",
+                    work_id,
+                    len(zip_image_filenames),
+                )
 
 
 def _tally_processed_work(
     work_id: str, pages: list[dict], counts: defaultdict[str, int]
 ) -> None:
     """Update run-level counts for a single processed work. Tallies pages,
-    page images added, and pages that expected an image (image-bearing source)
+    page images added, and pages that expected an image (Gale/HathiTrust works)
     but did not get one, so missing images are surfaced at the run level."""
     counts["works_processed"] += 1
-    counts["pages_processed"] += len(pages)
-    counts["page_images"] += sum(1 for p in pages if p.get("image_path"))
-    # only Gale and HathiTrust pages carry images; EEBO-TCP (and unknown
-    # sources) have none, so a missing image_path there is expected, not a gap
-    try:
-        expects_image = get_ppa_source(work_id) in ("Gale", "HathiTrust")
-    except ValueError:
-        expects_image = False
-    if expects_image:
-        counts["pages_missing_image"] += sum(
-            1 for p in pages if not p.get("image_path")
-        )
+    num_pages = len(pages)
+    counts["pages_processed"] += num_pages
+    num_images = len([p for p in pages if p.get("image_path")])
+    counts["page_images"] += num_images
+    # We expect to have images for Gale and HathiTrust works; report how many are missing
+    missing_images = num_pages - num_images
+    if missing_images:
+        source = get_ppa_source(work_id)
+        if source == "Gale":
+            counts["gale_missing_image"] += missing_images
+        elif source == "HathiTrust":
+            counts["ht_missing_image"] += missing_images
 
 
 def main():
@@ -1081,14 +1104,18 @@ def main():
         f"{counts['works_skipped']:,}",
         f"{counts['pages_skipped']:,}",
     )
-    # surface pages that expected an image but got none, but only when there
-    # are any, so a clean run doesn't emit a noise line
-    if counts["pages_missing_image"]:
-        logger.warning(
-            "%s page%s from image-bearing sources have no image",
-            f"{counts['pages_missing_image']:,}",
-            "" if counts["pages_missing_image"] == 1 else "s",
+    # Report on missing images for Gale and HathiTrust separately
+    missing_image_info = []
+    if counts["gale_missing_image"]:
+        missing_image_info.append(
+            f"{counts['gale_missing_image']:,} Gale pages missing images"
         )
+    if counts["ht_missing_image"]:
+        missing_image_info.append(
+            f"{counts['ht_missing_image']:,} HathiTrust pages missing images"
+        )
+    if missing_image_info:
+        logger.warning("; ".join(missing_image_info))
 
 
 if __name__ == "__main__":
