@@ -169,10 +169,11 @@ def test_align_pages_good_match_returns_mapping(pages_df, aligned_zip):
     with ZipFile(aligned_zip) as zf:
         result = align_pages(WORK_ID, pages_df, zf)
     # mapping is keyed by the full page id (matches how process_ht_work looks it up)
+    # returns tuple of page file basename and ocr text if changed
     assert result == {
-        "work.00000001": "00000001",
-        "work.00000002": "00000002",
-        "work.00000003": "00000003",
+        "work.00000001": ("00000001", None),
+        "work.00000002": ("00000002", None),
+        "work.00000003": ("00000003", None),
     }
 
 
@@ -208,8 +209,8 @@ def test_align_pages_join_mismatch_returns_partial(tmp_path, pages_df):
     )
     with ZipFile(zip_path) as zf:
         assert align_pages(WORK_ID, pages_df, zf) == {
-            "work.00000001": "00000001",
-            "work.00000002": "00000002",
+            "work.00000001": ("00000001", None),
+            "work.00000002": ("00000002", None),
         }
 
 
@@ -233,8 +234,8 @@ def test_align_pages_join_count_mismatch_warns_when_zip_count_ok(
         ZipFile(zip_path) as zf,
     ):
         assert align_pages(WORK_ID, pages_df, zf) == {
-            "work.00000001": "00000001",
-            "work.00000002": "00000002",
+            "work.00000001": ("00000001", None),
+            "work.00000002": ("00000002", None),
         }
     assert "joined pages" in caplog.text
     assert "does not match expected page count" in caplog.text
@@ -245,7 +246,7 @@ def test_align_pages_insufficient_zip_pages(tmp_path, pages_df):
     zip_path = make_zip(tmp_path, {"00000001.txt": PAGE_TEXTS["00000001"]})
     with ZipFile(zip_path) as zf:
         assert align_pages(WORK_ID, pages_df, zf) == {
-            "work.00000001": "00000001",
+            "work.00000001": ("00000001", None)
         }
 
 
@@ -261,8 +262,33 @@ def test_align_pages_prefixed_filenames(tmp_path):
     )
     with ZipFile(zip_path) as zf:
         assert align_pages(WORK_ID, pages_df, zf) == {
-            "work.00000001": "OSU_32435051461309_00000001",
-            "work.00000002": "OSU_32435051461309_00000002",
+            "work.00000001": ("OSU_32435051461309_00000001", None),
+            "work.00000002": ("OSU_32435051461309_00000002", None),
+        }
+
+
+def test_align_pages_new_ocr(tmp_path, pages_df):
+    # Zip is missing one page -> join count mismatch is warned about but the
+    # partial mapping for the pages that did join is still returned.
+    variant_texts = [
+        "quick brown fox jumps over lazy dog.",
+        # "To be or not is the question.",
+        "It was the best of times, the worst of times.",
+    ]
+    zip_path = make_zip(
+        tmp_path,
+        {
+            "00000001.txt": variant_texts[0],
+            "00000002.txt": PAGE_TEXTS["00000002"],  # keep one as-is
+            "00000003.txt": variant_texts[-1],
+        },
+    )
+    with ZipFile(zip_path) as zf:
+        # new ocr should be included only when it differs
+        assert align_pages(WORK_ID, pages_df, zf) == {
+            "work.00000001": ("00000001", variant_texts[0]),
+            "work.00000002": ("00000002", None),
+            "work.00000003": ("00000003", variant_texts[-1]),
         }
 
 
@@ -389,6 +415,34 @@ def test_process_ht_work_aligned_pages_get_image_paths(tmp_path):
     assert all("image_path" in p for p in result)
 
 
+def test_process_ht_work_aligned_pages_new_ocr(tmp_path):
+    htid_suffix = "12345678"
+    work_id = f"test.{htid_suffix}"
+    _make_ht_zip(tmp_path, htid_suffix, PAGE_TEXTS)  # , with_images=True)
+    pages = [
+        # abbreviate text so we can check that it moved
+        {"work_id": work_id, "id": f"{work_id}.{pid}", "text": text[:10]}
+        for pid, text in PAGE_TEXTS.items()
+    ]
+    with patch(
+        "corppa.utils.dataset_prep.align_pages",
+        return_value={
+            f"{work_id}.{pid}": (pid, text) for pid, text in PAGE_TEXTS.items()
+        },
+    ):
+        with tarfile.open(tmp_path / "out.tar", "w") as tar:
+            result = list(process_ht_work(work_id, pages, tmp_path, tar))
+
+    # all pages returned, each with a new and old text
+    assert len(result) == len(pages)
+    # old and new text are present for all rows
+    assert all("old_text" in p for p in result)
+    assert all("text" in p for p in result)
+    # new text comes from the align pages mapping result
+    assert result[0]["text"] == PAGE_TEXTS["00000001"]
+    assert result[0]["old_text"] == PAGE_TEXTS["00000001"][:10]
+
+
 def test_process_ht_work_does_not_drop_unaligned_pages(tmp_path, caplog):
     # a page with no alignment (page_basename is None) must still be yielded,
     # just without an image_path -- it should not silently disappear. An
@@ -406,14 +460,11 @@ def test_process_ht_work_does_not_drop_unaligned_pages(tmp_path, caplog):
         {"work_id": work_id, "id": f"{work_id}.00000099", "text": "unmatched page"}
     )
 
-    with (
-        patch(
-            "corppa.utils.dataset_prep.align_pages",
-            return_value={
-                f"{work_id}.{pid}": pid for pid in PAGE_TEXTS
-            },  # 00000099 intentionally absent
-        ),
-        caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
+    with patch(
+        "corppa.utils.dataset_prep.align_pages",
+        return_value={
+            f"{work_id}.{pid}": (pid, None) for pid in PAGE_TEXTS
+        },  # 00000099 intentionally absent
     ):
         with tarfile.open(tmp_path / "out.tar", "w") as tar:
             result = list(process_ht_work(work_id, pages, tmp_path, tar))
@@ -479,7 +530,7 @@ def test_process_ht_work_missing_image_warns_for_page_with_text(tmp_path, caplog
     with (
         patch(
             "corppa.utils.dataset_prep.align_pages",
-            return_value={f"{work_id}.{pid}": pid for pid in PAGE_TEXTS},
+            return_value={f"{work_id}.{pid}": (pid, None) for pid in PAGE_TEXTS},
         ),
         caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
     ):
@@ -506,7 +557,7 @@ def test_process_ht_work_missing_image_warns_for_empty_page(tmp_path, caplog):
     with (
         patch(
             "corppa.utils.dataset_prep.align_pages",
-            return_value={f"{work_id}.00000001": "00000001"},
+            return_value={f"{work_id}.00000001": ("00000001", None)},
         ),
         caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
     ):
@@ -1089,6 +1140,7 @@ def test_align_shifted_pages_consistent_shift():
     result = align_shifted_pages(pages_df, zip_pages_df)
 
     assert result is not None
+    assert result.columns == ["id", "page_filename", "new_ocr"]
     mapping = dict(result.select(["id", "page_filename"]).iter_rows())
     assert mapping == {
         "work.00000001": "00000011",
@@ -1096,6 +1148,42 @@ def test_align_shifted_pages_consistent_shift():
         "work.00000003": "00000013",
         "work.00000004": "00000014",
         "work.00000005": "00000015",
+    }
+    new_ocr_mapping = dict(result.select(["id", "new_ocr"]).iter_rows())
+    # shifted text is unchanged so new ocr is set to None
+    assert new_ocr_mapping == {
+        "work.00000001": None,
+        "work.00000002": None,
+        "work.00000003": None,
+        "work.00000004": None,
+        "work.00000005": None,
+    }
+
+
+def test_align_shifted_pages_new_ocr():
+    # adapt consistent shift test above to test modified text is passed through as new_oc r
+    seeds = [f"chapter-{i}-unique-content" for i in range(5)]
+    pages_df, zip_pages_df = _make_shifted_frames(
+        page_orders=list(range(1, 6)),
+        zip_orders=list(range(11, 16)),
+        seeds=seeds,
+    )
+    # replace first three zip page text with PAGE_TEXTS values to simulate different OCR
+    new_texts = list(PAGE_TEXTS.values()) + zip_pages_df["text"].to_list()[-2:]
+    zip_pages_df = zip_pages_df.with_columns(text=pl.Series(new_texts))
+
+    zip_pages_df = zip_pages_df.with_columns()
+    result = align_shifted_pages(pages_df, zip_pages_df)
+
+    new_ocr_mapping = dict(result.select(["id", "new_ocr"]).iter_rows())
+    assert new_ocr_mapping == {
+        # first three pages have new ocr because text differs
+        "work.00000001": PAGE_TEXTS["00000001"],
+        "work.00000002": PAGE_TEXTS["00000002"],
+        "work.00000003": PAGE_TEXTS["00000003"],
+        # last two do not
+        "work.00000004": None,
+        "work.00000005": None,
     }
 
 
