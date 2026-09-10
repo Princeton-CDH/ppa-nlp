@@ -6,6 +6,35 @@ app = marimo.App(width="medium")
 
 @app.cell
 def _():
+    import marimo as mo
+
+    # list of works with known alignment - must have zipfile present locally to run this
+    works = [
+        "hvd.hn1dlr",
+        "hvd.32044048962955-p145",
+        "hvd.32044050831999-p50",
+        "hvd.32044092711431-p469",
+        "mdp.39015030933512",
+        "mdp.39015030934866",
+        "mdp.39015031107785",
+        "mdp.39015058693683",
+        "mdp.39015059390321",
+        "mdp.39015059409386",
+        "mdp.39015059409410",
+    ]
+
+    select_work = mo.ui.multiselect(
+        # preselect first one so we don't have to worry about it being unset
+        options=works,
+        max_selections=1,
+        value=[works[0]],
+    )
+    select_work
+    return (select_work,)
+
+
+@app.cell
+def _(select_work):
     from pathlib import Path
 
     import polars as pl
@@ -16,7 +45,8 @@ def _():
         review_alignment,
     )
 
-    work_id = "hvd.hn1dlr"
+    # work_id = "hvd.hn1dlr"
+    work_id = select_work.value[0]
     # work_id = "hvd.32044048962955-p145"
     # work_id = "hvd.32044050831999-p50"
     # work_id = "hvd.32044092711431-p469"

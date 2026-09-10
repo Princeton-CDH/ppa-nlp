@@ -105,17 +105,23 @@ def add_zip_file_to_tar(
         tar.addfile(tarinfo, fileobj=f)
 
 
-def get_zip_imgexts(zipfile: ZipFile) -> list[str]:
-    """HathiTrust zip files include images in multiple formats; returns
-    a list of all unique image extensions found in the zip file."""
-    exts = set()
+image_extensions = [".tif", ".jpg", ".jpeg", ".jp2"]
+
+
+def get_zip_image_names(zipfile: ZipFile) -> dict[str, str]:
+    """HathiTrust zip files include images in multiple formats, sometimes
+    mixed even within a single zipfile. Use the ZipFile namelist to
+    generate and return a dictionary of all files with supported image
+    extensions. Dictionary key is the file basename, value is the full path
+    within the zip.
+    """
+    image_filenames = {}
     for filename in zipfile.namelist():
         file_path = Path(filename)
-        # compare case-insensitive but return actual case
-        if file_path.suffix.lower() in [".tif", ".jpg", ".jpeg", ".jp2"]:
-            exts.add(file_path.suffix)
+        if file_path.suffix.lower() in image_extensions:
+            image_filenames[file_path.stem] = filename
 
-    return list(exts)
+    return image_filenames
 
 
 # minimum text length (in characters) for a page to be matched against zip pages
@@ -152,7 +158,11 @@ def _text_snippet_expr(col: str) -> pl.Expr:
 
 def longest_increasing_subseq(values: np.ndarray) -> np.ndarray:
     """Return the indices (into ``values``) of the longest *strictly* increasing
-    subsequence; return the first sequence when there is a tie for longest subsequence.
+    subsequence. When several subsequences tie for longest, one is returned
+    deterministically (same input always yields the same result); which of the
+    tied subsequences is chosen is not part of the contract, since downstream
+    alignment depends only on the derived shifts and the rapidfuzz-based dedup,
+    not on the specific anchor set.
 
     Used by `align_shifted_pages` to filter high-confidence mappings down to a
     set of "anchor" matches that enforce sequential alignment while allowing for
@@ -252,9 +262,9 @@ def align_shifted_pages(
         "page_filename": pl.String,
         # best rapidfuzz.cdist score (0-100) for every scored (long) page against
         # any zip page; null for short pages that were not scored
-        "cdist_best_score": pl.Float64,
-        "shift": pl.Float64,
-        "inferred_shift": pl.Float64,
+        "cdist_best_score": pl.Int64,
+        "shift": pl.Int64,
+        "inferred_shift": pl.Int64,
         # raw text for the original page and its matched zip page (null if
         # unmatched); review/visualization helpers derive lengths, snippets, etc.
         "text": pl.String,
@@ -327,11 +337,10 @@ def align_shifted_pages(
         logger.warning("No high-confidence matches found; cannot determine page shift")
         return empty_mapping_df
 
-    # Treat confident as candidate anchors, then filter to a strictly increasing sequence
-    # to remove duplicate and out-of-order mappings.
+    # Treat confident matches as candidate anchors, which will be filtered to a
+    # trictly increasing sequence to remove duplicate and out-of-order mappings.
     conf_pos = np.flatnonzero(confident)  # row indices of high-confidence matches
     conf_zip_cols = best_idx[conf_pos]  # matrix columns for high-confidence matches
-
     # Now filter zip page orders for high-confidence matches to strictly-increasing subset;
     # this results in a set of anchor mappings that follow sequence
     anchors = longest_increasing_subseq(zip_orders[conf_zip_cols])
@@ -353,9 +362,12 @@ def align_shifted_pages(
     )
 
     # pull the trusted shift shift values into the full page dataframe;
-    # use a left join to keep all pages; shift is null for all but high-confidence sequential anchor pages
+    # use a left join to keep all pages; shift is null for all but high-confidence sequential anchor pages.
+    # maintain_order="left" is required: the forward/back-fill below propagates
+    # each page's shift from its nearest sorted neighbor, so rows must stay in
+    # original page order. Polars does not guarantee join row order otherwise.
     pages_shift_df = orig_pages_df.join(
-        long_shift_df, on="order", how="left"
+        long_shift_df, on="order", how="left", maintain_order="left"
     ).with_columns(
         # determine shift for all pages; use nearest high-confidence match (preceding page, then following)
         # to determine shift for pages without alignment
@@ -441,16 +453,20 @@ def align_shifted_pages(
             f"{row['n_pages']:,} pages)"
             for row in shift_summary_df.iter_rows(named=True)
         )
+        pluralize = {1: ""}  # use to conditionally pluralize tallies in log output
+        # report if there are any unmatched pages
+        unmatched_summary = (
+            f"; {num_unmatched:,} page{pluralize.get(num_unmatched, 's')} unmatched"
+            if num_unmatched
+            else ""
+        )
         logger.info(
-            "page shift: %s \t%d alignment%s inferred (%s); %d page%s unmatched",
+            "page shift: %s \t%d alignment%s inferred (%s)%s",
             shift_summary,
             num_inferred,
-            # conditionally pluralize inferred alignment
-            "" if num_inferred == 1 else "s",
+            pluralize.get(num_inferred, "s"),
             pct_inferred,
-            num_unmatched,
-            # conditionally pluralize number of unmatched pages
-            "" if num_unmatched == 1 else "s",
+            unmatched_summary,
         )
 
     # sanity-check the alignment; warn (but don't fail) on anything suspicious so
@@ -489,16 +505,16 @@ def align_pages(work_id: str, pages_df: pl.DataFrame, zipfile: ZipFile) -> dict:
             zip_pages_df.height,
             expected_page_count,
         )
+    # extract numeric page id to join with zip pages
+    pages_df = pages_df.with_columns(page_id=pl.col.id.str.extract(r"[._]([0-9]+$)"))
     # join origin pages with zip pages on the numeric page id,
     # and calculate a fuzzy text match score for each page using rapidfuzz fuzz ratio (normalized indel similarity)
     pages_join_df = (
-        pages_df.with_columns(page_id=pl.col.id.str.extract(r"[._]([0-9]+$)"))
-        .join(zip_pages_df, on="page_id")
+        pages_df.join(zip_pages_df, on="page_id")
         # NOTE: if any multiprocessing is added to this script, remove parallel=True argument
         .with_columns(text_match=pds.str_fuzz("text", "text_right", parallel=True))
     )
-    # only warn about the joined page count if we didn't already warn about
-    # the zip page count above, to avoid a redundant warning
+    # warn about count mismatch unless we already warned about zip page count above
     if not zip_count_mismatch and expected_page_count != pages_join_df.height:
         logger.warning(
             "%s joined pages (%d) does not match expected page count (%d)",
@@ -566,17 +582,18 @@ def review_alignment(
     # add derived review fields inferred from the raw alignment columns
     return detailed_df.with_columns(
         # a page is an anchor if it contributed a trusted (non-null) shift;
-        # is_matched reflects the final (post-dedup) filename assignment
         is_anchor=pl.col.shift.is_not_null(),
+        # is_matched reflects the final (post-dedup) filename assignment
         is_matched=pl.col.page_filename.is_not_null(),
-        # character counts (zip_text is null for unmatched pages -> null length)
+        # character counts (zip_text is null for unmatched pages)
         text_len=pl.col.text.str.len_chars(),
         zip_text_len=pl.col.zip_text.str.len_chars(),
         # first-line snippets for hover text
         text_snippet=_text_snippet_expr("text"),
         zip_text_snippet=_text_snippet_expr("zip_text"),
         # similarity of each matched page against its *actual* aligned zip page
-        # (0-100), to compare against cdist_best_score (best against any zip page)
+        # (str_fuzz returns 0-1; multiple by 100 to compare against cdist_best_score
+        # (best against any zip page)
         match_score=pl.when(pl.col.page_filename.is_not_null())
         .then(pds.str_fuzz("text", "zip_text", parallel=False) * 100)
         .otherwise(None),
@@ -877,7 +894,8 @@ def process_ht_work(
     work_id: str, pages: list[dict], image_dir: Path, tar: tarfile.TarFile
 ) -> Iterator[dict]:
     htid = get_volume_id(work_id)
-    htid_suffix = encode_htid(htid).split(".")[-1]
+    # a work is an excerpt if its work_id includes with -p; excerpts are not expected to use all pages from the zip file
+    is_excerpt = "-p" in work_id
     zipfile_path = get_ht_zipfile_path(work_id, image_dir)
     with open_ht_zipfile(zipfile_path) as ht_zip:
         if ht_zip is None:
@@ -896,43 +914,59 @@ def process_ht_work(
             return
 
         # when image mapping was returned, add images to tar file and image paths to page data
-        img_exts = get_zip_imgexts(ht_zip)
+        zip_image_filenames = get_zip_image_names(ht_zip)
+        encoded_htid = encode_htid(htid)
         for page in pages:
-            page_id = page["id"]  # .split(".")[-1]
+            page_id = page["id"]
             # get the corresponding image from the zip, add to the tar file with appropriate name,
             # and add the image path to the page record for output
             page_basename = page_mapping.get(page_id)
 
-            # add the image from the corresponding path in the zipfile to the
-            # appropriate path for this page in the tarfile
-            file_namelist = ht_zip.namelist()
+            # find the zip image path for this page (if any): the page
+            # must be mapped to a zip basename *and* that basename must
+            # exist under one of the available image extensions.
             if page_basename is not None:
-                zip_image_basepath = f"{htid_suffix}/{page_basename}"
-                for img_ext in img_exts:
-                    zip_image_path = f"{zip_image_basepath}{img_ext}"
-                    if zip_image_path in file_namelist:
-                        break
-                tar_image_path = f"{encode_htid(htid)}/{page_id}{img_ext}"
-                try:
-                    add_zip_file_to_tar(ht_zip, zip_image_path, tar, tar_image_path)
-                    # if adding succeeded, add the image path in the page record for output
-                    page["image_path"] = tar_image_path
+                # image filename dict is keyed on basename without extension
+                # so we can get the full image path based on the aligned text page
+                # use pop to remove from the dict so we can handle unused images
+                zip_image_path = zip_image_filenames.pop(page_basename, None)
 
-                except KeyError:
-                    has_text = page["text"].strip() != ""
-                    if has_text:
-                        logger.warning(
-                            "image %s not found in zipfile but page has text; skipping",
-                            zip_image_path,
-                        )
-                    logger.debug(
-                        "matching filenames: %s",
-                        [f for f in file_namelist if page_basename in f],
+                # add the image from the corresponding path in the zipfile to
+                # the appropriate path for this page in the tarfile
+                if zip_image_path is not None:
+                    img_ext = Path(zip_image_path).suffix
+                    tar_image_path = f"{encoded_htid}/{page_id}{img_ext}"
+                    add_zip_file_to_tar(ht_zip, zip_image_path, tar, tar_image_path)
+                    page["image_path"] = tar_image_path
+                else:
+                    # warn if there was a mapping but image was not found;
+                    # unmatched images are reported in the align pages
+                    has_text = "" if page.get("text", "").strip() else "no "
+                    logger.warning(
+                        "page %s aligned with text but image not found; page has %stext",
+                        page_id,
+                        has_text,
                     )
 
             # yield every page whether or not an image was aligned/added,
             # so no pages are dropped from the output corpus
             yield page
+
+        if not is_excerpt and zip_image_filenames:
+            # if this is not an excerpt, warn about any unused images in the zip
+            # and add them to the tar file but marked as unmatched
+            for zip_image_name in zip_image_filenames.values():
+                zip_image_path = Path(zip_image_name)
+                img_ext = zip_image_path.suffix
+                basename = zip_image_path.stem
+                tar_image_path = f"{encoded_htid}/unmatched/{basename}{img_ext}"
+                add_zip_file_to_tar(ht_zip, zip_image_name, tar, tar_image_path)
+
+            logger.info(
+                "work %s has %d unused zip images; added to tar as unmatched",
+                work_id,
+                len(zip_image_filenames),
+            )
 
 
 # HathiTrust 1930 excerpts whose zip filename first-page number cannot be
@@ -1081,6 +1115,27 @@ def process_ht1930_work(
                 work_id,
                 len(image_map),
             )
+
+
+def _tally_processed_work(
+    work_id: str, pages: list[dict], counts: defaultdict[str, int]
+) -> None:
+    """Update run-level counts for a single processed work. Tallies pages,
+    page images added, and pages that expected an image (Gale/HathiTrust works)
+    but did not get one, so missing images are surfaced at the run level."""
+    counts["works_processed"] += 1
+    num_pages = len(pages)
+    counts["pages_processed"] += num_pages
+    num_images = len([p for p in pages if p.get("image_path")])
+    counts["page_images"] += num_images
+    # We expect to have images for Gale and HathiTrust works; report how many are missing
+    missing_images = num_pages - num_images
+    if missing_images:
+        source = get_ppa_source(work_id)
+        if source == "Gale":
+            counts["gale_missing_image"] += missing_images
+        elif source == "HathiTrust":
+            counts["ht_missing_image"] += missing_images
 
 
 def main():
@@ -1273,11 +1328,7 @@ def main():
                                 )
                             )
                             orjsonl.extend(output_pages_path, pages)
-                            counts["works_processed"] += 1
-                            counts["pages_processed"] += len(pages)
-                            counts["page_images"] += sum(
-                                1 for p in pages if p.get("image_path")
-                            )
+                            _tally_processed_work(prev_work_id, pages, counts)
                     # stop here (at a work boundary) if a signal was received, so we
                     # never interrupt a work's tar/jsonl writes partway through; the
                     # tar is still closed cleanly by the context manager
@@ -1294,8 +1345,8 @@ def main():
                     pages.append(page)
 
             # handle the pages for the last work at end of loop, unless we broke
-            # out early on a stop signal (that work was already written before the
-            # break)
+            # out early on a stop signal (that work was already written before
+            # the break)
             if prev_work_id is not None and not _stop_requested:
                 if skip_work:
                     counts["works_skipped"] += 1
@@ -1310,11 +1361,7 @@ def main():
                         )
                     )
                     orjsonl.extend(output_pages_path, pages)
-                    counts["works_processed"] += 1
-                    counts["pages_processed"] += len(pages)
-                    counts["page_images"] += sum(
-                        1 for p in pages if p.get("image_path")
-                    )
+                    _tally_processed_work(prev_work_id, pages, counts)
         finally:
             # Close the input stream explicitly. When stopping on ctrl-c, the
             # decompression subprocess spawned by orjsonl/xopen was already killed
@@ -1338,6 +1385,18 @@ def main():
         f"{counts['works_skipped']:,}",
         f"{counts['pages_skipped']:,}",
     )
+    # Report on missing images for Gale and HathiTrust separately
+    missing_image_info = []
+    if counts["gale_missing_image"]:
+        missing_image_info.append(
+            f"{counts['gale_missing_image']:,} Gale pages missing images"
+        )
+    if counts["ht_missing_image"]:
+        missing_image_info.append(
+            f"{counts['ht_missing_image']:,} HathiTrust pages missing images"
+        )
+    if missing_image_info:
+        logger.warning("; ".join(missing_image_info))
 
 
 if __name__ == "__main__":

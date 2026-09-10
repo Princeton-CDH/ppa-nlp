@@ -1,6 +1,7 @@
 # Copyright (c) 2024-2026, Center for Digital Humanities, Princeton University
 # SPDX-License-Identifier: Apache-2.0
 
+import re
 import signal
 import tarfile
 from pathlib import Path
@@ -57,8 +58,6 @@ def make_zip(tmp_path: Path, files: dict[str, str]) -> Path:
 def make_pages_df(page_ids: list[str]) -> pl.DataFrame:
     """Build a minimal pages DataFrame from dot- or underscore-separated ids
     like 'work.00000001' or 'work_00000001', looked up against PAGE_TEXTS."""
-    import re
-
     return pl.DataFrame(
         {
             "id": page_ids,
@@ -83,13 +82,6 @@ def pages_df():
 
 
 # --- get_zip_textfiles ---
-
-
-def test_get_zip_textfiles_returns_iterator(tmp_path):
-    with ZipFile(make_zip(tmp_path, {"00000001.txt": "text"})) as zf:
-        result = get_zip_textfiles(zf)
-        assert hasattr(result, "__iter__")
-        assert hasattr(result, "__next__")
 
 
 def test_get_zip_textfiles_multiple(tmp_path):
@@ -326,9 +318,10 @@ def test_open_ht_zipfile_none_path_yields_none():
 # --- process_ht_work ---
 
 
-def _make_ht_zip(tmp_path, htid_suffix, page_texts, with_images=True):
-    """Build a HathiTrust-style zip at the path process_ht_work expects.
-    page_texts maps zero-padded page filenames (e.g. '00000001') to text."""
+def _make_ht_zip(tmp_path, htid_suffix, page_texts):
+    """Build a HathiTrust-style zip (text + image per page) at the path
+    process_ht_work expects. page_texts maps zero-padded page filenames
+    (e.g. '00000001') to text."""
     from corppa.utils.path_utils import encode_htid
 
     htid = f"test.{htid_suffix}"
@@ -338,8 +331,7 @@ def _make_ht_zip(tmp_path, htid_suffix, page_texts, with_images=True):
     with ZipFile(zip_path, "w") as zf:
         for name, text in page_texts.items():
             zf.writestr(f"{htid_suffix}/{name}.txt", text)
-            if with_images:
-                zf.writestr(f"{htid_suffix}/{name}.jpg", b"img-" + name.encode())
+            zf.writestr(f"{htid_suffix}/{name}.jpg", b"img-" + name.encode())
     return htid
 
 
@@ -357,7 +349,7 @@ def test_process_ht_work_no_zip_yields_pages_unchanged(tmp_path):
 def test_process_ht_work_aligned_pages_get_image_paths(tmp_path):
     htid_suffix = "12345678"
     work_id = f"test.{htid_suffix}"
-    _make_ht_zip(tmp_path, htid_suffix, PAGE_TEXTS, with_images=True)
+    _make_ht_zip(tmp_path, htid_suffix, PAGE_TEXTS)
     pages = [
         {"work_id": work_id, "id": f"{work_id}.{pid}", "text": text}
         for pid, text in PAGE_TEXTS.items()
@@ -369,12 +361,14 @@ def test_process_ht_work_aligned_pages_get_image_paths(tmp_path):
     assert all("image_path" in p for p in result)
 
 
-def test_process_ht_work_does_not_drop_unaligned_pages(tmp_path):
+def test_process_ht_work_does_not_drop_unaligned_pages(tmp_path, caplog):
     # a page with no alignment (page_basename is None) must still be yielded,
-    # just without an image_path -- it should not silently disappear
+    # just without an image_path -- it should not silently disappear. An
+    # unmapped page is not warned about here (unmatched pages are reported by
+    # align_pages); only mapped-but-missing-image pages warn.
     htid_suffix = "12345678"
     work_id = f"test.{htid_suffix}"
-    _make_ht_zip(tmp_path, htid_suffix, PAGE_TEXTS, with_images=True)
+    _make_ht_zip(tmp_path, htid_suffix, PAGE_TEXTS)
     pages = [
         {"work_id": work_id, "id": f"{work_id}.{pid}", "text": text}
         for pid, text in PAGE_TEXTS.items()
@@ -384,11 +378,14 @@ def test_process_ht_work_does_not_drop_unaligned_pages(tmp_path):
         {"work_id": work_id, "id": f"{work_id}.00000099", "text": "unmatched page"}
     )
 
-    with patch(
-        "corppa.utils.dataset_prep.align_pages",
-        return_value={
-            f"{work_id}.{pid}": pid for pid in PAGE_TEXTS
-        },  # 00000099 intentionally absent
+    with (
+        patch(
+            "corppa.utils.dataset_prep.align_pages",
+            return_value={
+                f"{work_id}.{pid}": pid for pid in PAGE_TEXTS
+            },  # 00000099 intentionally absent
+        ),
+        caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
     ):
         with tarfile.open(tmp_path / "out.tar", "w") as tar:
             result = list(process_ht_work(work_id, pages, tmp_path, tar))
@@ -400,13 +397,15 @@ def test_process_ht_work_does_not_drop_unaligned_pages(tmp_path):
     # the unaligned page has no image_path
     unaligned = next(p for p in result if p["id"] == f"{work_id}.00000099")
     assert "image_path" not in unaligned
+    # the unmapped page is not warned about (it never had a mapping to an image)
+    assert f"{work_id}.00000099" not in caplog.text
 
 
 def test_process_ht_work_no_mapping_yields_pages_unchanged(tmp_path):
     # when align_pages returns no mapping, all pages are yielded without images
     htid_suffix = "12345678"
     work_id = f"test.{htid_suffix}"
-    _make_ht_zip(tmp_path, htid_suffix, PAGE_TEXTS, with_images=True)
+    _make_ht_zip(tmp_path, htid_suffix, PAGE_TEXTS)
     pages = [
         {"work_id": work_id, "id": f"{work_id}.{pid}", "text": text}
         for pid, text in PAGE_TEXTS.items()
@@ -418,13 +417,33 @@ def test_process_ht_work_no_mapping_yields_pages_unchanged(tmp_path):
     assert all("image_path" not in p for p in result)
 
 
+def _make_ht_zip_text_only(tmp_path, htid_suffix, page_texts):
+    """Build a HathiTrust-style zip where every page has text but no image,
+    except a single .jpg so get_zip_imgexts still finds an extension to try.
+    Pages aligned to a text-only entry exercise the 'no image found' path."""
+    from corppa.utils.path_utils import encode_htid
+
+    htid = f"test.{htid_suffix}"
+    zip_dir = tmp_path / "HathiTrust" / encode_htid(htid)
+    zip_dir.mkdir(parents=True)
+    zip_path = zip_dir / f"{htid_suffix}.zip"
+    with ZipFile(zip_path, "w") as zf:
+        for name, text in page_texts.items():
+            zf.writestr(f"{htid_suffix}/{name}.txt", text)
+        # one image so get_zip_imgexts returns [".jpg"]; it does not correspond
+        # to any of the aligned pages below
+        zf.writestr(f"{htid_suffix}/99999999.jpg", b"img")
+    return htid
+
+
 def test_process_ht_work_missing_image_warns_for_page_with_text(tmp_path, caplog):
-    # page is aligned to a zip filename, but adding the image raises KeyError
-    # (image absent from the zip); a page with text should warn and be yielded
-    # without an image_path -- it must not be dropped
+    # pages are aligned to zip filenames, but no image exists for them in the
+    # zip; a page with text should warn and be yielded without an image_path
+    # (not dropped), and add_zip_file_to_tar must never be called with a
+    # non-existent path
     htid_suffix = "12345678"
     work_id = f"test.{htid_suffix}"
-    _make_ht_zip(tmp_path, htid_suffix, PAGE_TEXTS, with_images=True)
+    _make_ht_zip_text_only(tmp_path, htid_suffix, PAGE_TEXTS)
     pages = [
         {"work_id": work_id, "id": f"{work_id}.{pid}", "text": text}
         for pid, text in PAGE_TEXTS.items()
@@ -434,10 +453,6 @@ def test_process_ht_work_missing_image_warns_for_page_with_text(tmp_path, caplog
             "corppa.utils.dataset_prep.align_pages",
             return_value={f"{work_id}.{pid}": pid for pid in PAGE_TEXTS},
         ),
-        patch(
-            "corppa.utils.dataset_prep.add_zip_file_to_tar",
-            side_effect=KeyError("missing"),
-        ),
         caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
     ):
         with tarfile.open(tmp_path / "out.tar", "w") as tar:
@@ -446,26 +461,24 @@ def test_process_ht_work_missing_image_warns_for_page_with_text(tmp_path, caplog
     # every page is still yielded, none get an image_path
     assert [p["id"] for p in result] == [p["id"] for p in pages]
     assert all("image_path" not in p for p in result)
-    # pages with text warn about the missing image
-    assert "not found in zipfile but page has text; skipping" in caplog.text
+    # mapped pages with text warn about the missing image
+    assert "aligned with text but image not found" in caplog.text
+    assert "page has text" in caplog.text
+    assert "page has no text" not in caplog.text
 
 
-def test_process_ht_work_missing_image_no_warn_for_empty_page(tmp_path, caplog):
-    # when add_zip_file_to_tar raises KeyError for a page with no text,
-    # the page is yielded without an image_path and without a warning
+def test_process_ht_work_missing_image_warns_for_empty_page(tmp_path, caplog):
+    # a mapped page whose image is absent is warned about regardless of text;
+    # for a blank page the warning notes the page has no text
     htid_suffix = "12345678"
     work_id = f"test.{htid_suffix}"
-    _make_ht_zip(tmp_path, htid_suffix, PAGE_TEXTS, with_images=True)
+    _make_ht_zip_text_only(tmp_path, htid_suffix, {"00000001": "   "})
     # single page with only whitespace text
     pages = [{"work_id": work_id, "id": f"{work_id}.00000001", "text": "   "}]
     with (
         patch(
             "corppa.utils.dataset_prep.align_pages",
             return_value={f"{work_id}.00000001": "00000001"},
-        ),
-        patch(
-            "corppa.utils.dataset_prep.add_zip_file_to_tar",
-            side_effect=KeyError("missing"),
         ),
         caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
     ):
@@ -474,8 +487,48 @@ def test_process_ht_work_missing_image_no_warn_for_empty_page(tmp_path, caplog):
 
     assert [p["id"] for p in result] == [p["id"] for p in pages]
     assert "image_path" not in result[0]
-    # no warning for a blank page missing its image
-    assert "not found in zipfile but page has text" not in caplog.text
+    # the mapped-but-missing-image page still warns, noting it has no text
+    assert (
+        f"page {work_id}.00000001 aligned with text but image not found; "
+        "page has no text" in caplog.text
+    )
+
+
+# --- _tally_processed_work ---
+
+
+def test_tally_processed_work_counts_missing_images_for_image_source():
+    from collections import defaultdict
+
+    from corppa.utils.dataset_prep import _tally_processed_work
+
+    counts: defaultdict[str, int] = defaultdict(int)
+    pages = [
+        {"id": "a", "image_path": "x/a.jpg"},
+        {"id": "b"},  # no image
+        {"id": "c"},  # no image
+    ]
+    # HathiTrust work id (contains ".") -> pages expect images
+    _tally_processed_work("test.12345678", pages, counts)
+    assert counts["works_processed"] == 1
+    assert counts["pages_processed"] == 3
+    assert counts["page_images"] == 1
+    assert counts["ht_missing_image"] == 2
+    assert counts["gale_missing_image"] == 0
+
+
+def test_tally_processed_work_ignores_missing_images_for_eebo():
+    from collections import defaultdict
+
+    from corppa.utils.dataset_prep import _tally_processed_work
+
+    counts: defaultdict[str, int] = defaultdict(int)
+    pages = [{"id": "a"}, {"id": "b"}]  # EEBO has no images
+    # EEBO-TCP work id begins with "A" -> no images expected, none counted missing
+    _tally_processed_work("A12345", pages, counts)
+    assert counts["pages_processed"] == 2
+    assert counts["page_images"] == 0
+    assert counts["pages_missing_image"] == 0
 
 
 # --- process_work (dispatch) ---
@@ -1079,6 +1132,76 @@ def test_align_shifted_pages_includes_head_pages():
     assert mapping["work.00000006"] == "00000016"
 
 
+def test_align_shifted_pages_input_row_order_independent():
+    # The shift forward/back-fill is order-dependent and must operate on pages
+    # sorted by `order`. align_shifted_pages sorts internally, so the result must
+    # be identical regardless of the input row order. This guards the join that
+    # feeds the fill (which needs maintain_order="left"): if rows were allowed to
+    # scramble, short pages at a shift boundary would inherit a neighbor's shift
+    # from the wrong row.
+    #
+    # Uses two different shifts (a boundary) so the fill outcome genuinely
+    # depends on row order: pages 1-3 map at +10, pages 4-6 at +20, with short
+    # (non-anchor) pages 3 and 4 straddling the boundary. If the fill ran on
+    # scrambled rows, pages 3/4 would inherit the wrong shift.
+    seeds = [f"chapter-{i}-unique-content" for i in range(6)]
+    # zip has pages at 11-13 (for the +10 block) and 24-26 (for the +20 block)
+    zip_orders = [11, 12, 13, 24, 25, 26]
+
+    def build(order):
+        zip_pages_df = pl.DataFrame(
+            {
+                "page_filename": [f"{z:08d}" for z in zip_orders],
+                "order": zip_orders,
+                "text": [_long_text(s) for s in seeds],
+            }
+        )
+        # pages 3 and 4 are short (filtered out, so non-anchor); anchors 1,2 fix
+        # the +10 shift and anchors 5,6 fix the +20 shift. short page 3 must take
+        # the preceding (+10) shift, short page 4 must take the preceding (+20).
+        texts = {
+            1: _long_text(seeds[0]),
+            2: _long_text(seeds[1]),
+            3: "short page three",
+            4: "short page four",
+            5: _long_text(seeds[4]),
+            6: _long_text(seeds[5]),
+        }
+        pages_df = pl.DataFrame(
+            {
+                "id": [f"work.{o:08d}" for o in order],
+                "order": order,
+                "text": [texts[o] for o in order],
+            }
+        )
+        return pages_df, zip_pages_df
+
+    # the sorted result is the ground truth (short page 3 inherits the +10 block;
+    # the algorithm's dedup/fill behavior at the boundary is exercised here). The
+    # key invariant is that shuffled input yields the *same* mapping.
+    sorted_pages, zip_df = build([1, 2, 3, 4, 5, 6])
+    expected = dict(
+        align_shifted_pages(sorted_pages, zip_df)
+        .select(["id", "page_filename"])
+        .iter_rows()
+    )
+    # sanity: the +10 block anchors and the inferred short page all resolved
+    assert expected["work.00000001"] == "00000011"
+    assert expected["work.00000003"] == "00000013"
+    assert expected["work.00000005"] == "00000025"
+
+    # shuffled input must produce an identical mapping
+    shuffled_pages, zip_df = build([4, 1, 6, 3, 5, 2])
+    assert (
+        dict(
+            align_shifted_pages(shuffled_pages, zip_df)
+            .select(["id", "page_filename"])
+            .iter_rows()
+        )
+        == expected
+    )
+
+
 def test_align_shifted_pages_returns_id_and_filename_columns():
     seeds = [f"page-{i}-content" for i in range(3)]
     pages_df, zip_pages_df = _make_shifted_frames([1, 2, 3], [5, 6, 7], seeds)
@@ -1600,25 +1723,31 @@ def _make_corpus_dir(
     return corpus_dir
 
 
-def _run_main(corpus_dir, image_dir, output_dir, extra_args=None):
-    """Invoke main() with the given positional args (+ optional extras),
-    patching process_work so no image/zip handling is exercised."""
-    argv = [
-        "dataset_prep.py",
-        str(corpus_dir),
-        str(image_dir),
-        str(output_dir),
-    ]
+def _run_main(corpus_dir, main_dirs, extra_args=None, process_side_effect=None):
+    """Invoke main() with a corpus dir + (image_dir, output_dir) fixture pair,
+    patching process_work with ``process_side_effect`` (defaults to yielding
+    pages unchanged, so no image/zip handling is exercised)."""
+    image_dir, output_dir = main_dirs
+    argv = ["dataset_prep.py", str(corpus_dir), str(image_dir), str(output_dir)]
     if extra_args:
         argv += extra_args
     with (
         patch("sys.argv", argv),
         patch(
             "corppa.utils.dataset_prep.process_work",
-            side_effect=_pages_through,
+            side_effect=process_side_effect or _pages_through,
         ),
     ):
         main()
+
+
+@pytest.fixture
+def main_dirs(tmp_path):
+    """(image_dir, output_dir) for main() tests; image_dir is created, output_dir
+    is left to main() to create (some tests pre-create it themselves)."""
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    return image_dir, tmp_path / "out"
 
 
 @pytest.fixture
@@ -1627,43 +1756,33 @@ def corpus_input(tmp_path):
     return _make_corpus_dir(
         tmp_path / "corpus",
         [
-            {"work_id": "workA", "id": "workA.0001", "text": "a1"},
-            {"work_id": "workA", "id": "workA.0002", "text": "a2"},
-            {"work_id": "workB", "id": "workB.0001", "text": "b1"},
-            {"work_id": "workB", "id": "workB.0002", "text": "b2"},
+            {"work_id": "work.A", "id": "workA.0001", "text": "a1"},
+            {"work_id": "work.A", "id": "workA.0002", "text": "a2"},
+            {"work_id": "work.B", "id": "workB.0001", "text": "b1"},
+            {"work_id": "work.B", "id": "workB.0002", "text": "b2"},
         ],
     )
 
 
-def test_main_progress_bar_enabled_by_default(tmp_path, corpus_input):
-    image_dir = tmp_path / "images"
-    image_dir.mkdir()
-    output_dir = tmp_path / "out"
-
+def test_main_progress_bar_enabled_by_default(corpus_input, main_dirs):
     with patch("corppa.utils.dataset_prep.tqdm", wraps=tqdm) as mock_tqdm:
-        _run_main(corpus_input, image_dir, output_dir)
+        _run_main(corpus_input, main_dirs)
 
     # progress bar is shown (not disabled) unless --no-progress is passed
     assert mock_tqdm.call_args.kwargs["disable"] is False
 
 
-def test_main_no_progress_disables_bar(tmp_path, corpus_input):
-    image_dir = tmp_path / "images"
-    image_dir.mkdir()
-    output_dir = tmp_path / "out"
-
+def test_main_no_progress_disables_bar(corpus_input, main_dirs):
     with patch("corppa.utils.dataset_prep.tqdm", wraps=tqdm) as mock_tqdm:
-        _run_main(corpus_input, image_dir, output_dir, extra_args=["--no-progress"])
+        _run_main(corpus_input, main_dirs, extra_args=["--no-progress"])
 
     assert mock_tqdm.call_args.kwargs["disable"] is True
 
 
-def test_main_writes_all_works(tmp_path, corpus_input):
-    image_dir = tmp_path / "images"
-    image_dir.mkdir()
-    output_dir = tmp_path / "out"
+def test_main_writes_all_works(corpus_input, main_dirs):
+    _, output_dir = main_dirs
 
-    _run_main(corpus_input, image_dir, output_dir)
+    _run_main(corpus_input, main_dirs)
 
     output_pages = output_dir / "ppa_pages.jsonl"
     output_tar = output_dir / "ppa_images.tar"
@@ -1681,10 +1800,8 @@ def test_main_writes_all_works(tmp_path, corpus_input):
     ]
 
 
-def test_main_continue_skips_completed_works(tmp_path, corpus_input):
-    image_dir = tmp_path / "images"
-    image_dir.mkdir()
-    output_dir = tmp_path / "out"
+def test_main_continue_skips_completed_works(corpus_input, main_dirs):
+    _, output_dir = main_dirs
     output_dir.mkdir()
 
     output_pages = output_dir / "ppa_pages.jsonl"
@@ -1693,15 +1810,15 @@ def test_main_continue_skips_completed_works(tmp_path, corpus_input):
     _write_corpus(
         output_pages,
         [
-            {"work_id": "workA", "id": "workA.0001", "text": "a1"},
-            {"work_id": "workA", "id": "workA.0002", "text": "a2"},
+            {"work_id": "work.A", "id": "workA.0001", "text": "a1"},
+            {"work_id": "work.A", "id": "workA.0002", "text": "a2"},
         ],
     )
     # and produced an existing (uncompressed) tar
     with tarfile.open(output_tar, "w"):
         pass
 
-    _run_main(corpus_input, image_dir, output_dir, extra_args=["--continue"])
+    _run_main(corpus_input, main_dirs, extra_args=["--continue"])
 
     written = list(orjsonl.stream(output_pages))
     # workA pages are preserved and only appear once; workB is appended
@@ -1713,12 +1830,10 @@ def test_main_continue_skips_completed_works(tmp_path, corpus_input):
     ]
 
 
-def test_main_continue_skips_completed_last_work(tmp_path, corpus_input, caplog):
+def test_main_continue_skips_completed_last_work(corpus_input, main_dirs, caplog):
     # when the LAST work in the corpus is already completed, the end-of-loop
     # handler must count it as skipped (not reprocess it)
-    image_dir = tmp_path / "images"
-    image_dir.mkdir()
-    output_dir = tmp_path / "out"
+    _, output_dir = main_dirs
     output_dir.mkdir()
 
     output_pages = output_dir / "ppa_pages.jsonl"
@@ -1727,15 +1842,15 @@ def test_main_continue_skips_completed_last_work(tmp_path, corpus_input, caplog)
     _write_corpus(
         output_pages,
         [
-            {"work_id": "workB", "id": "workB.0001", "text": "b1"},
-            {"work_id": "workB", "id": "workB.0002", "text": "b2"},
+            {"work_id": "work.B", "id": "workB.0001", "text": "b1"},
+            {"work_id": "work.B", "id": "workB.0002", "text": "b2"},
         ],
     )
     with tarfile.open(output_tar, "w"):
         pass
 
     with caplog.at_level("INFO", logger="corppa.utils.dataset_prep"):
-        _run_main(corpus_input, image_dir, output_dir, extra_args=["--continue"])
+        _run_main(corpus_input, main_dirs, extra_args=["--continue"])
 
     # workA is appended; workB (already present, and the last work) is not
     # duplicated
@@ -1753,31 +1868,27 @@ def test_main_continue_skips_completed_last_work(tmp_path, corpus_input, caplog)
     )
 
 
-def test_main_continue_does_not_rename_existing_output(tmp_path, corpus_input):
-    image_dir = tmp_path / "images"
-    image_dir.mkdir()
-    output_dir = tmp_path / "out"
+def test_main_continue_does_not_rename_existing_output(corpus_input, main_dirs):
+    _, output_dir = main_dirs
     output_dir.mkdir()
 
     output_pages = output_dir / "ppa_pages.jsonl"
     _write_corpus(
         output_pages,
-        [{"work_id": "workA", "id": "workA.0001", "text": "a1"}],
+        [{"work_id": "work.A", "id": "workA.0001", "text": "a1"}],
     )
 
-    _run_main(corpus_input, image_dir, output_dir, extra_args=["--continue"])
+    _run_main(corpus_input, main_dirs, extra_args=["--continue"])
 
     # continue appends in place; it must not create a .bak backup
     assert not (output_dir / "ppa_pages.jsonl.bak").exists()
 
 
-def test_main_continue_missing_output_starts_fresh(tmp_path, corpus_input):
-    image_dir = tmp_path / "images"
-    image_dir.mkdir()
-    output_dir = tmp_path / "out"
+def test_main_continue_missing_output_starts_fresh(corpus_input, main_dirs):
+    _, output_dir = main_dirs
 
     # --continue with no existing output should behave like a fresh run
-    _run_main(corpus_input, image_dir, output_dir, extra_args=["--continue"])
+    _run_main(corpus_input, main_dirs, extra_args=["--continue"])
 
     written = list(orjsonl.stream(output_dir / "ppa_pages.jsonl"))
     assert [p["id"] for p in written] == [
@@ -1788,10 +1899,8 @@ def test_main_continue_missing_output_starts_fresh(tmp_path, corpus_input):
     ]
 
 
-def test_main_without_continue_renames_existing_output(tmp_path, corpus_input):
-    image_dir = tmp_path / "images"
-    image_dir.mkdir()
-    output_dir = tmp_path / "out"
+def test_main_without_continue_renames_existing_output(corpus_input, main_dirs):
+    _, output_dir = main_dirs
     output_dir.mkdir()
 
     output_pages = output_dir / "ppa_pages.jsonl"
@@ -1800,7 +1909,7 @@ def test_main_without_continue_renames_existing_output(tmp_path, corpus_input):
         [{"work_id": "old", "id": "old.0001", "text": "old"}],
     )
 
-    _run_main(corpus_input, image_dir, output_dir)
+    _run_main(corpus_input, main_dirs)
 
     # existing output is renamed to a .bak file and rewritten fresh
     backup = output_dir / "ppa_pages.jsonl.bak"
@@ -1816,11 +1925,9 @@ def test_main_without_continue_renames_existing_output(tmp_path, corpus_input):
 
 
 def test_main_without_continue_warns_and_overwrites_existing_archive(
-    tmp_path, corpus_input, caplog
+    corpus_input, main_dirs, caplog
 ):
-    image_dir = tmp_path / "images"
-    image_dir.mkdir()
-    output_dir = tmp_path / "out"
+    _, output_dir = main_dirs
     output_dir.mkdir()
 
     output_tar = output_dir / "ppa_images.tar"
@@ -1832,7 +1939,7 @@ def test_main_without_continue_warns_and_overwrites_existing_archive(
         tar.addfile(info)
 
     with caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"):
-        _run_main(corpus_input, image_dir, output_dir)
+        _run_main(corpus_input, main_dirs)
 
     # existing archive is flagged and overwritten (no stale member remains)
     assert "already exists, overwriting" in caplog.text
@@ -1843,27 +1950,18 @@ def test_main_without_continue_warns_and_overwrites_existing_archive(
 # --- graceful stop on signal ---
 
 
-def test_main_stops_cleanly_after_current_work(tmp_path, corpus_input):
-    image_dir = tmp_path / "images"
-    image_dir.mkdir()
-    output_dir = tmp_path / "out"
+def _stop_after_first(work_id, pages, image_dir, tar, ht1930_work_ids=None):
+    """process_work stand-in that requests a stop once workA is handled, so the
+    run stops cleanly at the work boundary before workB is started."""
+    if work_id == "work.A":
+        dataset_prep._request_stop(signal.SIGTERM, None)
+    yield from pages
 
-    # simulate a signal arriving while the first work is being processed:
-    # request a stop after workA is handled, so workB is never started
-    def stop_after_first(work_id, pages, image_dir, tar, ht1930_work_ids=None):
-        if work_id == "workA":
-            dataset_prep._request_stop(signal.SIGTERM, None)
-        yield from pages
 
-    argv = ["dataset_prep.py", str(corpus_input), str(image_dir), str(output_dir)]
-    with (
-        patch("sys.argv", argv),
-        patch(
-            "corppa.utils.dataset_prep.process_work",
-            side_effect=stop_after_first,
-        ),
-    ):
-        main()
+def test_main_stops_cleanly_after_current_work(corpus_input, main_dirs):
+    _, output_dir = main_dirs
+
+    _run_main(corpus_input, main_dirs, process_side_effect=_stop_after_first)
 
     # only the completed work (workA) is written; workB is skipped entirely
     written = list(orjsonl.stream(output_dir / "ppa_pages.jsonl"))
@@ -1896,7 +1994,7 @@ def test_main_input_stream_close_error_is_suppressed(tmp_path, corpus_input, cap
     # request a stop while processing the first work so the loop breaks mid-stream
     # and main() closes the (still-open) generator, triggering the teardown error
     def stop_after_first(work_id, pages, image_dir, tar, ht1930_work_ids=None):
-        if work_id == "workA":
+        if work_id == "work.A":
             dataset_prep._request_stop(signal.SIGINT, None)
         yield from pages
 
@@ -1922,16 +2020,14 @@ def test_main_input_stream_close_error_is_suppressed(tmp_path, corpus_input, cap
     assert "ignoring input stream close error during shutdown" in caplog.text
 
 
-def test_main_stop_flag_reset_between_runs(tmp_path, corpus_input):
-    image_dir = tmp_path / "images"
-    image_dir.mkdir()
-    output_dir = tmp_path / "out"
+def test_main_stop_flag_reset_between_runs(corpus_input, main_dirs):
+    _, output_dir = main_dirs
 
     # leave the module flag set from a prior run; main() should reset it so
     # this run completes normally
     dataset_prep._stop_requested = True
 
-    _run_main(corpus_input, image_dir, output_dir)
+    _run_main(corpus_input, main_dirs)
 
     assert dataset_prep._stop_requested is False
     written = list(orjsonl.stream(output_dir / "ppa_pages.jsonl"))
@@ -1946,13 +2042,9 @@ def test_main_stop_flag_reset_between_runs(tmp_path, corpus_input):
 # --- run summary reporting ---
 
 
-def test_main_reports_finished_counts(tmp_path, corpus_input, caplog):
-    image_dir = tmp_path / "images"
-    image_dir.mkdir()
-    output_dir = tmp_path / "out"
-
+def test_main_reports_finished_counts(corpus_input, main_dirs, caplog):
     with caplog.at_level("INFO", logger="corppa.utils.dataset_prep"):
-        _run_main(corpus_input, image_dir, output_dir)
+        _run_main(corpus_input, main_dirs)
 
     # two works, two pages each, no images added by the stand-in process_work
     assert (
@@ -1961,11 +2053,7 @@ def test_main_reports_finished_counts(tmp_path, corpus_input, caplog):
     )
 
 
-def test_main_reports_page_image_counts(tmp_path, corpus_input, caplog):
-    image_dir = tmp_path / "images"
-    image_dir.mkdir()
-    output_dir = tmp_path / "out"
-
+def test_main_reports_page_image_counts(corpus_input, main_dirs, caplog):
     # simulate process_work adding an image path to one page per work
     def add_one_image(work_id, pages, image_dir, tar, ht1930_work_ids=None):
         for i, page in enumerate(pages):
@@ -1973,16 +2061,8 @@ def test_main_reports_page_image_counts(tmp_path, corpus_input, caplog):
                 page["image_path"] = f"{work_id}/{page['id']}.jpg"
             yield page
 
-    argv = ["dataset_prep.py", str(corpus_input), str(image_dir), str(output_dir)]
-    with (
-        patch("sys.argv", argv),
-        patch(
-            "corppa.utils.dataset_prep.process_work",
-            side_effect=add_one_image,
-        ),
-        caplog.at_level("INFO", logger="corppa.utils.dataset_prep"),
-    ):
-        main()
+    with caplog.at_level("INFO", logger="corppa.utils.dataset_prep"):
+        _run_main(corpus_input, main_dirs, process_side_effect=add_one_image)
 
     # one image per work = two page images across the two works
     assert (
@@ -1991,10 +2071,8 @@ def test_main_reports_page_image_counts(tmp_path, corpus_input, caplog):
     )
 
 
-def test_main_reports_skipped_counts_on_continue(tmp_path, corpus_input, caplog):
-    image_dir = tmp_path / "images"
-    image_dir.mkdir()
-    output_dir = tmp_path / "out"
+def test_main_reports_skipped_counts_on_continue(corpus_input, main_dirs, caplog):
+    _, output_dir = main_dirs
     output_dir.mkdir()
 
     output_pages = output_dir / "ppa_pages.jsonl"
@@ -2003,15 +2081,15 @@ def test_main_reports_skipped_counts_on_continue(tmp_path, corpus_input, caplog)
     _write_corpus(
         output_pages,
         [
-            {"work_id": "workA", "id": "workA.0001", "text": "a1"},
-            {"work_id": "workA", "id": "workA.0002", "text": "a2"},
+            {"work_id": "work.A", "id": "workA.0001", "text": "a1"},
+            {"work_id": "work.A", "id": "workA.0002", "text": "a2"},
         ],
     )
     with tarfile.open(output_tar, "w"):
         pass
 
     with caplog.at_level("INFO", logger="corppa.utils.dataset_prep"):
-        _run_main(corpus_input, image_dir, output_dir, extra_args=["--continue"])
+        _run_main(corpus_input, main_dirs, extra_args=["--continue"])
 
     # workA is skipped (2 pages), workB is processed (2 pages)
     assert (
@@ -2020,27 +2098,9 @@ def test_main_reports_skipped_counts_on_continue(tmp_path, corpus_input, caplog)
     )
 
 
-def test_main_reports_interrupted_counts(tmp_path, corpus_input, caplog):
-    image_dir = tmp_path / "images"
-    image_dir.mkdir()
-    output_dir = tmp_path / "out"
-
-    # request a stop after workA so workB is never processed
-    def stop_after_first(work_id, pages, image_dir, tar, ht1930_work_ids=None):
-        if work_id == "workA":
-            dataset_prep._request_stop(signal.SIGTERM, None)
-        yield from pages
-
-    argv = ["dataset_prep.py", str(corpus_input), str(image_dir), str(output_dir)]
-    with (
-        patch("sys.argv", argv),
-        patch(
-            "corppa.utils.dataset_prep.process_work",
-            side_effect=stop_after_first,
-        ),
-        caplog.at_level("INFO", logger="corppa.utils.dataset_prep"),
-    ):
-        main()
+def test_main_reports_interrupted_counts(corpus_input, main_dirs, caplog):
+    with caplog.at_level("INFO", logger="corppa.utils.dataset_prep"):
+        _run_main(corpus_input, main_dirs, process_side_effect=_stop_after_first)
 
     # only workA is processed before the stop; report reads "interrupted"
     assert (
