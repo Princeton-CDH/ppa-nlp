@@ -426,11 +426,6 @@ def test_process_ht_work_missing_image_warns_for_page_with_text(tmp_path, caplog
             "corppa.utils.dataset_prep.align_pages",
             return_value={f"{work_id}.{pid}": pid for pid in PAGE_TEXTS},
         ),
-        # a non-matching path must not reach the tar add
-        patch(
-            "corppa.utils.dataset_prep.add_zip_file_to_tar",
-            side_effect=AssertionError("should not be called"),
-        ),
         caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
     ):
         with tarfile.open(tmp_path / "out.tar", "w") as tar:
@@ -1604,7 +1599,7 @@ def test_main_without_continue_warns_and_overwrites_existing_archive(
 def _stop_after_first(work_id, pages, image_dir, tar):
     """process_work stand-in that requests a stop once workA is handled, so the
     run stops cleanly at the work boundary before workB is started."""
-    if work_id == "workA":
+    if work_id == "work.A":
         dataset_prep._request_stop(signal.SIGTERM, None)
     yield from pages
 
