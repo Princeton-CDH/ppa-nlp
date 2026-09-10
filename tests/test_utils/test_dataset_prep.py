@@ -79,13 +79,6 @@ def pages_df():
 # --- get_zip_textfiles ---
 
 
-def test_get_zip_textfiles_returns_iterator(tmp_path):
-    with ZipFile(make_zip(tmp_path, {"00000001.txt": "text"})) as zf:
-        result = get_zip_textfiles(zf)
-        assert hasattr(result, "__iter__")
-        assert hasattr(result, "__next__")
-
-
 def test_get_zip_textfiles_multiple(tmp_path):
     files = {"00000001.txt": "page one", "00000002.txt": "page two"}
     with ZipFile(make_zip(tmp_path, files)) as zf:
@@ -341,9 +334,11 @@ def test_process_ht_work_aligned_pages_get_image_paths(tmp_path):
     assert all("image_path" in p for p in result)
 
 
-def test_process_ht_work_does_not_drop_unaligned_pages(tmp_path):
+def test_process_ht_work_does_not_drop_unaligned_pages(tmp_path, caplog):
     # a page with no alignment (page_basename is None) must still be yielded,
-    # just without an image_path -- it should not silently disappear
+    # just without an image_path -- it should not silently disappear. An
+    # unmapped page is not warned about here (unmatched pages are reported by
+    # align_pages); only mapped-but-missing-image pages warn.
     htid_suffix = "12345678"
     work_id = f"test.{htid_suffix}"
     _make_ht_zip(tmp_path, htid_suffix, PAGE_TEXTS)
@@ -356,11 +351,14 @@ def test_process_ht_work_does_not_drop_unaligned_pages(tmp_path):
         {"work_id": work_id, "id": f"{work_id}.00000099", "text": "unmatched page"}
     )
 
-    with patch(
-        "corppa.utils.dataset_prep.align_pages",
-        return_value={
-            f"{work_id}.{pid}": pid for pid in PAGE_TEXTS
-        },  # 00000099 intentionally absent
+    with (
+        patch(
+            "corppa.utils.dataset_prep.align_pages",
+            return_value={
+                f"{work_id}.{pid}": pid for pid in PAGE_TEXTS
+            },  # 00000099 intentionally absent
+        ),
+        caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
     ):
         with tarfile.open(tmp_path / "out.tar", "w") as tar:
             result = list(process_ht_work(work_id, pages, tmp_path, tar))
@@ -372,6 +370,8 @@ def test_process_ht_work_does_not_drop_unaligned_pages(tmp_path):
     # the unaligned page has no image_path
     unaligned = next(p for p in result if p["id"] == f"{work_id}.00000099")
     assert "image_path" not in unaligned
+    # the unmapped page is not warned about (it never had a mapping to an image)
+    assert f"{work_id}.00000099" not in caplog.text
 
 
 def test_process_ht_work_no_mapping_yields_pages_unchanged(tmp_path):
@@ -390,13 +390,33 @@ def test_process_ht_work_no_mapping_yields_pages_unchanged(tmp_path):
     assert all("image_path" not in p for p in result)
 
 
+def _make_ht_zip_text_only(tmp_path, htid_suffix, page_texts):
+    """Build a HathiTrust-style zip where every page has text but no image,
+    except a single .jpg so get_zip_imgexts still finds an extension to try.
+    Pages aligned to a text-only entry exercise the 'no image found' path."""
+    from corppa.utils.path_utils import encode_htid
+
+    htid = f"test.{htid_suffix}"
+    zip_dir = tmp_path / "HathiTrust" / encode_htid(htid)
+    zip_dir.mkdir(parents=True)
+    zip_path = zip_dir / f"{htid_suffix}.zip"
+    with ZipFile(zip_path, "w") as zf:
+        for name, text in page_texts.items():
+            zf.writestr(f"{htid_suffix}/{name}.txt", text)
+        # one image so get_zip_imgexts returns [".jpg"]; it does not correspond
+        # to any of the aligned pages below
+        zf.writestr(f"{htid_suffix}/99999999.jpg", b"img")
+    return htid
+
+
 def test_process_ht_work_missing_image_warns_for_page_with_text(tmp_path, caplog):
-    # page is aligned to a zip filename, but adding the image raises KeyError
-    # (image absent from the zip); a page with text should warn and be yielded
-    # without an image_path -- it must not be dropped
+    # pages are aligned to zip filenames, but no image exists for them in the
+    # zip; a page with text should warn and be yielded without an image_path
+    # (not dropped), and add_zip_file_to_tar must never be called with a
+    # non-existent path
     htid_suffix = "12345678"
     work_id = f"test.{htid_suffix}"
-    _make_ht_zip(tmp_path, htid_suffix, PAGE_TEXTS)
+    _make_ht_zip_text_only(tmp_path, htid_suffix, PAGE_TEXTS)
     pages = [
         {"work_id": work_id, "id": f"{work_id}.{pid}", "text": text}
         for pid, text in PAGE_TEXTS.items()
@@ -406,74 +426,7 @@ def test_process_ht_work_missing_image_warns_for_page_with_text(tmp_path, caplog
             "corppa.utils.dataset_prep.align_pages",
             return_value={f"{work_id}.{pid}": pid for pid in PAGE_TEXTS},
         ),
-        patch(
-            "corppa.utils.dataset_prep.add_zip_file_to_tar",
-            side_effect=KeyError("missing"),
-        ),
-        caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
-    ):
-        with tarfile.open(tmp_path / "out.tar", "w") as tar:
-            result = list(process_ht_work(work_id, pages, tmp_path, tar))
-
-    # every page is still yielded, none get an image_path
-    assert [p["id"] for p in result] == [p["id"] for p in pages]
-    assert all("image_path" not in p for p in result)
-    # pages with text warn about the missing image
-    assert "not found in zipfile but page has text; skipping" in caplog.text
-
-
-def test_process_ht_work_missing_image_no_warn_for_empty_page(tmp_path, caplog):
-    # when add_zip_file_to_tar raises KeyError for a page with no text,
-    # the page is yielded without an image_path and without a warning
-    htid_suffix = "12345678"
-    work_id = f"test.{htid_suffix}"
-    _make_ht_zip(tmp_path, htid_suffix, PAGE_TEXTS)
-    # single page with only whitespace text
-    pages = [{"work_id": work_id, "id": f"{work_id}.00000001", "text": "   "}]
-    with (
-        patch(
-            "corppa.utils.dataset_prep.align_pages",
-            return_value={f"{work_id}.00000001": "00000001"},
-        ),
-        patch(
-            "corppa.utils.dataset_prep.add_zip_file_to_tar",
-            side_effect=KeyError("missing"),
-        ),
-        caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
-    ):
-        with tarfile.open(tmp_path / "out.tar", "w") as tar:
-            result = list(process_ht_work(work_id, pages, tmp_path, tar))
-
-    assert [p["id"] for p in result] == [p["id"] for p in pages]
-    assert "image_path" not in result[0]
-    # no warning for a blank page missing its image
-    assert "not found in zipfile but page has text" not in caplog.text
-
-
-def test_process_ht_work_no_matching_image_extension_warns(tmp_path, caplog):
-    # a page is aligned to a basename, but the zip has no image under any
-    # available extension for it; the for/else path should warn (page has text),
-    # yield the page without an image_path, and not attempt to add to the tar
-    htid_suffix = "12345678"
-    work_id = f"test.{htid_suffix}"
-    # build a zip that has a text file and one .jpg (so get_zip_imgexts finds
-    # .jpg) but no image for the aligned page 00000002
-    zip_dir = tmp_path / "HathiTrust" / f"test.{htid_suffix}"
-    zip_dir.mkdir(parents=True)
-    zip_path = zip_dir / f"{htid_suffix}.zip"
-    with ZipFile(zip_path, "w") as zf:
-        zf.writestr(f"{htid_suffix}/00000001.txt", "some page text")
-        zf.writestr(f"{htid_suffix}/00000001.jpg", b"img-1")
-        # page 2 has text but no image of any extension
-        zf.writestr(f"{htid_suffix}/00000002.txt", "another page")
-
-    pages = [{"work_id": work_id, "id": f"{work_id}.00000002", "text": "another page"}]
-    with (
-        patch(
-            "corppa.utils.dataset_prep.align_pages",
-            return_value={f"{work_id}.00000002": "00000002"},
-        ),
-        # add should never be called since no image file exists
+        # a non-matching path must not reach the tar add
         patch(
             "corppa.utils.dataset_prep.add_zip_file_to_tar",
             side_effect=AssertionError("should not be called"),
@@ -483,9 +436,40 @@ def test_process_ht_work_no_matching_image_extension_warns(tmp_path, caplog):
         with tarfile.open(tmp_path / "out.tar", "w") as tar:
             result = list(process_ht_work(work_id, pages, tmp_path, tar))
 
+    # every page is still yielded, none get an image_path
+    assert [p["id"] for p in result] == [p["id"] for p in pages]
+    assert all("image_path" not in p for p in result)
+    # mapped pages with text warn about the missing image
+    assert "aligned with text but image not found" in caplog.text
+    assert "page has text" in caplog.text
+    assert "page has no text" not in caplog.text
+
+
+def test_process_ht_work_missing_image_warns_for_empty_page(tmp_path, caplog):
+    # a mapped page whose image is absent is warned about regardless of text;
+    # for a blank page the warning notes the page has no text
+    htid_suffix = "12345678"
+    work_id = f"test.{htid_suffix}"
+    _make_ht_zip_text_only(tmp_path, htid_suffix, {"00000001": "   "})
+    # single page with only whitespace text
+    pages = [{"work_id": work_id, "id": f"{work_id}.00000001", "text": "   "}]
+    with (
+        patch(
+            "corppa.utils.dataset_prep.align_pages",
+            return_value={f"{work_id}.00000001": "00000001"},
+        ),
+        caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
+    ):
+        with tarfile.open(tmp_path / "out.tar", "w") as tar:
+            result = list(process_ht_work(work_id, pages, tmp_path, tar))
+
     assert [p["id"] for p in result] == [p["id"] for p in pages]
     assert "image_path" not in result[0]
-    assert "no image for" in caplog.text
+    # the mapped-but-missing-image page still warns, noting it has no text
+    assert (
+        f"page {work_id}.00000001 aligned with text but image not found; "
+        "page has no text" in caplog.text
+    )
 
 
 # --- _tally_processed_work ---
