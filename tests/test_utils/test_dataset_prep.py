@@ -491,7 +491,8 @@ def test_tally_processed_work_counts_missing_images_for_image_source():
     assert counts["works_processed"] == 1
     assert counts["pages_processed"] == 3
     assert counts["page_images"] == 1
-    assert counts["pages_missing_image"] == 2
+    assert counts["ht_missing_image"] == 2
+    assert counts["gale_missing_image"] == 0
 
 
 def test_tally_processed_work_ignores_missing_images_for_eebo():
@@ -1405,10 +1406,10 @@ def corpus_input(tmp_path):
     _write_corpus(
         input_path,
         [
-            {"work_id": "workA", "id": "workA.0001", "text": "a1"},
-            {"work_id": "workA", "id": "workA.0002", "text": "a2"},
-            {"work_id": "workB", "id": "workB.0001", "text": "b1"},
-            {"work_id": "workB", "id": "workB.0002", "text": "b2"},
+            {"work_id": "work.A", "id": "workA.0001", "text": "a1"},
+            {"work_id": "work.A", "id": "workA.0002", "text": "a2"},
+            {"work_id": "work.B", "id": "workB.0001", "text": "b1"},
+            {"work_id": "work.B", "id": "workB.0002", "text": "b2"},
         ],
     )
     return input_path
@@ -1460,8 +1461,8 @@ def test_main_continue_skips_completed_works(corpus_input, main_dirs):
     _write_corpus(
         output_pages,
         [
-            {"work_id": "workA", "id": "workA.0001", "text": "a1"},
-            {"work_id": "workA", "id": "workA.0002", "text": "a2"},
+            {"work_id": "work.A", "id": "workA.0001", "text": "a1"},
+            {"work_id": "work.A", "id": "workA.0002", "text": "a2"},
         ],
     )
     # and produced an existing (uncompressed) tar
@@ -1492,8 +1493,8 @@ def test_main_continue_skips_completed_last_work(corpus_input, main_dirs, caplog
     _write_corpus(
         output_pages,
         [
-            {"work_id": "workB", "id": "workB.0001", "text": "b1"},
-            {"work_id": "workB", "id": "workB.0002", "text": "b2"},
+            {"work_id": "work.B", "id": "workB.0001", "text": "b1"},
+            {"work_id": "work.B", "id": "workB.0002", "text": "b2"},
         ],
     )
     with tarfile.open(output_tar, "w"):
@@ -1525,7 +1526,7 @@ def test_main_continue_does_not_rename_existing_output(corpus_input, main_dirs):
     output_pages = output_dir / "ppa_pages.jsonl"
     _write_corpus(
         output_pages,
-        [{"work_id": "workA", "id": "workA.0001", "text": "a1"}],
+        [{"work_id": "work.A", "id": "workA.0001", "text": "a1"}],
     )
 
     _run_main(corpus_input, main_dirs, extra_args=["--continue"])
@@ -1679,8 +1680,8 @@ def test_main_reports_skipped_counts_on_continue(corpus_input, main_dirs, caplog
     _write_corpus(
         output_pages,
         [
-            {"work_id": "workA", "id": "workA.0001", "text": "a1"},
-            {"work_id": "workA", "id": "workA.0002", "text": "a2"},
+            {"work_id": "work.A", "id": "workA.0001", "text": "a1"},
+            {"work_id": "work.A", "id": "workA.0002", "text": "a2"},
         ],
     )
     with tarfile.open(output_tar, "w"):
