@@ -680,7 +680,7 @@ def test_process_work_ht1930_dispatch(tmp_path):
                 )
             )
     mock_ht1930.assert_called_once_with(
-        work_id, pages, tmp_path, tar, digital_pages="1-10"
+        work_id, pages, tmp_path, tar, digital_page_range="1-10"
     )
     mock_ht.assert_not_called()
     assert result == pages
@@ -852,7 +852,7 @@ def test_process_ht1930_excerpt_uses_first_digital_page_in_name(tmp_path):
     pages = _ht1930_pages("test.12345678", [5, 6])
     with tarfile.open(tmp_path / "out.tar", "w") as tar:
         result = list(
-            process_ht1930_work(work_id, pages, tmp_path, tar, digital_pages="5-6")
+            process_ht1930_work(work_id, pages, tmp_path, tar, digital_page_range="5-6")
         )
     assert all("image_path" in p for p in result)
 
@@ -943,7 +943,9 @@ def test_process_ht1930_excerpt_first_page_override(tmp_path):
     with tarfile.open(tmp_path / "out.tar", "w") as tar:
         result = list(
             # digital_pages here would derive 165, but the override forces 193
-            process_ht1930_work(work_id, pages, tmp_path, tar, digital_pages="165-166")
+            process_ht1930_work(
+                work_id, pages, tmp_path, tar, digital_page_range="165-166"
+            )
         )
     assert all("image_path" in p for p in result)
 
