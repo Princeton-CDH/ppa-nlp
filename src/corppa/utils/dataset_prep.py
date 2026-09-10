@@ -444,16 +444,21 @@ def align_shifted_pages(
             f"{row['n_pages']:,} pages)"
             for row in shift_summary_df.iter_rows(named=True)
         )
+        # only mention unmatched pages when there are any, so a clean alignment
+        # doesn't report "0 pages unmatched"
+        unmatched_summary = (
+            f"; {num_unmatched:,} page{'' if num_unmatched == 1 else 's'} unmatched"
+            if num_unmatched
+            else ""
+        )
         logger.info(
-            "page shift: %s \t%d alignment%s inferred (%s); %d page%s unmatched",
+            "page shift: %s \t%d alignment%s inferred (%s)%s",
             shift_summary,
             num_inferred,
             # conditionally pluralize inferred alignment
             "" if num_inferred == 1 else "s",
             pct_inferred,
-            num_unmatched,
-            # conditionally pluralize number of unmatched pages
-            "" if num_unmatched == 1 else "s",
+            unmatched_summary,
         )
 
     # sanity-check the alignment; warn (but don't fail) on anything suspicious so
@@ -827,6 +832,9 @@ def process_ht_work(
             else:
                 # when image mapping was returned, add images to tar file and image paths to page data
                 img_exts = get_zip_imgexts(ht_zip)
+                # zip contents are constant for the whole work; compute once
+                # rather than per page
+                file_namelist = ht_zip.namelist()
                 for page in pages:
                     page_id = page["id"]  # .split(".")[-1]
                     # get the corresponding image from the zip, add to the tar file with appropriate name,
@@ -835,13 +843,30 @@ def process_ht_work(
 
                     # add the image from the corresponding path in the zipfile to the
                     # appropriate path for this page in the tarfile
-                    file_namelist = ht_zip.namelist()
                     if page_basename is not None:
                         zip_image_basepath = f"{htid_suffix}/{page_basename}"
+                        # look for the mapped image under any of the available
+                        # extensions; the for/else distinguishes "no matching
+                        # image found" from a later add failure
                         for img_ext in img_exts:
                             zip_image_path = f"{zip_image_basepath}{img_ext}"
                             if zip_image_path in file_namelist:
                                 break
+                        else:
+                            # no image found under any extension for this page
+                            has_text = page["text"].strip() != ""
+                            if has_text:
+                                logger.warning(
+                                    "no image for %s in zipfile but page has text; skipping",
+                                    zip_image_basepath,
+                                )
+                            logger.debug(
+                                "matching filenames: %s",
+                                [f for f in file_namelist if page_basename in f],
+                            )
+                            # yield the page without an image path and move on
+                            yield page
+                            continue
                         tar_image_path = f"{encode_htid(htid)}/{page_id}{img_ext}"
                         try:
                             add_zip_file_to_tar(
@@ -865,6 +890,27 @@ def process_ht_work(
                     # yield every page whether or not an image was aligned/added,
                     # so no pages are dropped from the output corpus
                     yield page
+
+
+def _tally_processed_work(
+    work_id: str, pages: list[dict], counts: defaultdict[str, int]
+) -> None:
+    """Update run-level counts for a single processed work. Tallies pages,
+    page images added, and pages that expected an image (image-bearing source)
+    but did not get one, so missing images are surfaced at the run level."""
+    counts["works_processed"] += 1
+    counts["pages_processed"] += len(pages)
+    counts["page_images"] += sum(1 for p in pages if p.get("image_path"))
+    # only Gale and HathiTrust pages carry images; EEBO-TCP (and unknown
+    # sources) have none, so a missing image_path there is expected, not a gap
+    try:
+        expects_image = get_ppa_source(work_id) in ("Gale", "HathiTrust")
+    except ValueError:
+        expects_image = False
+    if expects_image:
+        counts["pages_missing_image"] += sum(
+            1 for p in pages if not p.get("image_path")
+        )
 
 
 def main():
@@ -1018,11 +1064,7 @@ def main():
                             process_work(prev_work_id, pages, args.image_dir, tar)
                         )
                         orjsonl.extend(output_pages_path, pages)
-                        counts["works_processed"] += 1
-                        counts["pages_processed"] += len(pages)
-                        counts["page_images"] += sum(
-                            1 for p in pages if p.get("image_path")
-                        )
+                        _tally_processed_work(prev_work_id, pages, counts)
                 # stop here (at a work boundary) if a signal was received, so we
                 # never interrupt a work's tar/jsonl writes partway through; the
                 # tar is still closed cleanly by the context manager
@@ -1046,9 +1088,7 @@ def main():
             else:
                 pages = list(process_work(prev_work_id, pages, args.image_dir, tar))
                 orjsonl.extend(output_pages_path, pages)
-                counts["works_processed"] += 1
-                counts["pages_processed"] += len(pages)
-                counts["page_images"] += sum(1 for p in pages if p.get("image_path"))
+                _tally_processed_work(prev_work_id, pages, counts)
 
     # report totals whether the run finished normally or stopped early
     logger.info(
@@ -1061,6 +1101,14 @@ def main():
         f"{counts['works_skipped']:,}",
         f"{counts['pages_skipped']:,}",
     )
+    # surface pages that expected an image but got none, but only when there
+    # are any, so a clean run doesn't emit a noise line
+    if counts["pages_missing_image"]:
+        logger.warning(
+            "%s page%s from image-bearing sources have no image",
+            f"{counts['pages_missing_image']:,}",
+            "" if counts["pages_missing_image"] == 1 else "s",
+        )
 
 
 if __name__ == "__main__":

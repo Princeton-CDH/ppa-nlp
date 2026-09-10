@@ -450,6 +450,80 @@ def test_process_ht_work_missing_image_no_warn_for_empty_page(tmp_path, caplog):
     assert "not found in zipfile but page has text" not in caplog.text
 
 
+def test_process_ht_work_no_matching_image_extension_warns(tmp_path, caplog):
+    # a page is aligned to a basename, but the zip has no image under any
+    # available extension for it; the for/else path should warn (page has text),
+    # yield the page without an image_path, and not attempt to add to the tar
+    htid_suffix = "12345678"
+    work_id = f"test.{htid_suffix}"
+    # build a zip that has a text file and one .jpg (so get_zip_imgexts finds
+    # .jpg) but no image for the aligned page 00000002
+    zip_dir = tmp_path / "HathiTrust" / f"test.{htid_suffix}"
+    zip_dir.mkdir(parents=True)
+    zip_path = zip_dir / f"{htid_suffix}.zip"
+    with ZipFile(zip_path, "w") as zf:
+        zf.writestr(f"{htid_suffix}/00000001.txt", "some page text")
+        zf.writestr(f"{htid_suffix}/00000001.jpg", b"img-1")
+        # page 2 has text but no image of any extension
+        zf.writestr(f"{htid_suffix}/00000002.txt", "another page")
+
+    pages = [{"work_id": work_id, "id": f"{work_id}.00000002", "text": "another page"}]
+    with (
+        patch(
+            "corppa.utils.dataset_prep.align_pages",
+            return_value={f"{work_id}.00000002": "00000002"},
+        ),
+        # add should never be called since no image file exists
+        patch(
+            "corppa.utils.dataset_prep.add_zip_file_to_tar",
+            side_effect=AssertionError("should not be called"),
+        ),
+        caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"),
+    ):
+        with tarfile.open(tmp_path / "out.tar", "w") as tar:
+            result = list(process_ht_work(work_id, pages, tmp_path, tar))
+
+    assert [p["id"] for p in result] == [p["id"] for p in pages]
+    assert "image_path" not in result[0]
+    assert "no image for" in caplog.text
+
+
+# --- _tally_processed_work ---
+
+
+def test_tally_processed_work_counts_missing_images_for_image_source():
+    from collections import defaultdict
+
+    from corppa.utils.dataset_prep import _tally_processed_work
+
+    counts: defaultdict[str, int] = defaultdict(int)
+    pages = [
+        {"id": "a", "image_path": "x/a.jpg"},
+        {"id": "b"},  # no image
+        {"id": "c"},  # no image
+    ]
+    # HathiTrust work id (contains ".") -> pages expect images
+    _tally_processed_work("test.12345678", pages, counts)
+    assert counts["works_processed"] == 1
+    assert counts["pages_processed"] == 3
+    assert counts["page_images"] == 1
+    assert counts["pages_missing_image"] == 2
+
+
+def test_tally_processed_work_ignores_missing_images_for_eebo():
+    from collections import defaultdict
+
+    from corppa.utils.dataset_prep import _tally_processed_work
+
+    counts: defaultdict[str, int] = defaultdict(int)
+    pages = [{"id": "a"}, {"id": "b"}]  # EEBO has no images
+    # EEBO-TCP work id begins with "A" -> no images expected, none counted missing
+    _tally_processed_work("A12345", pages, counts)
+    assert counts["pages_processed"] == 2
+    assert counts["page_images"] == 0
+    assert counts["pages_missing_image"] == 0
+
+
 # --- process_work (dispatch) ---
 
 
