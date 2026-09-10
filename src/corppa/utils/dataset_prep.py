@@ -228,7 +228,7 @@ def longest_increasing_subseq(values: np.ndarray) -> np.ndarray:
 
 def align_shifted_pages(
     pages_df: pl.DataFrame, zip_pages_df: pl.DataFrame, detailed: bool = False
-):
+) -> pl.DataFrame:
     """Align corpus pages to zip page filenames when page order has shifted
     between versions. Shifts are determined by matching pages with sufficient text
     in the first dataframe to pages in the zip file using normalized indel similarity
@@ -236,7 +236,7 @@ def align_shifted_pages(
     based on the shift of the nearest preceding alignment, or nearest following alignment
     if no preceding alignment.
 
-    Returns a DataFrame with ``id`` and ``page_filename`` columns where each row
+    Returns a DataFrame with ``id``, ``page_filename``, and ``new_ocr`` columns where each row
     is the determined alignment; returns an empty dataframe if alignment could not be determined.
 
     When ``detailed`` is True, the returned frame instead includes the per-page
@@ -273,7 +273,7 @@ def align_shifted_pages(
     empty_mapping_df = pl.DataFrame(
         schema=detailed_schema
         if detailed
-        else {"id": pl.String, "page_filename": pl.String}
+        else {"id": pl.String, "page_filename": pl.String, "new_ocr": pl.String}
     )
 
     # sort by order and keep the full (unfiltered) set; short pages still need
@@ -487,11 +487,22 @@ def align_shifted_pages(
         # are left to the caller
         return page_mapping_df.select(list(detailed_schema.keys())).sort("order")
 
-    return page_mapping_df.select(["id", "page_filename"])
+    # include zip text as new ocr field for each page where content differs
+    # (likely changed since alignment shift check was needed, but omit if unchanged)
+    page_mapping_df = page_mapping_df.with_columns(
+        new_ocr=pl.when(pl.col.text.ne(pl.col.zip_text))
+        .then(pl.col.zip_text)
+        .otherwise(pl.lit(None))
+    )
+    return page_mapping_df.select(["id", "page_filename", "new_ocr"])
 
 
-# determine alignment between pages in different versions of hathitrust
 def align_pages(work_id: str, pages_df: pl.DataFrame, zipfile: ZipFile) -> dict:
+    """Determine alignment between pages in different versions of a HathiTrust
+    work. Returns a dict mapping each page id to a ``(page_filename, new_ocr)``
+    tuple, where ``new_ocr`` is the zip page text when it differs from the
+    original page text and ``None`` otherwise. Returns an empty dict if no
+    alignment could be determined."""
     expected_page_count = pages_df.height
     # load text files from zipfile into a polars dataframe
     zip_pages_df = get_zipfile_pages(zipfile)
@@ -532,16 +543,25 @@ def align_pages(work_id: str, pages_df: pl.DataFrame, zipfile: ZipFile) -> dict:
     # at least one 0.87 is visibly correct alignment; use same cutoff as for the
     # shift alignment, but adjust for the 0-1 score rather than 1-100 like cdist
     if avg is not None and (avg * 100) > MATCH_SCORE_CUTOFF:
-        page_mapping_df = pages_join_df
+        # set new_ocr to zip text when content differs; otherwise set to null
+        page_mapping_df = pages_join_df.with_columns(
+            new_ocr=pl.when(pl.col.text_match.ne(1.0))
+            .then(pl.col.text_right)
+            .otherwise(pl.lit(None))
+        )
     else:
         page_mapping_df = align_shifted_pages(pages_df, zip_pages_df)
         if page_mapping_df.is_empty():
             return {}
 
     # construct and return a dictionary mapping original page id to corresponding filename in the zipfile
+    # and optionally new ocr, when aligned page ocr differs
     return {
-        r["id"]: r["page_filename"]
-        for r in page_mapping_df.select(["id", "page_filename"]).iter_rows(named=True)
+        # return tuple of filename, new ocr text or None
+        r["id"]: (r["page_filename"], r["new_ocr"])
+        for r in page_mapping_df.select(["id", "page_filename", "new_ocr"]).iter_rows(
+            named=True
+        )
     }
 
 
@@ -920,7 +940,12 @@ def process_ht_work(
             page_id = page["id"]
             # get the corresponding image from the zip, add to the tar file with appropriate name,
             # and add the image path to the page record for output
-            page_basename = page_mapping.get(page_id)
+            # returns a tuple of filename and optional new ocr
+            alignment_info = page_mapping.get(page_id)
+            if alignment_info:
+                page_basename, new_ocr_text = alignment_info
+            else:
+                page_basename, new_ocr_text = None, None
 
             # find the zip image path for this page (if any): the page
             # must be mapped to a zip basename *and* that basename must
@@ -938,6 +963,10 @@ def process_ht_work(
                     tar_image_path = f"{encoded_htid}/{page_id}{img_ext}"
                     add_zip_file_to_tar(ht_zip, zip_image_path, tar, tar_image_path)
                     page["image_path"] = tar_image_path
+                    # if new text is set, move old ocr to text and use new ocr as primary text
+                    if new_ocr_text is not None:
+                        page["old_text"] = page["text"]
+                        page["text"] = new_ocr_text
                 else:
                     # warn if there was a mapping but image was not found;
                     # unmatched images are reported in the align pages
