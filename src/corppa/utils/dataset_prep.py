@@ -828,7 +828,7 @@ def process_work(
                     pages,
                     image_dir,
                     tar,
-                    digital_pages=ht1930_work_ids[work_id],
+                    digital_page_range=ht1930_work_ids[work_id],
                 )
             else:
                 yield from process_ht_work(work_id, pages, image_dir, tar)
@@ -1003,38 +1003,43 @@ def process_ht1930_work(
     pages: list[dict],
     image_dir: Path,
     tar: tarfile.TarFile,
-    digital_pages: Optional[str] = None,
+    digital_page_range: Optional[str] = None,
 ) -> Iterator[dict]:
     """
     Images for HathiTrust works published in 1930 and imported manually in 2026
     were downloaded manually from the HT web interface. The zip files only contain
     images (no text files, no nested directories) and were downloaded close to
-    when the works were imported, so they do not require page re-alignment.
+    when the works were imported, so they do not require page re-alignment. Pass
+    `digital_page_range` for excerpts to find the correct zipfile, which includes
+    digital page range.
 
     Find and load the zip file, and map images to pages based on filename.
     """
     htid = get_volume_id(work_id)
     ht_1930_image_dir = image_dir / "HathiTrust-1930"
-    # zip filenames use the htid with '.' (and '$', which appears in some htids)
-    # replaced by '-'. every name ends with an unpredictable HT-assigned id, e.g.
+    # zip filenames are based on htid with '.' and '$' replaced with '-'
+    # and a timestamp; excerpts include page range. Examples:
+    #
     #   full work: inu-39000005925032-1788450816.zip
     #   excerpt:   mdp-39015002669052-338-339-1788473798.zip
     #              (htid, first page, last page, HT id)
     htid_prefix = htid.replace(".", "-").replace("$", "-")
 
-    # excerpt names include the first digital page after the htid, which we know,
-    # so match "{htid}-{first_page}-*.zip". full works have no page segment, so
-    # match "{htid}-*.zip"; a full work and its excerpts never both appear in the
-    # corpus, so the full-work glob cannot ambiguously match an excerpt zip.
+    # Since we don't know the timestamp a priori, match based on htid and
+    # first digital page number if specified.
+    # Override one exception where zip file does not match digital page range due to missing scans.
     if work_id in HT1930_EXCERPT_FIRST_PAGE_OVERRIDES:
         first_page = HT1930_EXCERPT_FIRST_PAGE_OVERRIDES[work_id]
         zip_glob = f"{htid_prefix}-{first_page}-*.zip"
-    elif digital_pages:
-        first_page = list(intspan(digital_pages))[0]
+    elif digital_page_range:
+        first_page = list(intspan(digital_page_range))[
+            0
+        ]  # parse page range with intspan, then get first digit
         zip_glob = f"{htid_prefix}-{first_page}-*.zip"
     else:
-        # full work: htid prefix plus an unknown trailing HT id
+        # non-excerpt: htid prefix plus wildcard for timestamp
         zip_glob = f"{htid_prefix}-*.zip"
+
     logger.debug(
         "%s : expected zipfile=%s : %d pages",
         work_id,
