@@ -131,10 +131,7 @@ MIN_MATCH_TEXT_LEN = 600
 MATCH_SCORE_CUTOFF = 85
 # a page's best zip match must beat its runner-up by at least this many ratio
 # points to be trusted; guards against near-ties from repeated boilerplate pages
-MATCH_SCORE_MARGIN = 3
-# a best match at or above this ratio is treated as an unambiguous match and
-# trusted regardless of the runner-up margin (near-exact text match)
-MATCH_SCORE_STRONG = 99
+MATCH_SCORE_MARGIN = 5
 # max characters of page text to include in the detailed-frame hover snippet
 TEXT_SNIPPET_LEN = 140
 
@@ -328,10 +325,7 @@ def align_shifted_pages(
     # determine match confidence for each long page based on either:
     # - strong match score
     # - good match score (above the cutoff) that is clearly better than the next match
-    confident = (best_score > 0) & (
-        (best_score >= MATCH_SCORE_STRONG)
-        | ((best_score - second_score) >= MATCH_SCORE_MARGIN)
-    )
+    confident = (best_score > 0) & ((best_score - second_score) >= MATCH_SCORE_MARGIN)
     if not confident.any():
         # bail out if no long page produced a confident, unambiguous match
         logger.warning("No high-confidence matches found; cannot determine page shift")
@@ -372,6 +366,8 @@ def align_shifted_pages(
         # determine shift for all pages; use nearest high-confidence match (preceding page, then following)
         # to determine shift for pages without alignment
         inferred_shift=pl.col.shift.forward_fill().backward_fill()
+        # NOTE: we could try to limit and not infer past trusted anchors, but
+        # review suggests that may result in fewer matched pages...
     )
     # single join for the whole work: shift each page's order and look up the
     # zip page filename at the aligned order. Pull the zip page text along too
@@ -517,11 +513,15 @@ def align_pages(work_id: str, pages_df: pl.DataFrame, zipfile: ZipFile) -> dict:
             expected_page_count,
         )
     # extract numeric page id to join with zip pages
-    pages_df = pages_df.with_columns(page_id=pl.col.id.str.extract(r"[._]([0-9]+$)"))
+    pages_df = pages_df.with_columns(
+        page_id=pl.col.id.str.extract(r"[._]([0-9]+$)")
+    ).with_columns(page_id_i=pl.col.page_id.cast(pl.Int32))
+    # a number of yale volumes have a different number of leading zeros between the two; match on numeric id to avoid
+    zip_pages_df = zip_pages_df.with_columns(page_id_i=pl.col.page_id.cast(pl.Int32))
     # join origin pages with zip pages on the numeric page id,
     # and calculate a fuzzy text match score for each page using rapidfuzz fuzz ratio (normalized indel similarity)
     pages_join_df = (
-        pages_df.join(zip_pages_df, on="page_id")
+        pages_df.join(zip_pages_df, on="page_id_i")
         # NOTE: if any multiprocessing is added to this script, remove parallel=True argument
         .with_columns(text_match=pds.str_fuzz("text", "text_right", parallel=True))
     )
@@ -536,10 +536,13 @@ def align_pages(work_id: str, pages_df: pl.DataFrame, zipfile: ZipFile) -> dict:
 
     # determine the average score for pages with text (polars skips nulls in aggregation),
     # as a way to check the overall alignment between the two sets of pages
-    avg = pages_join_df["text_match"].mean()
-    logger.info(
-        f"{work_id: <30} {pages_df.height:> 5,} pages; average indel similarity score: {avg:.3f}"
-    )
+    avg = None
+    # only report if we successfully calculated a text match score
+    if pages_join_df.filter(pl.col.text_match.is_not_null()).height:
+        avg = pages_join_df["text_match"].mean()
+        logger.info(
+            f"{work_id: <30} {pages_df.height:> 5,} pages; average indel similarity score: {avg:.3f}"
+        )
     # at least one 0.87 is visibly correct alignment; use same cutoff as for the
     # shift alignment, but adjust for the 0-1 score rather than 1-100 like cdist
     if avg is not None and (avg * 100) > MATCH_SCORE_CUTOFF:
