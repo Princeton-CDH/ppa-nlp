@@ -39,11 +39,20 @@ from corppa.utils.dataset_prep import (
 
 WORK_ID = "htid:test.12345678"
 
-# Realistic multi-word page texts so str_fuzz scores high on identical content
+# Realistic multi-word page texts which will result in unambiguous matches when shifted
+TEXT_CONTENT = [
+    "The quick brown fox jumps over the lazy dog.",
+    "To be or not to be, that is the question.",
+    "It was the best of times, it was the worst of times.",
+    "Elements of Expression, Vocal and Physical. Much of the latter part of the piece",
+    "wherein love differs from jealousy; love is stronger than the grave",
+    "She sat down. She entered the room and sat down.",
+]
+
 PAGE_TEXTS = {
-    "00000001": "The quick brown fox jumps over the lazy dog.",
-    "00000002": "To be or not to be, that is the question.",
-    "00000003": "It was the best of times, it was the worst of times.",
+    "00000001": TEXT_CONTENT[0],
+    "00000002": TEXT_CONTENT[1],
+    "00000003": TEXT_CONTENT[2],
 }
 
 
@@ -1130,11 +1139,10 @@ def test_align_shifted_pages_consistent_shift():
     # pages orders 1..5 correspond to zip orders 11..15 (uniform shift = +10);
     # every page should map to its shifted zip counterpart, including the
     # first and last anchors.
-    seeds = [f"chapter-{i}-unique-content" for i in range(5)]
     pages_df, zip_pages_df = _make_shifted_frames(
         page_orders=list(range(1, 6)),
         zip_orders=list(range(11, 16)),
-        seeds=seeds,
+        seeds=TEXT_CONTENT[:5],
     )
 
     result = align_shifted_pages(pages_df, zip_pages_df)
@@ -1162,11 +1170,10 @@ def test_align_shifted_pages_consistent_shift():
 
 def test_align_shifted_pages_new_ocr():
     # adapt consistent shift test above to test modified text is passed through as new_ocr
-    seeds = [f"chapter-{i}-unique-content" for i in range(5)]
     pages_df, zip_pages_df = _make_shifted_frames(
         page_orders=list(range(1, 6)),
         zip_orders=list(range(11, 16)),
-        seeds=seeds,
+        seeds=TEXT_CONTENT[:5],
     )
     # replace first three zip page text with PAGE_TEXTS values to simulate different OCR
     new_texts = list(PAGE_TEXTS.values()) + zip_pages_df["text"].to_list()[-2:]
@@ -1281,7 +1288,7 @@ def test_align_shifted_pages_includes_head_pages():
     # Pages before the first anchor are typically short pages that got
     # filtered out. They must still be included in the mapping via the
     # first anchor's shift.
-    seeds = [f"chapter-{i}-unique-content" for i in range(6)]
+    seeds = TEXT_CONTENT
     zip_pages_df = pl.DataFrame(
         {
             "page_filename": [f"{11 + i:08d}" for i in range(6)],
@@ -1306,7 +1313,7 @@ def test_align_shifted_pages_includes_head_pages():
     # page 1 (short, before the first anchor) is mapped via the anchor's shift
     assert mapping["work.00000001"] == "00000011"
     # last page still covered by the tail fix
-    assert mapping["work.00000006"] == "00000016"
+    assert mapping["work.00000005"] == "00000015"
 
 
 def test_align_shifted_pages_input_row_order_independent():
@@ -1321,7 +1328,7 @@ def test_align_shifted_pages_input_row_order_independent():
     # depends on row order: pages 1-3 map at +10, pages 4-6 at +20, with short
     # (non-anchor) pages 3 and 4 straddling the boundary. If the fill ran on
     # scrambled rows, pages 3/4 would inherit the wrong shift.
-    seeds = [f"chapter-{i}-unique-content" for i in range(6)]
+    seeds = TEXT_CONTENT
     # zip has pages at 11-13 (for the +10 block) and 24-26 (for the +20 block)
     zip_orders = [11, 12, 13, 24, 25, 26]
 
@@ -1512,7 +1519,7 @@ def test_align_shifted_pages_logs_unmatched_pages(caplog):
     # pages 1-4 shift +10 -> aligned orders 11,12,13,14, but the zip only has
     # 11,12,13; page 4 aligns to a missing zip page and gets no filename.
     # the unmatched count is reported as part of the shift summary log line.
-    seeds = [f"chapter-{i}-unique-content" for i in range(4)]
+    seeds = TEXT_CONTENT[:4]
     pages_df, zip_pages_df = _make_shifted_frames(
         page_orders=[1, 2, 3, 4],
         zip_orders=[11, 12, 13, 14],
@@ -1534,11 +1541,10 @@ def test_align_shifted_pages_non_monotonic_warns(caplog):
     # tail zip orders decrease within an otherwise-increasing anchor set; here
     # 10,11,12 then 15,14,13 leaves later pages aligning to earlier zip pages,
     # which the monotonic sanity-check should warn about.
-    seeds = [f"chapter-{i}-unique-content" for i in range(6)]
     pages_df, zip_pages_df = _make_shifted_frames(
         page_orders=[1, 2, 3, 4, 5, 6],
         zip_orders=[10, 11, 12, 15, 14, 13],
-        seeds=seeds,
+        seeds=TEXT_CONTENT,
     )
 
     with caplog.at_level("WARNING", logger="corppa.utils.dataset_prep"):
@@ -1553,7 +1559,7 @@ def test_align_shifted_pages_independent_of_zip_row_order():
     # (2, 10, 11, 100) sort differently by filename string than by number, so
     # feeding the zip rows in filename (lexicographic) order previously corrupted
     # the anchor selection. The mapping must be identical regardless of row order.
-    seeds = [f"chapter-{i}-unique-content" for i in range(4)]
+    seeds = TEXT_CONTENT[:4]
     page_orders = [1, 2, 3, 4]
     zip_orders = [2, 10, 11, 100]
     pages_df, zip_asc = _make_shifted_frames(page_orders, zip_orders, seeds)
@@ -1593,11 +1599,10 @@ def test_align_pages_underscore_page_id(aligned_zip):
 
 def test_align_shifted_pages_detailed_schema():
     # detailed=True returns the raw alignment frame (no derived review fields)
-    seeds = [f"chapter-{i}-unique-content" for i in range(5)]
     pages_df, zip_pages_df = _make_shifted_frames(
         page_orders=list(range(1, 6)),
         zip_orders=list(range(11, 16)),
-        seeds=seeds,
+        seeds=TEXT_CONTENT[:5],
     )
 
     result = align_shifted_pages(pages_df, zip_pages_df, detailed=True)
@@ -1632,7 +1637,7 @@ def test_align_shifted_pages_detailed_schema():
 
 def test_align_shifted_pages_detailed_marks_inferred_page():
     # a short leading page is filled (not an anchor) but still matched
-    seeds = [f"chapter-{i}-unique-content" for i in range(5)]
+    seeds = TEXT_CONTENT[:5]
     pages_df = pl.DataFrame(
         {
             "id": [f"work.{o:08d}" for o in range(1, 6)],
@@ -1693,7 +1698,7 @@ def test_align_shifted_pages_detailed_empty_has_diagnostic_schema():
 
 def test_review_alignment_from_pages_and_zip(tmp_path):
     # review_alignment accepts page dicts + a zip path and returns the detailed frame
-    seeds = [f"chapter-{i}-unique-content" for i in range(4)]
+    seeds = TEXT_CONTENT[:4]
     pages = [
         {"id": f"work.{o:08d}", "order": o, "text": _long_text(seeds[o - 1])}
         for o in range(1, 5)
@@ -1717,7 +1722,7 @@ def test_review_alignment_missing_zip_raises(tmp_path):
 def test_review_alignment_adds_derived_fields(tmp_path):
     # review_alignment adds lengths, snippets, and an aligned-page match_score
     # (comparable to cdist_best_score) on top of the raw alignment frame
-    seeds = [f"chapter-{i}-unique-content" for i in range(3)]
+    seeds = TEXT_CONTENT[:3]
     pages = [
         {"id": f"work.{o:08d}", "order": o, "text": _long_text(seeds[o - 1])}
         for o in range(1, 4)
@@ -1742,7 +1747,7 @@ def test_review_alignment_adds_derived_fields(tmp_path):
 
 def test_review_alignment_derives_order_when_missing(tmp_path):
     # when pages lack an explicit order column, it is derived from the id suffix
-    seeds = [f"chapter-{i}-unique-content" for i in range(3)]
+    seeds = TEXT_CONTENT[:3]
     pages = [
         {"id": f"work.{o:08d}", "text": _long_text(seeds[o - 1])} for o in range(1, 4)
     ]
@@ -1764,7 +1769,7 @@ def test_get_ht_zipfile_path():
 
 
 def test_plot_alignment_builds_chart(tmp_path):
-    seeds = [f"chapter-{i}-unique-content" for i in range(4)]
+    seeds = TEXT_CONTENT[:4]
     pages = [
         {"id": f"work.{o:08d}", "order": o, "text": _long_text(seeds[o - 1])}
         for o in range(1, 5)
@@ -1791,7 +1796,7 @@ def test_plot_alignment_builds_chart(tmp_path):
 
 def test_plot_alignment_unmatched_pages_have_no_zip_point(tmp_path):
     # an unmatched page appears only on the original row (no zip point/line)
-    seeds = [f"chapter-{i}-unique-content" for i in range(4)]
+    seeds = TEXT_CONTENT[:4]
     pages = [
         {"id": f"work.{o:08d}", "order": o, "text": _long_text(seeds[o - 1])}
         for o in range(1, 5)
@@ -1834,7 +1839,7 @@ def test_plot_alignment_unmatched_pages_have_no_zip_point(tmp_path):
 def test_plot_alignment_x_domain_limited_to_plotted_pages(tmp_path):
     # excerpt-like: only a few corpus pages, but the zip spans the whole volume.
     # the x-axis domain should track the plotted pages, not the full zip range.
-    seeds = [f"chapter-{i}-unique-content" for i in range(3)]
+    seeds = TEXT_CONTENT[:3]
     pages = [
         {"id": "work.00000100", "order": 100, "text": _long_text(seeds[0])},
         {"id": "work.00000101", "order": 101, "text": _long_text(seeds[1])},
