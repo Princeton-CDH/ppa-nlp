@@ -25,3 +25,13 @@ Build Text Corpus
 =================
 .. automodule:: corppa.utils.build_text_corpus
 .. Note: not including members for method docs, only top-level script usage
+
+Dataset Preparation
+===================
+.. automodule:: corppa.utils.dataset_prep
+  :members:
+
+Dataset Metadata Refinement
+===========================
+.. automodule:: corppa.utils.dataset_refine
+  :members:

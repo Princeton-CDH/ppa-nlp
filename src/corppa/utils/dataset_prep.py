@@ -1,4 +1,24 @@
-# prep ppa text+image dataset for publication
+"""
+This is a utility scripto help prep the PPA metadata/text/image dataset for publication.
+
+It should be used to align page images with text to create a page_image.tar file
+and update the ppa_pages.jsonl file with image paths and optionally old text, when OCR has changed.
+
+Handles the following formats:
+    - HathiTrust dataset zip files
+    - HathiTrust manually downloaded zip files (full or excerpted) for 1930s content
+    - Gale/ECCO image directory, using existing corppa path utils and naming conventions
+
+For HathiTrust dataset zip files, the script checks for page alignment; if average text similarity is
+below our trusted threshold, does a best-effort alignment based on high-confidence, unambiguous page matches
+which are used to infer matches for neighboring pages.
+
+For convenience, a slurm sbatch file is provided in scripts/dataset_prep.sbatch
+
+Supports interruption and continuing partial work, so that alignment can be completed in multiple passes.
+
+"""
+
 import argparse
 import bisect
 import json
@@ -9,6 +29,7 @@ import tarfile
 from collections import defaultdict
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import date
 from pathlib import Path
 from time import mktime, perf_counter
 from typing import Optional
@@ -60,12 +81,14 @@ def get_zip_textfiles(zipfile: ZipFile) -> Iterator[tuple[str, str]]:
 
 def get_zipfile_pages(zipfile) -> pl.DataFrame:
     """Load text files from a HathiTrust zipfile into a polars dataframe.
+
     Returned dataframe has the following columns:
-        - page_filename
-        - text : full text contents of the page
-        - page_id : numeric portion extracted from page_filename
-        - order : numeric version of `page_id`
-        - text_len : number of characters in `text`
+
+    * ``page_filename``
+    * ``text``: full text contents of the page
+    * ``page_id``: numeric portion extracted from ``page_filename``
+    * ``order``: numeric version of ``page_id``
+    * ``text_len``: number of characters in ``text``
     """
     return (
         pl.DataFrame(
@@ -811,25 +834,40 @@ def find_corpus_file(corpus_dir: Path, filenames: list[str]) -> Path:
 def get_ht1930_work_ids(metadata_path: Path) -> dict[str, Optional[str]]:
     """Load work-level metadata and return a dictionary of ``work_id`` values for
     HathiTrust volumes published in 1930, with their corresponding
-    digital page range (excerpts only).
+    digital page range (excerpts only), OR any other volumes that were added
+    to PPA after the text/image dataset was requested.
 
     These volumes have zip files with different naming convention and structure
     and must be handled differently.
     """
+    schema_override = {
+        "added": pl.Datetime,
+    }
     if metadata_path.suffix == ".csv":
-        meta_df = pl.read_csv(metadata_path)
-    elif metadata_path.suffix == ".json":
-        meta_df = pl.read_json(metadata_path)
+        meta_df = pl.read_csv(metadata_path, schema_overrides=schema_override)
     else:
         raise ValueError(
-            f"Unsupported metadata format {metadata_path.suffix!r}; expected .csv or .json"
+            f"Unsupported metadata format {metadata_path.suffix!r}; expected .csv"
         )
+
+    # get current date for filtering
+    post_hathi_dataset = pl.datetime(2025, 3, 1)
+    today = date.today()
 
     return {
         row["work_id"]: row["pages_digital"]
-        for row in meta_df.select("work_id", "pub_year", "source", "pages_digital")
-        .filter(pl.col.source.eq("HathiTrust"))
-        .filter(pl.col("pub_year").cast(pl.Int64, strict=False).eq(1930))
+        for row in meta_df.select(
+            "work_id", "pub_year", "source", "pages_digital", "added"
+        )
+        .filter(
+            pl.col.source.eq("HathiTrust"),
+        )
+        .filter(
+            pl.col.added.is_between(
+                post_hathi_dataset,
+                pl.datetime(today.year, today.month, today.day),
+            )
+        )
         .select("work_id", "pages_digital")
         .iter_rows(named=True)
     }
@@ -842,6 +880,7 @@ def process_work(
     tar: tarfile.TarFile | None,
     ht1930_work_ids: Optional[dict[str, Optional[str]]] = None,
 ) -> Iterator[dict]:
+    """Process one work using the source-specific image handling strategy."""
     # generic process work method, which calls appropriate source-specific method
     ht1930_work_ids = ht1930_work_ids or {}
     source = get_ppa_source(work_id)
@@ -879,6 +918,7 @@ def process_work(
 def process_gale_work(
     work_id: str, pages: list[dict], image_dir: Path, tar: tarfile.TarFile
 ) -> Iterator[dict]:
+    """Add available Gale page images to a work and yield its page records."""
     vol_id = get_volume_id(work_id)
     vol_img_dir = image_dir / get_vol_dir(vol_id)
     # get the base name of the tarfile, to include in image path field
@@ -929,6 +969,7 @@ def open_ht_zipfile(zipfile_path: Optional[Path]) -> Iterator[Optional[ZipFile]]
 def process_ht_work(
     work_id: str, pages: list[dict], image_dir: Path, tar: tarfile.TarFile
 ) -> Iterator[dict]:
+    """Align HathiTrust pages with images and yield the resulting page records."""
     # a work is an excerpt if its work_id includes with -p; excerpts are not expected to use all pages from the zip file
     is_excerpt = "-p" in work_id
     zipfile_path = get_ht_zipfile_path(work_id, image_dir)
@@ -1271,6 +1312,7 @@ def add_image_paths_to_metadata(corpus_dir: Path, output_dir: Path) -> None:
 
 
 def main():
+    """Parse command-line arguments and prepare a full-text dataset."""
     global _stop_requested
     _stop_requested = False
 

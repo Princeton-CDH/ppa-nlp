@@ -1,0 +1,8 @@
+# Repository conventions for the release-prep skill.
+django: false
+js_frontend: false
+dependency_manager: pip
+version_file: src/corppa/__init__.py
+changelog_file: CHANGELOG.md
+coverage_threshold: 75
+pr_base_branch: main

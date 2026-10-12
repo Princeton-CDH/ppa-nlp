@@ -41,12 +41,14 @@ from corppa.utils.path_utils import (
 
 
 def extract_page_numbers(page_url_list):
+    """Return page numbers parsed from newline-separated page URLs."""
     pg_urls = page_url_list.split("\n")
     pg_nums = {int(url.rsplit("=", 1)[1]) for url in pg_urls}
     return pg_nums
 
 
 def get_page_image_path(page_record):
+    """Return the relative image path for a Gale or HathiTrust page record."""
     source = page_record["source"]
     vol_id = page_record["source_id"]
     stub_dir = get_stub_dir(source, vol_id)
@@ -67,6 +69,7 @@ def get_page_image_path(page_record):
 
 
 def get_ver_date(possible_timestamp):
+    """Extract an ISO date from a timestamp, or return ``"N/A"``."""
     pattern = re.compile(r"\d\d\d\d-\d\d-\d\d")
 
     result = pattern.match(possible_timestamp.strip())

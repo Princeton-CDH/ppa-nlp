@@ -1058,27 +1058,16 @@ def test_find_corpus_file_missing_raises(tmp_path):
 def test_get_ht1930_work_ids_csv(tmp_path):
     meta = tmp_path / "ppa_metadata.csv"
     meta.write_text(
-        "work_id,pub_year,source,pages_digital\n"
-        "ht.old,1850,HathiTrust,\n"
-        "ht.new,1930,HathiTrust,\n"
-        "ht.excerpt,1930,HathiTrust,5-10\n"
-        "gale.new,1930,Gale,\n"
-        "ht.1931,1931,HathiTrust,\n"
+        "work_id,pub_year,source,pages_digital,added\n"
+        "ht.old,1850,HathiTrust,,2021-02-01 14:32:52.821\n"
+        "ht.new,1929,HathiTrust,,2025-03-07 19:31:57.913\n"
+        "ht.excerpt,1930,HathiTrust,5-10,2025-03-07 19:31:57.913\n"
+        "gale.new,1930,Gale,,2025-03-07 19:31:57.913\n"
+        "ht.1931,1931,HathiTrust,,2024-01-15 19:31:57.913\n"
     )
     result = get_ht1930_work_ids(meta)
-    # only HathiTrust works published in 1930; value is the digital page range
+    # only HathiTrust works added after 2025-03-01; value is the digital page range
     assert result == {"ht.new": None, "ht.excerpt": "5-10"}
-
-
-def test_get_ht1930_work_ids_json(tmp_path):
-    meta = tmp_path / "ppa_metadata.json"
-    meta.write_text(
-        '[{"work_id": "ht.old", "pub_year": 1899, "source": "HathiTrust", "pages_digital": null},'
-        ' {"work_id": "ht.new", "pub_year": 1930, "source": "HathiTrust", "pages_digital": null},'
-        ' {"work_id": "gale.new", "pub_year": 1930, "source": "Gale", "pages_digital": null}]'
-    )
-    result = get_ht1930_work_ids(meta)
-    assert result == {"ht.new": None}
 
 
 def test_get_ht1930_work_ids_unsupported_format(tmp_path):
@@ -2060,22 +2049,22 @@ def test_main_corpus_dir_missing_files_exits(tmp_path, main_dirs, caplog):
     assert "None of the expected files" in caplog.text
 
 
-def test_main_progress_bar_enabled_by_default(corpus_input, main_dirs):
+@patch("corppa.utils.dataset_prep.get_ht1930_work_ids")
+def test_main_progress_bar(_mock, corpus_input, main_dirs):
     with patch("corppa.utils.dataset_prep.tqdm", wraps=tqdm) as mock_tqdm:
         _run_main(corpus_input, main_dirs)
 
     # progress bar is shown (not disabled) unless --no-progress is passed
     assert mock_tqdm.call_args.kwargs["disable"] is False
 
-
-def test_main_no_progress_disables_bar(corpus_input, main_dirs):
     with patch("corppa.utils.dataset_prep.tqdm", wraps=tqdm) as mock_tqdm:
         _run_main(corpus_input, main_dirs, extra_args=["--no-progress"])
 
     assert mock_tqdm.call_args.kwargs["disable"] is True
 
 
-def test_main_writes_all_works(corpus_input, main_dirs):
+@patch("corppa.utils.dataset_prep.get_ht1930_work_ids")
+def test_main_writes_all_works(_mock, corpus_input, main_dirs):
     _, output_dir = main_dirs
 
     _run_main(corpus_input, main_dirs)
@@ -2097,7 +2086,8 @@ def test_main_writes_all_works(corpus_input, main_dirs):
     ]
 
 
-def test_main_continue_skips_completed_works(corpus_input, main_dirs):
+@patch("corppa.utils.dataset_prep.get_ht1930_work_ids")
+def test_main_continue_skips_completed_works(_mock, corpus_input, main_dirs):
     _, output_dir = main_dirs
     output_dir.mkdir()
 
@@ -2127,7 +2117,10 @@ def test_main_continue_skips_completed_works(corpus_input, main_dirs):
     ]
 
 
-def test_main_continue_skips_completed_last_work(corpus_input, main_dirs, caplog):
+@patch("corppa.utils.dataset_prep.get_ht1930_work_ids")
+def test_main_continue_skips_completed_last_work(
+    _mock, corpus_input, main_dirs, caplog
+):
     # when the LAST work in the corpus is already completed, the end-of-loop
     # handler must count it as skipped (not reprocess it)
     _, output_dir = main_dirs
@@ -2165,7 +2158,8 @@ def test_main_continue_skips_completed_last_work(corpus_input, main_dirs, caplog
     )
 
 
-def test_main_last_work_in_chunk_uses_its_own_tar(tmp_path, main_dirs):
+@patch("corppa.utils.dataset_prep.get_ht1930_work_ids")
+def test_main_last_work_in_chunk_uses_its_own_tar(_mock, tmp_path, main_dirs):
     # when the work id crosses a tar chunk boundary, the previous (last) work
     # in the old chunk must be processed with the old chunk's tar, not the
     # tar opened for the next chunk
@@ -2190,7 +2184,8 @@ def test_main_last_work_in_chunk_uses_its_own_tar(tmp_path, main_dirs):
     }
 
 
-def test_main_continue_does_not_rename_existing_output(corpus_input, main_dirs):
+@patch("corppa.utils.dataset_prep.get_ht1930_work_ids")
+def test_main_continue_does_not_rename_existing_output(_mock, corpus_input, main_dirs):
     _, output_dir = main_dirs
     output_dir.mkdir()
 
@@ -2206,7 +2201,8 @@ def test_main_continue_does_not_rename_existing_output(corpus_input, main_dirs):
     assert not (output_dir / "ppa_pages.jsonl.bak").exists()
 
 
-def test_main_continue_missing_output_starts_fresh(corpus_input, main_dirs):
+@patch("corppa.utils.dataset_prep.get_ht1930_work_ids")
+def test_main_continue_missing_output_starts_fresh(_mock, corpus_input, main_dirs):
     _, output_dir = main_dirs
 
     # --continue with no existing output should behave like a fresh run
@@ -2221,7 +2217,8 @@ def test_main_continue_missing_output_starts_fresh(corpus_input, main_dirs):
     ]
 
 
-def test_main_without_continue_renames_existing_output(corpus_input, main_dirs):
+@patch("corppa.utils.dataset_prep.get_ht1930_work_ids")
+def test_main_without_continue_renames_existing_output(_mock, corpus_input, main_dirs):
     _, output_dir = main_dirs
     output_dir.mkdir()
 
@@ -2257,7 +2254,8 @@ def _stop_after_first(work_id, pages, image_dir, tar, ht1930_work_ids=None):
     yield from pages
 
 
-def test_main_stops_cleanly_after_current_work(corpus_input, main_dirs):
+@patch("corppa.utils.dataset_prep.get_ht1930_work_ids")
+def test_main_stops_cleanly_after_current_work(_mock, corpus_input, main_dirs):
     _, output_dir = main_dirs
 
     _run_main(corpus_input, main_dirs, process_side_effect=_stop_after_first)
@@ -2267,7 +2265,10 @@ def test_main_stops_cleanly_after_current_work(corpus_input, main_dirs):
     assert [p["id"] for p in written] == ["workA.0001", "workA.0002"]
 
 
-def test_main_input_stream_close_error_is_suppressed(tmp_path, corpus_input, caplog):
+@patch("corppa.utils.dataset_prep.get_ht1930_work_ids")
+def test_main_input_stream_close_error_is_suppressed(
+    _mock, tmp_path, corpus_input, caplog
+):
     # Regression: for compressed input, orjsonl.stream decompresses via an xopen
     # subprocess. On ctrl-c the SIGINT kills that subprocess (exit code -2), so
     # tearing down the stream generator raises a spurious OSError/BrokenPipeError.
@@ -2319,7 +2320,8 @@ def test_main_input_stream_close_error_is_suppressed(tmp_path, corpus_input, cap
     assert "ignoring input stream close error during shutdown" in caplog.text
 
 
-def test_main_stop_flag_reset_between_runs(corpus_input, main_dirs):
+@patch("corppa.utils.dataset_prep.get_ht1930_work_ids")
+def test_main_stop_flag_reset_between_runs(_mock, corpus_input, main_dirs):
     _, output_dir = main_dirs
 
     # leave the module flag set from a prior run; main() should reset it so
@@ -2341,7 +2343,8 @@ def test_main_stop_flag_reset_between_runs(corpus_input, main_dirs):
 # --- run summary reporting ---
 
 
-def test_main_reports_finished_counts(corpus_input, main_dirs, caplog):
+@patch("corppa.utils.dataset_prep.get_ht1930_work_ids")
+def test_main_reports_finished_counts(_mock, corpus_input, main_dirs, caplog):
     with caplog.at_level("INFO", logger="corppa.utils.dataset_prep"):
         _run_main(corpus_input, main_dirs)
 
@@ -2352,7 +2355,8 @@ def test_main_reports_finished_counts(corpus_input, main_dirs, caplog):
     )
 
 
-def test_main_reports_page_image_counts(corpus_input, main_dirs, caplog):
+@patch("corppa.utils.dataset_prep.get_ht1930_work_ids")
+def test_main_reports_page_image_counts(_mock, corpus_input, main_dirs, caplog):
     # simulate process_work adding an image path to one page per work
     def add_one_image(work_id, pages, image_dir, tar, ht1930_work_ids=None):
         for i, page in enumerate(pages):
@@ -2370,7 +2374,8 @@ def test_main_reports_page_image_counts(corpus_input, main_dirs, caplog):
     )
 
 
-def test_main_reports_gale_missing_image_warning(tmp_path, main_dirs, caplog):
+@patch("corppa.utils.dataset_prep.get_ht1930_work_ids")
+def test_main_reports_gale_missing_image_warning(_mock, tmp_path, main_dirs, caplog):
     # a Gale work processed without images is surfaced as a run-level warning
     # naming the Gale tally (it is not attributed to the HathiTrust tally)
     corpus_dir = _make_corpus_dir(
@@ -2384,7 +2389,10 @@ def test_main_reports_gale_missing_image_warning(tmp_path, main_dirs, caplog):
     assert "HathiTrust pages missing images" not in caplog.text
 
 
-def test_main_reports_skipped_counts_on_continue(corpus_input, main_dirs, caplog):
+@patch("corppa.utils.dataset_prep.get_ht1930_work_ids")
+def test_main_reports_skipped_counts_on_continue(
+    _mock, corpus_input, main_dirs, caplog
+):
     _, output_dir = main_dirs
     output_dir.mkdir()
 
@@ -2411,7 +2419,8 @@ def test_main_reports_skipped_counts_on_continue(corpus_input, main_dirs, caplog
     )
 
 
-def test_main_reports_interrupted_counts(corpus_input, main_dirs, caplog):
+@patch("corppa.utils.dataset_prep.get_ht1930_work_ids")
+def test_main_reports_interrupted_counts(_mock, corpus_input, main_dirs, caplog):
     with caplog.at_level("INFO", logger="corppa.utils.dataset_prep"):
         _run_main(corpus_input, main_dirs, process_side_effect=_stop_after_first)
 

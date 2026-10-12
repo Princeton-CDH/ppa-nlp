@@ -17,6 +17,7 @@ import polars as pl
 def refine_metadata(
     refined_metadata: Path, csv_metadata_path: Path, json_metadata_path: Path
 ) -> None:
+    """Propagate refined author and publication-place values to corpus metadata."""
     refined_metadata_df = pl.read_csv(refined_metadata)
     # get the last update time of records in refined metadata (all records have added/updated time)
     refined_last_update = refined_metadata_df["updated"].max()
@@ -159,6 +160,7 @@ def refine_metadata(
 
 
 def main():
+    """Parse command-line arguments and refine a PPA corpus metadata directory."""
     parser = argparse.ArgumentParser(
         description="Propagate PPA metadata standardization to updated metadata files"
     )
